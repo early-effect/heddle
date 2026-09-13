@@ -66,6 +66,7 @@ private[heddle] object Hpack:
         b += ((v % 128) | 0x80).toByte
         v = v / 128
       b += v.toByte
+  end encodeInt
 
   private def encodeString(b: scala.collection.mutable.ArrayBuilder[Byte], s: String): Unit =
     val bytes = s.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
@@ -89,6 +90,7 @@ private[heddle] object Hpack:
           m += 7
           if (b & 0x80) == 0 then return (acc, i)
         (acc, i)
+      end if
 
   private def decodeString(raw: Array[Byte], from: Int): (String, Int) =
     if from >= raw.length then ("", from)

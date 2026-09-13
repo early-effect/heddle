@@ -85,6 +85,7 @@ object ProviderSpec extends ZIOSpecDefault:
         .toList
         .map(_.split("=", 2))
         .collectFirst { case Array(`name`, v) => java.net.URLDecoder.decode(v, "UTF-8") }
+  end queryParam
 
   private def withOp[E, A](f: (String, SigningKey, ProviderStores) => IO[E, A]): ZIO[Any, Any, A] =
     ZIO.scoped {

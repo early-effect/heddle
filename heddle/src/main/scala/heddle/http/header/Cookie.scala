@@ -103,6 +103,7 @@ object SetCookie:
     if cookie.httpOnly then b.append("; HttpOnly")
     cookie.sameSite.foreach(s => b.append("; SameSite=").append(s.render))
     b.toString
+  end render
 
   private def quotePair(name: String, value: String): String =
     if needsQuote(value) then s"""$name="${value.replace("\"", "")}""""

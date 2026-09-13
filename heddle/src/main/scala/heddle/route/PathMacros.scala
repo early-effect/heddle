@@ -25,6 +25,7 @@ private[heddle] object PathMacros:
           PathCodec($segs, ${ extractFn[A](parts) }, true)
         }
       case None => path
+  end specializeImpl
 
   private def registerLits(parts: List[Part])(using Quotes): Expr[Unit] =
     val regs = parts.collect { case Part.Lit(v) => '{ PathLits.register(${ Expr(v) }) } }

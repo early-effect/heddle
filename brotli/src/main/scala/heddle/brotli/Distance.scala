@@ -17,6 +17,7 @@ private[brotli] object Distance:
       if d >= offset + 1 && d <= offset + span then return Encoded(dcode, ndistbits, d - offset - 1)
       dcode += 1
     Encoded(16, 1, 0)
+  end encode
 
   def decode(symbol: Int, extra: Int): Int =
     if symbol < 16 then throw IllegalArgumentException(s"short code $symbol")

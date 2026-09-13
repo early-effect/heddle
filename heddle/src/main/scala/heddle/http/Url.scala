@@ -25,6 +25,7 @@ final case class Url(
         val p   = port.filterNot(n => (sch == "http" && n == 80) || (sch == "https" && n == 443))
         val ps  = p.map(n => s":$n").getOrElse("")
         s"$sch://$h$ps$pq"
+  end render
 end Url
 
 object Url:

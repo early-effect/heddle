@@ -122,6 +122,7 @@ object Server:
       _ <- acceptLoop(app, ss, config, live, fibers, takingWork, tls).forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(ss, halt0)
+    end for
   end install
 
   private val loom: ZLayer[Any, ServerError, Unit] =

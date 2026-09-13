@@ -17,3 +17,4 @@ object ProviderApp extends HeddleApp:
   def routes = Provider.routes(ProviderConfig(issuer = "http://127.0.0.1:8080"), stores, key)
 
   override def config: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 8080)
+end ProviderApp

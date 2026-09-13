@@ -74,6 +74,7 @@ object Schema:
     }
     val required = fields.filterNot(_.optional).map(_.name)
     Schema.of(SchemaDoc.Object(Some(title), fields, required), Some(title))
+  end productSchema
 
   inline def sumSchema[A](s: Mirror.SumOf[A]): Schema[A] =
     val title    = constValue[s.MirroredLabel]

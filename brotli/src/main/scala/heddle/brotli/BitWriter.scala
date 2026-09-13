@@ -26,6 +26,8 @@ private[brotli] final class BitWriter:
         buf += cur.toByte
         cur = 0
         nbits = 0
+    end while
+  end writeBits
 
   def alignByte(): Unit =
     if nbits > 0 then

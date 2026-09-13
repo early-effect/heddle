@@ -276,6 +276,7 @@ object Http1Spec extends ZIOSpecDefault:
       _     <- Http1.serveConnection(routes, pull, send, config, taking, busy)
       bytes <- out.get
     yield String(bytes.toArray, StandardCharsets.US_ASCII)
+    end for
   end runWire
 
   private def get(path: String, headers: String = "Host: localhost", version: String = "HTTP/1.1"): String =

@@ -56,6 +56,7 @@ object MediaType:
     val ps = params.collect:
       case (k, v) if !k.equalsIgnoreCase("charset") => asciiLower(k) -> v
     new MediaType(asciiLower(mainType), asciiLower(subType), cs, ps)
+  end apply
 
   def parse(raw: String): Option[MediaType] =
     val s     = raw.trim
@@ -86,6 +87,7 @@ object MediaType:
                 if k.equalsIgnoreCase("charset") then charset = Some(asciiLower(v))
                 else params += (asciiLower(k) -> v)
             from = if semi < 0 then s.length + 1 else semi + 1
+          end while
         end if
         Some(apply(main, sub, charset, params.result()))
       end if

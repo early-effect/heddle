@@ -18,6 +18,7 @@ private[brotli] object WordTransform:
       val parts = line.split("\\|", -1)
       WordTransform(unhex(parts(0)), parts(1).toInt, unhex(parts(2)))
     }
+  end all
 
   def omitFirst(op: Int): Int = if op >= 12 then op - 11 else 0
   def omitLast(op: Int): Int  = if op >= 1 && op <= 9 then op else 0
@@ -56,6 +57,8 @@ private[brotli] object WordTransform:
           dst(up + 2) = (dst(up + 2) ^ 5).toByte
           up += 3
           n -= 3
+        end if
+      end while
     end if
     i = 0
     while i < tx.suffix.length do

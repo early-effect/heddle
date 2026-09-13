@@ -135,6 +135,7 @@ object WebSocketSpec extends ZIOSpecDefault:
       acc += b.toByte
     val raw = String(acc.toArray, StandardCharsets.US_ASCII)
     (raw, raw)
+  end upgrade
 
   private def writeFrame(out: OutputStream, text: String): Unit =
     writeOpcode(out, 1, text.getBytes(StandardCharsets.UTF_8))

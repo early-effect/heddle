@@ -17,6 +17,7 @@ private[heddle] object FrameCodec:
     head(7) = ((streamId >>> 8) & 0xff).toByte
     head(8) = (streamId & 0xff).toByte
     Chunk.fromArray(head) ++ payload
+  end encode
 
   def decode(bytes: Chunk[Byte], maxFrame: Int): Either[String, (H2Frame, Chunk[Byte])] =
     if bytes.length < 9 then Left("short header")
@@ -32,6 +33,7 @@ private[heddle] object FrameCodec:
         val payload = bytes.drop(9).take(len)
         val rest    = bytes.drop(9 + len)
         body(tpe, flags, streamId, payload).map(_ -> rest)
+      end if
 
   private def parts(frame: H2Frame): (Int, Int, Int, Chunk[Byte]) =
     frame match

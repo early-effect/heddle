@@ -69,6 +69,8 @@ object SseCodec:
           i += 1
           start = i
         else i += 1
+        end if
+      end while
       buf += data.substring(start)
       buf.result()
 
@@ -114,6 +116,7 @@ object SseCodec:
           case "retry" =>
             value.toLongOption.filter(_ >= 0).foreach(ms => retry = Some(Duration.fromMillis(ms)))
           case _ => ()
+        end match
       end if
       i = eol
     end while

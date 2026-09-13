@@ -21,6 +21,7 @@ private[heddle] object Http1:
   ): ZIO[R, HttpError, Unit] =
     val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize, config.maxHeaderBytes))
     serveConnection(routes, ConnBuf.fromPull(buf, pull), send, config, takingWork, busy)
+  end serveConnection
 
   def serveConnection[R](
       routes: Routes[R, Response],

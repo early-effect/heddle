@@ -150,6 +150,7 @@ object Client:
       ssl.setSSLParameters(params)
       ssl.startHandshake()
       TlsConn(ssl, ch)
+    end if
   end open
 
   private sealed trait Transport:
@@ -279,6 +280,7 @@ object Client:
             if c.isEmpty then ZIO.fail(None) else ZIO.succeed(c)
           }
         }
+    end match
   end bodyStream
 
   private def decodeSse(bytes: ZStream[Any, Throwable, Byte]): ZStream[Any, Throwable, ServerSentEvent] =
@@ -356,4 +358,6 @@ object Client:
       val path = Option(u.getRawQuery).fold(p)(q => s"$p?$q")
       val hh   = if u.getPort > 0 then s"$host:${u.getPort}" else host
       Target(scheme, host, port, path, hh)
+    end parse
+  end Target
 end Client

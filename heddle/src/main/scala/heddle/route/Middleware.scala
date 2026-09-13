@@ -170,6 +170,7 @@ object Middleware:
                 },
               )
           else handler.run(req)
+          end if
         else handler.run(req)
       }
     }
@@ -284,6 +285,7 @@ object Middleware:
     || ct.exists(_.isVideo)
     || ct.exists(m => m.mainType.contains("zip") || m.subType.contains("zip"))
     || res.headers.get(HeaderName.Upgrade).exists(_.toLowerCase.contains("websocket"))
+  end skipCompress
 
   private def pick(req: Request, compressors: Chunk[Compressor]): Option[Compressor] =
     val offered = req.headers.acceptEncoding

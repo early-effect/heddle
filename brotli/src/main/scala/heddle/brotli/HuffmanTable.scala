@@ -22,6 +22,7 @@ private[brotli] object HuffmanTable:
         off += (v & mask) >>> TableBits
         br.dropBits((data(off) >>> 16) + TableBits)
         data(off) & 0xffff
+    end read
   end Table
 
   def build(codeLengths: Array[Int], rootBits: Int): Table =
@@ -221,6 +222,7 @@ private[brotli] object HuffmanTable:
         symbol += 1
         key = getNextKey(key, len)
         count(len) -= 1
+      end while
       len += 1
       step <<= 1
     end while

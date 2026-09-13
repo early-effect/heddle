@@ -83,6 +83,7 @@ private[heddle] object Ascii:
         arr(k) = raw(from + k)
         k += 1
       String(arr, StandardCharsets.US_ASCII)
+  end string
 
   def string(raw: Array[Byte], from: Int, until: Int): String =
     val len = until - from

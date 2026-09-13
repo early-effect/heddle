@@ -94,6 +94,7 @@ object Routes:
           )
         }
       )
+  end extension
 end Routes
 
 private[heddle] object Dispatch:
@@ -136,6 +137,7 @@ private[heddle] object Dispatch:
           else if lit.isEmpty then vari.get.lookup(parts, from + 1)
           else lit.get.lookup(parts, from + 1) ++ vari.get.lookup(parts, from + 1)
       here ++ rest
+    end lookup
   end Node
 
   private object Node:

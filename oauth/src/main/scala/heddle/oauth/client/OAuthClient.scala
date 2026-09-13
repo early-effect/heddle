@@ -149,6 +149,7 @@ object OAuthClient:
           else ZIO.fail(OAuthError.Protocol(s"token ${res.status.code}: $json"))
         }
       }
+    end postForm
 
     private def parseToken(json: String): TokenSet =
       TokenSet(
@@ -179,6 +180,7 @@ object OAuthClient:
           val end = json.indexWhere(c => c == ',' || c == '}' || c.isWhitespace, p)
           val to  = if end < 0 then json.length else end
           Some(json.substring(p, to))
+      end if
     end if
   end field
 end OAuthClient

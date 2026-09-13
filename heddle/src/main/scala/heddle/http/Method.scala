@@ -14,6 +14,7 @@ enum Method:
     this match
       case Custom(name) => name
       case named        => named.productPrefix
+end Method
 
 object Method:
   def parse(raw: String): Option[Method] =
@@ -46,5 +47,6 @@ object Method:
       case 7 if is("OPTIONS") => Some(OPTIONS)
       case 7 if is("CONNECT") => Some(CONNECT)
       case _                  => Some(Custom(Ascii.string(raw, from, until)))
+    end match
   end parse
 end Method

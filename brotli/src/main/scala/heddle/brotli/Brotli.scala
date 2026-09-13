@@ -30,6 +30,7 @@ object Brotli:
       w.writeBits(1, 1)
       w.writeBits(1, 1)
     w.finish()
+  end encodeArray
 end Brotli
 
 private object BrotliCompressor extends Compressor:

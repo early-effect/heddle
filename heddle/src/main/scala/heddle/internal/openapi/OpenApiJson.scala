@@ -131,6 +131,7 @@ private[heddle] object OpenApiJson:
         )
       case _ => Nil
     Json.Obj(("description" -> Json.Str(r.description)) :: content*)
+  end responseJson
 
   private def schemaJson(
       doc: SchemaDoc,

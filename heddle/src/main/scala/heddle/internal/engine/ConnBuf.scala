@@ -66,6 +66,7 @@ private[heddle] final class ConnBuf(
           }
       }
     go
+  end fillUntil
 
   def hasPrefix(bytes: Array[Byte]): Boolean =
     val n = bytes.length
@@ -79,6 +80,8 @@ private[heddle] final class ConnBuf(
         eq = a(off + i) == bytes(i)
         i += 1
       eq
+    end if
+  end hasPrefix
 
   def peek(n: Int): Chunk[Byte] =
     val take = n.min(buf.remaining()).max(0)
@@ -100,6 +103,7 @@ private[heddle] final class ConnBuf(
           case true  => go(acc)
         }
     if n <= 0 then ZIO.succeed(Chunk.empty) else go(Chunk.empty)
+  end takeExact
 
   def takeUpTo(n: Long): IO[HttpError, Chunk[Byte]] =
     if n <= 0 then ZIO.succeed(Chunk.empty)

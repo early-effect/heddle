@@ -12,3 +12,4 @@ object PathDsl:
   extension (inline literal: String)
     inline def /(inline next: String): PathCodec[Unit]        = PathCodec.lit(literal) / next
     inline def /[A](inline codec: PathCodec[A]): PathCodec[A] = PathCodec.lit(literal) / codec
+end PathDsl

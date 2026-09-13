@@ -23,6 +23,7 @@ private[heddle] object Huffman:
             acc &= (1L << bits) - 1
             cont = false
           case _ => cont = false
+      end while
     end while
     String(out.result(), java.nio.charset.StandardCharsets.ISO_8859_1)
   end decode
@@ -40,7 +41,9 @@ private[heddle] object Huffman:
             case Some((_, bn)) if bn <= n => ()
             case _                        => best = Some((s, n))
       s += 1
+    end while
     best
+  end matchSymbol
 
   private val codes: Array[Long] = Array.ofDim(257)
   private val lens: Array[Int]   = Array.ofDim(257)

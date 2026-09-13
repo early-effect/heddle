@@ -15,3 +15,4 @@ object StatusSpec extends ZIOSpecDefault:
       test("fromCode synthesizes Unknown off catalog"):
         assertTrue(Status.fromCode(599) == Status(599, "Unknown")),
     )
+end StatusSpec

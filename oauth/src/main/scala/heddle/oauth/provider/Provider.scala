@@ -101,6 +101,7 @@ object Provider:
            |</form>""".stripMargin
       )
     )
+  end loginGet
 
   private def loginPost(config: ProviderConfig, stores: ProviderStores, req: Request): UIO[Response] =
     req.body.asForm.orDie.flatMap { form =>
@@ -281,6 +282,8 @@ object Provider:
               case None    => Some(c)
               case Some(h) => if secret.exists(Passwords.check(_, h)) then Some(c) else None
         }
+    end match
+  end clientOf
 
   private def sessionUser(stores: ProviderStores, req: Request): UIO[Option[UserRecord]] =
     req.cookie("op_session") match

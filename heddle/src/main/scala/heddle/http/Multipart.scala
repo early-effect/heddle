@@ -66,6 +66,7 @@ object Multipart:
           b ++= ascii(s"Content-Type: ${ct.render}\r\n\r\n")
           b ++= data
           b ++= ascii("\r\n")
+      end match
     }
     b ++= ascii(s"$dash--\r\n")
     b.result()
@@ -143,6 +144,7 @@ object Multipart:
                   FormField.Text(name, String(body.toArray, StandardCharsets.UTF_8), ct)
             )
           )
+      end match
     end if
   end parsePart
 
@@ -174,6 +176,8 @@ object Multipart:
       else
         val end = header.indexOf(';', i)
         Some((if end < 0 then header.substring(i) else header.substring(i, end)).trim)
+    end if
+  end param
 
   private def indexOf(hay: Array[Byte], needle: Array[Byte], from: Int): Int =
     var i = from
@@ -186,6 +190,7 @@ object Multipart:
       if same then return i
       i += 1
     -1
+  end indexOf
 
   private def startsWith(hay: Array[Byte], from: Int, needle: Array[Byte]): Boolean =
     from >= 0 && from + needle.length <= hay.length && needle.indices.forall(j => hay(from + j) == needle(j))

@@ -13,6 +13,7 @@ final case class OpenApi(
 
   def routes(prefix: String = "docs"): Routes[Any, Nothing] =
     SwaggerUI.routes(this, prefix)
+end OpenApi
 
 object OpenApi:
   def from(title: String, version: String, endpoints: Endpoint[?, ?, ?]*): OpenApi =

@@ -16,3 +16,4 @@ trait HeddleApp extends ZIOAppDefault:
       Server
         .serve(routes, config)
         .catchAllCause(c => if c.isInterruptedOnly then ZIO.unit else ZIO.refailCause(c))
+end HeddleApp

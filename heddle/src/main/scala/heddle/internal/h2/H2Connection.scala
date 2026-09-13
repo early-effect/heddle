@@ -104,6 +104,7 @@ private[heddle] object H2Connection:
               put *> (if end then
                         received.remove(id); q.offer(None).unit
                       else ZIO.unit)
+        end if
       case H2Frame.Headers(id, block, endStream, endHeaders, _, _, _) =>
         val prev = acc.getOrElse(id, Chunk.empty)
         val next = prev ++ block
@@ -172,6 +173,7 @@ private[heddle] object H2Connection:
     var hs   = Headers(hdrs.filterNot(_._1.startsWith(":")).map((n, v) => Header(n, v)))
     if h2ws then hs = hs.add(":protocol", "websocket")
     Request(method, Url.parse(path), hs, body, HttpVersion.Http2, secure)
+  end requestOf
 
   private def respond(
       out: Queue[H2Frame],

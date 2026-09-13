@@ -14,6 +14,7 @@ final case class Form(fields: Chunk[(String, String)]):
   def isEmpty: Boolean = fields.isEmpty
 
   def render: String = Form.encode(this)
+end Form
 
 object Form:
   val empty: Form = Form(Chunk.empty)

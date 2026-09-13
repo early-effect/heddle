@@ -39,6 +39,7 @@ private[brotli] object Decoder:
         br.jumpToByteBoundary()
         out ++= br.copyBytes(hdr.length)
       else distI = compressed(br, out, hdr.length, maxBack, distRb, distI)
+    end while
     br.jumpToByteBoundary()
     out.toArray
   end decode
@@ -152,6 +153,7 @@ private[brotli] object Decoder:
       typeRb(off) = typeRb(off + 1)
       typeRb(off + 1) = btype
       btype
+    end switchType
 
     while mlen > 0 do
       if blen(1) == 0 then
@@ -210,6 +212,7 @@ private[brotli] object Decoder:
           val n      = (distCode >>> 1) + 1
           val offset = ((2 + (distCode & 1)) << n) - 4
           distCode = nDirect + postfix + ((offset + br.readBits(n)) << postfixBits)
+      end if
       val distance = translateShort(distCode, distRb, distI)
       if distance < 0 then throw BrotliException("negative distance")
       val maxDistance = math.min(out.length, maxBack)
@@ -284,6 +287,7 @@ private[brotli] object Decoder:
       else
         map(i) = (code - maxRun).toByte
         i += 1
+      end if
     end while
     if br.readBits(1) == 1 then inverseMtf(map)
     (map, ntrees)
@@ -303,4 +307,6 @@ private[brotli] object Decoder:
           j -= 1
         mtf(0) = value
       i += 1
+    end while
+  end inverseMtf
 end Decoder

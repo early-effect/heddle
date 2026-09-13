@@ -75,6 +75,7 @@ object Handler:
               .add(HeaderName.SecWebSocketAccept, heddle.ws.WsCodec.acceptKey(key.get)),
           )
         )
+      end if
 end Handler
 
 def handler[R, E](f: Request => ZIO[R, E, Response]): Handler[R, E] = Handler(f)
