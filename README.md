@@ -30,6 +30,12 @@ Optional brotli encoder (our code, RFC 7932, no JNI):
 libraryDependencies += "rocks.earlyeffect" %% "heddle-brotli" % "VERSION"
 ```
 
+Optional OAuth2 / OIDC (resource server, client, and a deployable provider):
+
+```scala
+libraryDependencies += "rocks.earlyeffect" %% "heddle-oauth" % "VERSION"
+```
+
 ## Routes
 
 ```scala
@@ -60,6 +66,43 @@ Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))
 ```
 
 ALPN offers `h2` and `http/1.1` on that bind. Cleartext still speaks both: the 24-byte HTTP/2 preface is h2c prior-knowledge, anything else is HTTP/1.1.
+
+## Auth
+
+HTTP primitives live in core. JWT verification lives in `heddle-oauth`.
+
+```scala
+import heddle.*
+
+val locked = Routes(Method.GET / "secret" -> Handler.text("ok")) @@ Middleware.basicAuth("ada", "pw")
+
+val me = Routes(Method.GET / "me" -> handler(ZIO.serviceWith[User](u => Response.text(u.name))))
+val app = me.provided(Auth.bearer(token => lookup(token)))
+```
+
+`Endpoint.auth(SecurityScheme.HttpBearer())` documents OpenAPI `securitySchemes` so Swagger gets Authorize. Missing credentials from `Auth.*` are 401 with `WWW-Authenticate`.
+
+## OAuth / OIDC
+
+`heddle-oauth` signs and verifies JWTs (Nimbus under a Scala API), fetches JWKS, and speaks authorization-code+PKCE, client credentials, refresh, device, and userinfo.
+
+```scala
+import heddle.oauth.jose.SigningKey
+import heddle.oauth.rs.JwtVerifier
+
+val key   = SigningKey.generateRsa("k1")
+val token = heddle.oauth.jose.Jose.sign(key, "ada", issuer, "api", Set("openid"), 15.minutes)
+val v     = JwtVerifier.static(key.publicJwksJson, issuer, "api")
+```
+
+Run a loopback OpenID provider:
+
+```bash
+sbt "oauth/run"     # http://127.0.0.1:8080/.well-known/openid-configuration
+sbt "example/run"   # API + embedded OP + Swagger at /docs
+```
+
+Seed users: `ada` / `ada`. Machine client `machine` / `secret`. Store selection `heddle.oauth.store = memory | file | saferis` (saferis is a follow-up module; see `docs/roadmap.md`).
 
 ## Server-Sent Events
 

@@ -3,6 +3,9 @@ package example
 import java.nio.file.{Files as JFiles, Path}
 import heddle.*
 import heddle.json.given
+import heddle.oauth.jose.SigningKey
+import heddle.oauth.provider.*
+import heddle.oauth.rs.{JwtClaim, JwtVerifier}
 import heddle.sse.*
 import zio.*
 import zio.json.JsonCodec
@@ -10,8 +13,11 @@ import zio.json.JsonCodec
 final case class User(id: Int, name: String) derives Schema, JsonCodec
 final case class NewUser(name: String) derives Schema, JsonCodec
 final case class NotFound(message: String) derives Schema, JsonCodec
+final case class Me(sub: String, scopes: List[String]) derives Schema, JsonCodec
 
 object Main extends ZIOAppDefault:
+  private val issuer = "http://localhost:8080"
+
   private val getUser =
     Endpoint
       .get("users" / int("id"))
@@ -25,6 +31,20 @@ object Main extends ZIOAppDefault:
       .post("users")
       .inJson[NewUser]
       .out[User](Status.Created)
+      .auth(
+        SecurityScheme.OAuth2(
+          "oauth2",
+          OAuthFlows(
+            authorizationCode = Some(
+              OAuthFlow(
+                authorizationUrl = Some(s"$issuer/authorize"),
+                tokenUrl = Some(s"$issuer/token"),
+                scopes = Map("openid" -> "OpenID", "profile" -> "Profile"),
+              )
+            )
+          ),
+        )
+      )
       .summary("Create a user")
       .tag("users")
 
@@ -35,34 +55,65 @@ object Main extends ZIOAppDefault:
       .summary("List users")
       .tag("users")
 
+  private val me =
+    Endpoint
+      .get("me")
+      .out[Me]
+      .auth(SecurityScheme.HttpBearer(bearerFormat = Some("JWT")))
+      .summary("Current subject")
+      .tag("auth")
+
   def run =
+    val key = SigningKey.generateRsa("op")
     for
       store  <- Ref.make(Map(1 -> User(1, "Ada")))
       nextId <- Ref.make(2)
-      routes = implemented(store, nextId) ++
-        preview ++
-        OpenApi.from("Heddle example", "0.1.0", getUser, createUser, listUsers).routes("docs")
-      _ <- ZIO.logInfo("listening on http://localhost:8080/docs and http://localhost:8080/preview")
+      stores <- MemoryStores.seed(
+        List(UserRecord("u1", "ada", Passwords.hash("ada"), Map("email" -> "ada@example.test"))),
+        List(
+          ClientRecord("web", None, List(s"$issuer/docs"), Set("authorization_code", "refresh_token")),
+          ClientRecord("swagger", None, List(s"$issuer/docs/oauth2-redirect.html"), Set("authorization_code")),
+          ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
+        ),
+      )
+      verifier <- JwtVerifier.static(key.publicJwksJson, issuer, "")
+      op     = Provider.routes(ProviderConfig(issuer), stores, key)
+      authed = (writes(store, nextId) ++ meRoutes)
+        .provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
+      admin  = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
+      routes = implemented(store) ++ authed ++ admin ++ op ++ preview ++
+        OpenApi.from("Heddle example", "0.1.0", getUser, createUser, listUsers, me).routes("docs")
+      _ <- ZIO.logInfo("listening on http://localhost:8080/docs (Authorize against the embedded OP)")
       _ <- Server.sbtInterruptExit
       _ <- Server
         .serve(routes @@ (Middleware.requestId() ++ Middleware.cors() ++ Middleware.debug))
         .provide(Server.Config.defaults)
         .catchAllCause(c => if c.isInterruptedOnly then ZIO.unit else ZIO.refailCause(c))
     yield ()
+    end for
+  end run
 
-  private def implemented(store: Ref[Map[Int, User]], nextId: Ref[Int]): Routes[Any, Response] =
+  private def implemented(store: Ref[Map[Int, User]]): Routes[Any, Response] =
     getUser.implement { id =>
       store.get.map(_.get(id).toRight(NotFound(s"user $id"))).flatMap(ZIO.fromEither)
     } ++
-      createUser.implement { body =>
+      listUsers.implement { _ =>
+        store.get.map(_.values.toList.sortBy(_.id))
+      }
+
+  private def writes(store: Ref[Map[Int, User]], nextId: Ref[Int]): Routes[JwtClaim, Response] =
+    createUser.implement { body =>
+      ZIO.service[JwtClaim] *>
         nextId.modify(n => n -> (n + 1)).flatMap { id =>
           val user = User(id, body.name)
           store.update(_ + (id -> user)).as(user)
         }
-      } ++
-      listUsers.implement { _ =>
-        store.get.map(_.values.toList.sortBy(_.id))
-      }
+    }
+
+  private def meRoutes: Routes[JwtClaim, Response] =
+    me.implement { _ =>
+      ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
+    }
 
   private def preview: Routes[Any, Response] =
     val dir = previewDir

@@ -122,7 +122,7 @@ lazy val oauth = project
 
 lazy val example = project
   .in(file("example"))
-  .dependsOn(json)
+  .dependsOn(json, oauth)
   .settings(commonSettings)
   .settings(
     name                 := "heddle-example",
