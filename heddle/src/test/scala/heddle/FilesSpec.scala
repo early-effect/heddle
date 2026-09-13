@@ -53,7 +53,64 @@ object FilesSpec extends ZIOSpecDefault:
           .flatMap { dir =>
             Files.fromPath(dir).either.ensuring(ZIO.attemptBlocking(JFiles.deleteIfExists(dir)).orDie)
           }
-          .map(e => assertTrue(e.isLeft)),
+          .map(e => assertTrue(e.isLeft))
+      ,
+      test("If-None-Match matching etag is 304"):
+        withTempFile("cache-me", ".txt") { path =>
+          Files.fromPath(path).flatMap { first =>
+            val tag = first.header("ETag").get
+            Files.fromPath(path, Request.get("/x").withHeader("If-None-Match", tag)).map { res =>
+              assertTrue(res.status == Status.NotModified, res.body.isEmpty)
+            }
+          }
+        }
+      ,
+      test("Range bytes=0-4 is 206"):
+        withTempFile("0123456789", ".txt") { path =>
+          Files.fromPath(path, Request.get("/x").withHeader("Range", "bytes=0-4")).flatMap { res =>
+            res.body.utf8.map { s =>
+              assertTrue(
+                res.status == Status.PartialContent,
+                s == "01234",
+                res.header("Content-Range").contains("bytes 0-4/10"),
+              )
+            }
+          }
+        }
+      ,
+      test("directory jail rejects .."):
+        withTempDir { dir =>
+          val secret = dir.resolve("secret.txt")
+          val pub    = dir.resolve("pub")
+          ZIO.attemptBlocking {
+            JFiles.createDirectories(pub)
+            JFiles.writeString(secret, "nope")
+            JFiles.writeString(pub.resolve("ok.txt"), "ok")
+          } *> {
+            val routes = Routes.fromHandler(Handler.text("fallback")) @@ Middleware.serveDirectory("/static", pub)
+            for
+              escaped <- routes(Request.get("/static/../secret.txt"))
+              direct  <- Files.fromDirectory(pub, "/static", Request.get("/static/../secret.txt"))
+            yield assertTrue(
+              escaped.body.asString == "fallback",
+              direct.isEmpty,
+            )
+          }
+        }
+      ,
+      test("serveDirectory serves a file"):
+        withTempDir { dir =>
+          ZIO.attemptBlocking(JFiles.writeString(dir.resolve("a.txt"), "hello dir")) *> {
+            val routes = Routes.empty @@ Middleware.serveDirectory("/static", dir)
+            routes(Request.get("/static/a.txt")).flatMap { res =>
+              res.body.utf8.map(s => assertTrue(res.status == Status.Ok, s == "hello dir"))
+            }
+          }
+        }
+      ,
+      test("requestLog still returns the handler response"):
+        val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.requestLog
+        routes(Request.get("/x")).map(res => assertTrue(res.body.asString == "ok")),
     ) @@ TestAspect.timeout(5.seconds)
 
   private def withTempFile[A](content: String, suffix: String)(use: Path => Task[A]): Task[A] =
@@ -64,4 +121,13 @@ object FilesSpec extends ZIOSpecDefault:
         p
       }
     )(p => ZIO.attemptBlocking(JFiles.deleteIfExists(p)).orDie)(use)
+
+  private def withTempDir[A](use: Path => Task[A]): Task[A] =
+    ZIO.acquireReleaseWith(
+      ZIO.attemptBlocking(JFiles.createTempDirectory("heddle-dir"))
+    )(dir =>
+      ZIO.attemptBlocking {
+        JFiles.walk(dir).sorted(java.util.Comparator.reverseOrder()).forEach(JFiles.deleteIfExists(_))
+      }.orDie
+    )(use)
 end FilesSpec

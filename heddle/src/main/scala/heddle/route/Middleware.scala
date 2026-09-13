@@ -2,7 +2,7 @@ package heddle.route
 
 import heddle.http.{Body, ContentEncoding, Method, Request, Response, Status}
 import heddle.http.header.HeaderName
-import heddle.server.{Compressor, Decompressor}
+import heddle.server.{Compressor, Decompressor, Files}
 import java.util.UUID
 import zio.*
 import zio.Chunk
@@ -62,6 +62,73 @@ object Middleware:
           case Some(res) => res
           case None      => Response.empty(Status.GatewayTimeout)
         }
+      }
+    }
+
+  def requestLog: Middleware[Any] =
+    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+      Handler { req =>
+        Clock.nanoTime.flatMap { start =>
+          handler.run(req).tap { res =>
+            Clock.nanoTime.flatMap { end =>
+              val ms  = (end - start) / 1_000_000
+              val rid = req.header(HeaderName.XRequestId).getOrElse("-")
+              val len = res.body.length.map(_.toString).getOrElse("-")
+              ZIO.logAnnotate("method", req.method.render) {
+                ZIO.logAnnotate("path", req.url.path.render) {
+                  ZIO.logAnnotate("status", res.status.code.toString) {
+                    ZIO.logAnnotate("request_id", rid) {
+                      ZIO.logInfo(s"${req.method.render} ${req.url.path.render} ${res.status.code} ${ms}ms bytes=$len")
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  def serveDirectory(urlPrefix: String, root: java.nio.file.Path, indexHtml: Boolean = true): Middleware[Any] =
+    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+      Handler { req =>
+        if req.method == Method.GET || req.method == Method.HEAD then
+          Files
+            .fromDirectory(root, urlPrefix, req, indexHtml)
+            .foldZIO(
+              _ => handler.run(req),
+              {
+                case Some(res) => ZIO.succeed(res)
+                case None      => handler.run(req)
+              },
+            )
+        else handler.run(req)
+      }
+    }
+
+  def serveResources(urlPrefix: String, resourceRoot: String = ""): Middleware[Any] =
+    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+      Handler { req =>
+        if req.method == Method.GET || req.method == Method.HEAD then
+          val prefix = if urlPrefix.startsWith("/") then urlPrefix else s"/$urlPrefix"
+          val path   = req.path.render
+          val rel    =
+            if path == prefix then ""
+            else if path.startsWith(prefix + "/") then path.substring(prefix.length + 1)
+            else ""
+          val name = List(resourceRoot.stripSuffix("/"), rel).filter(_.nonEmpty).mkString("/")
+          if rel.nonEmpty || path == prefix then
+            Files
+              .fromResource(name, req)
+              .foldZIO(
+                _ => handler.run(req),
+                {
+                  case Some(res) => ZIO.succeed(res)
+                  case None      => handler.run(req)
+                },
+              )
+          else handler.run(req)
+        else handler.run(req)
       }
     }
 
