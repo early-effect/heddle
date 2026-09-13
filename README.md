@@ -15,25 +15,25 @@ Methods are RFC 9110 plus PATCH; anything else is `Method.Custom` (CONNECT is na
 Core (ZIO only):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "VERSION"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.1.0"
 ```
 
 Optional zio-json adapter:
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle-zio-json" % "VERSION"
+libraryDependencies += "rocks.earlyeffect" %% "heddle-zio-json" % "0.1.0"
 ```
 
 Optional brotli encoder (our code, RFC 7932, no JNI):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle-brotli" % "VERSION"
+libraryDependencies += "rocks.earlyeffect" %% "heddle-brotli" % "0.1.0"
 ```
 
 Optional OAuth2 / OIDC (resource server, client, and a deployable provider):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle-oauth" % "VERSION"
+libraryDependencies += "rocks.earlyeffect" %% "heddle-oauth" % "0.1.0"
 ```
 
 ## Routes
