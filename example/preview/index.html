@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>heddle preview</title>
+<link rel="stylesheet" href="/preview/preview.css">
+<body>
+  <p>heddle preview</p>
+  <script>
+    new EventSource("/__preview/reload").addEventListener("reload", function () {});
+  </script>
+</body>
+</html>
