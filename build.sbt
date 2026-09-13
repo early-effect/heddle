@@ -116,6 +116,8 @@ lazy val oauth = project
     description          := "OAuth2 / OIDC client, resource server, and provider for heddle",
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
+    Compile / run / fork := true,
+    Compile / mainClass  := Some("heddle.oauth.provider.ProviderApp"),
   )
 
 lazy val example = project
