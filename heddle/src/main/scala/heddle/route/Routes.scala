@@ -80,13 +80,17 @@ object Routes:
   ) extends Routes[R, E]:
     def apply(request: Request): ZIO[R, E, Response] = dispatch(request)
 
-  extension [P: Tag, E](self: Routes[P, E])
-    def provided(extract: Request => ZIO[Any, Response, P]): Routes[Any, E] =
+  extension [R, E](self: Routes[R, E])
+    def provided[P: Tag, R0](extract: Request => ZIO[R0, Response, P]): Routes[R0, E] =
       fromHandler(
         Handler { req =>
           extract(req).foldZIO(
             res => ZIO.succeed(res),
-            p => self.apply(req).provideEnvironment(ZEnvironment(p)),
+            p =>
+              self
+                .apply(req)
+                .asInstanceOf[ZIO[P & R0, E, Response]]
+                .provideSomeEnvironment[R0](_ ++ ZEnvironment(p)),
           )
         }
       )

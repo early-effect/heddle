@@ -44,7 +44,8 @@ object SwaggerUI:
        |    window.onload = () => {
        |      window.ui = SwaggerUIBundle({
        |        url: "$specPath",
-       |        dom_id: "#swagger-ui"
+       |        dom_id: "#swagger-ui",
+       |        persistAuthorization: true
        |      });
        |    };
        |  </script>

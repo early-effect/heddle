@@ -1,6 +1,6 @@
 package heddle.internal.openapi
 
-import heddle.endpoint.{EndpointDoc, OpenApi, SchemaDoc, StatusDoc}
+import heddle.endpoint.{ApiKeyIn, EndpointDoc, OAuthFlow, OpenApi, SchemaDoc, SecurityScheme, StatusDoc}
 import scala.collection.mutable
 import zio.Chunk
 import zio.json.*
@@ -25,17 +25,23 @@ private[heddle] object OpenApiJson:
       }
     val schemaFields =
       components.toList.map((name, doc) => name -> schemaJson(doc, components, embedNamed = true))
-    val infoFields =
+    val schemes      = spec.endpoints.flatMap(_.security).distinctBy(_.name)
+    val schemeFields = schemes.map(s => s.name -> securitySchemeJson(s))
+    val infoFields   =
       List("title" -> Json.Str(spec.title), "version" -> Json.Str(spec.version)) ++
         spec.description.map(d => "description" -> Json.Str(d)).toList
+    val componentFields =
+      List(
+        if schemaFields.isEmpty then None else Some("schemas" -> Json.Obj(schemaFields*)),
+        if schemeFields.isEmpty then None else Some("securitySchemes" -> Json.Obj(schemeFields*)),
+      ).flatten
     val root =
       List(
         "openapi" -> Json.Str("3.1.0"),
         "info"    -> Json.Obj(infoFields*),
         "paths"   -> Json.Obj(paths*),
       ) ++ (
-        if schemaFields.isEmpty then Nil
-        else List("components" -> Json.Obj("schemas" -> Json.Obj(schemaFields*)))
+        if componentFields.isEmpty then Nil else List("components" -> Json.Obj(componentFields*))
       )
     Json.Obj(root*).toJson
   end render
@@ -100,7 +106,16 @@ private[heddle] object OpenApiJson:
         (if ep.tags.isEmpty then Nil else List("tags" -> Json.Arr(Chunk.fromIterable(ep.tags.map(Json.Str(_)))))) ++
         (if params.isEmpty then Nil else List("parameters" -> Json.Arr(Chunk.fromIterable(params)))) ++
         requestBody.toList ++
-        List("responses" -> Json.Obj(responses*))
+        List("responses" -> Json.Obj(responses*)) ++
+        (
+          if ep.security.isEmpty then Nil
+          else
+            List(
+              "security" -> Json.Arr(
+                Chunk.fromIterable(ep.security.map(s => Json.Obj(s.name -> Json.Arr())))
+              )
+            )
+        )
     Json.Obj(fields*)
   end operationJson
 
@@ -155,4 +170,41 @@ private[heddle] object OpenApiJson:
 
   private def typed(tpe: String, format: Option[String]): Json =
     Json.Obj(List("type" -> Json.Str(tpe)) ++ format.map(f => "format" -> Json.Str(f)).toList*)
+
+  private def securitySchemeJson(scheme: SecurityScheme): Json =
+    scheme match
+      case SecurityScheme.HttpBasic(_) =>
+        Json.Obj("type" -> Json.Str("http"), "scheme" -> Json.Str("basic"))
+      case SecurityScheme.HttpBearer(_, format) =>
+        Json.Obj(
+          List("type" -> Json.Str("http"), "scheme" -> Json.Str("bearer")) ++
+            format.map(f => "bearerFormat" -> Json.Str(f)).toList*
+        )
+      case SecurityScheme.ApiKey(_, in, paramName) =>
+        val loc = in match
+          case ApiKeyIn.Header => "header"
+          case ApiKeyIn.Query  => "query"
+          case ApiKeyIn.Cookie => "cookie"
+        Json.Obj("type" -> Json.Str("apiKey"), "in" -> Json.Str(loc), "name" -> Json.Str(paramName))
+      case SecurityScheme.OAuth2(_, flows) =>
+        Json.Obj("type" -> Json.Str("oauth2"), "flows" -> oauthFlowsJson(flows))
+      case SecurityScheme.OpenIdConnect(_, issuer) =>
+        Json.Obj("type" -> Json.Str("openIdConnect"), "openIdConnectUrl" -> Json.Str(issuer))
+
+  private def oauthFlowsJson(flows: heddle.endpoint.OAuthFlows): Json =
+    val fields =
+      flows.authorizationCode.map(f => "authorizationCode" -> oauthFlowJson(f, auth = true)).toList ++
+        flows.clientCredentials.map(f => "clientCredentials" -> oauthFlowJson(f, auth = false)).toList ++
+        flows.password.map(f => "password" -> oauthFlowJson(f, auth = false)).toList
+    Json.Obj(fields*)
+
+  private def oauthFlowJson(flow: OAuthFlow, auth: Boolean): Json =
+    val fields =
+      (if auth then flow.authorizationUrl.map(u => "authorizationUrl" -> Json.Str(u)).toList else Nil) ++
+        flow.tokenUrl.map(u => "tokenUrl" -> Json.Str(u)).toList ++
+        flow.refreshUrl.map(u => "refreshUrl" -> Json.Str(u)).toList ++
+        List(
+          "scopes" -> Json.Obj(flow.scopes.toList.map((k, v) => k -> Json.Str(v))*)
+        )
+    Json.Obj(fields*)
 end OpenApiJson

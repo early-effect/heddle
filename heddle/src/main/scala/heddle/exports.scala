@@ -72,7 +72,12 @@ export heddle.endpoint.{
   OpenApi,
   SwaggerUI,
   JsonCodec,
+  SecurityScheme,
+  ApiKeyIn,
+  OAuthFlow,
+  OAuthFlows,
 }
+export heddle.auth.Auth
 export heddle.server.{HeddleApp, Tls, Files, Compressor, Decompressor, Http2Config}
 export heddle.client.Client
 export heddle.error.{HeddleError, HttpError, ServerError}

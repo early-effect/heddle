@@ -27,6 +27,7 @@ Core packages under `heddle/src/main/scala/heddle/`:
 | `server/` | Tls, Files, Compressor, Http2Config, HeddleApp |
 | `client/` | Client |
 | `error/` | HeddleError, HttpError, ServerError |
+| `auth/` | Basic, Bearer, API key extractors. JWT lives in `heddle-oauth`. |
 | `sse/` `ws/` `datastar/` | Public subpackages. Datastar `readSignals` is an extension on Request, not a Request method. |
 | `internal/` | Ascii, ConnBuf, Nio, Http1, OpenAPI printer |
 | `internal/h2/` | HTTP/2 engine (`private[heddle]`) |

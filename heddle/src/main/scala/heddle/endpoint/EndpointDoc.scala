@@ -25,4 +25,5 @@ final case class EndpointDoc(
     summary: Option[String],
     description: Option[String],
     tags: List[String],
+    security: List[SecurityScheme] = Nil,
 )

@@ -1,7 +1,9 @@
 package heddle.route
 
+import heddle.auth.Auth
+import heddle.endpoint.ApiKeyIn
 import heddle.http.{Body, ContentEncoding, Method, Request, Response, Status}
-import heddle.http.header.HeaderName
+import heddle.http.header.{BasicCredentials, HeaderName}
 import heddle.server.{Compressor, Decompressor, Files}
 import java.util.UUID
 import zio.*
@@ -20,6 +22,46 @@ object Middleware:
   val identity: Middleware[Any] =
     new Middleware[Any]:
       def apply[R1 <: Any, E](routes: Routes[R1, E]): Routes[R1, E] = routes
+
+  def basicAuth(username: String, password: String): Middleware[Any] =
+    basicAuth((c: BasicCredentials) => c.username == username && c.password == password)
+
+  def basicAuth(validate: BasicCredentials => Boolean): Middleware[Any] =
+    interceptZIO(req => Auth.basic(validate)(req).as(req))
+
+  def basicAuthZIO[R](validate: BasicCredentials => ZIO[R, Nothing, Boolean]): Middleware[R] =
+    interceptZIO { req =>
+      Auth
+        .basicZIO[R] { c =>
+          validate(c).flatMap(ok => if ok then ZIO.succeed(c) else ZIO.fail(Auth.unauthorizedBasic))
+        }(req)
+        .as(req)
+    }
+
+  def bearerAuth(validate: String => Boolean): Middleware[Any] =
+    interceptZIO { req =>
+      Auth.bearer(t => if validate(t) then ZIO.succeed(t) else ZIO.fail(Auth.unauthorizedBearer))(req).as(req)
+    }
+
+  def bearerAuthZIO[R](validate: String => ZIO[R, Nothing, Boolean]): Middleware[R] =
+    interceptZIO { req =>
+      Auth
+        .bearer { t =>
+          validate(t).flatMap(ok => if ok then ZIO.succeed(t) else ZIO.fail(Auth.unauthorizedBearer))
+        }(req)
+        .as(req)
+    }
+
+  def apiKey(header: String, validate: String => Boolean): Middleware[Any] =
+    interceptZIO { req =>
+      Auth
+        .apiKey(
+          ApiKeyIn.Header,
+          header,
+          v => if validate(v) then ZIO.succeed(v) else ZIO.fail(Auth.unauthorizedApiKey(header)),
+        )(req)
+        .as(req)
+    }
 
   def intercept(f: Request => Request): Middleware[Any] =
     interceptZIO(req => ZIO.succeed(f(req)))

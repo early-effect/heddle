@@ -132,6 +132,13 @@ sealed abstract class Endpoint[In, Err, Out]:
   def tag(tagName: String): Endpoint[In, Err, Out] =
     replace(encodeOut, encodeErr, doc.copy(tags = doc.tags :+ tagName))
 
+  def auth(scheme: SecurityScheme, extra: SecurityScheme*): Endpoint[In, Err, Out] =
+    val schemes = scheme :: extra.toList
+    val docs    =
+      if doc.responses.exists(_.status == Status.Unauthorized) then doc.responses
+      else doc.responses :+ StatusDoc(Status.Unauthorized, None, None, "Unauthorized")
+    replace(encodeOut, encodeErr, doc.copy(security = doc.security ++ schemes, responses = docs))
+
   def mapIn[B](f: In => B): Endpoint[B, Err, Out] =
     bindSync((in, _) => Right(f(in)), doc)
 
