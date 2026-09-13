@@ -45,6 +45,15 @@ object TlsSpec extends ZIOSpecDefault:
             }
         }
       ,
+      test("heddle Client GETs HTTPS with a custom trust store"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
+          Client
+            .batched(Request.get(s"$base/health"))
+            .provide(ZLayer.succeed(Client.Config(ssl = TlsFixture.ssl)) >>> Client.layer)
+            .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+        }
+      ,
       test("requireTls forbids cleartext and allows HTTPS"):
         val routes = Routes(Method.GET / "s" -> Handler.text("sec")) @@ Middleware.requireTls
         val got    =
@@ -71,8 +80,9 @@ end TlsSpec
 object TlsFixture:
   private lazy val generated: (String, String, SSLContext) = generate()
 
-  def certPem: String = generated._1
-  def keyPem: String  = generated._2
+  def certPem: String               = generated._1
+  def keyPem: String                = generated._2
+  def ssl: javax.net.ssl.SSLContext = generated._3
 
   def client(version: HttpClient.Version): HttpClient =
     HttpClient.newBuilder().sslContext(generated._3).version(version).build()

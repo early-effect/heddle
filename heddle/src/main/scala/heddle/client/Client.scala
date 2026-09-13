@@ -20,7 +20,27 @@ object Client:
   def batched(req: Request): ZIO[Client, Throwable, Response] =
     ZIO.serviceWithZIO(_.batched(req))
 
-  val live: ULayer[Client] = ZLayer.succeed(Live)
+  final case class Config(
+      ssl: javax.net.ssl.SSLContext = javax.net.ssl.SSLContext.getDefault,
+      poolSize: Int = 10,
+      addUserAgent: Boolean = true,
+  )
+
+  def layer: ZLayer[Config, Nothing, Client] =
+    ZLayer.scoped {
+      for
+        cfg  <- ZIO.service[Config]
+        idle <- Ref.make(Map.empty[PoolKey, Chunk[Transport]])
+        _    <- ZIO.addFinalizer(
+          idle.get.flatMap { m =>
+            ZIO.foreachDiscard(m.values.flatMap(_.toList))(t => ZIO.succeed(t.close()))
+          }
+        )
+      yield Pooled(cfg, idle)
+    }
+
+  val live: ULayer[Client] =
+    ZLayer.succeed(Config()) >>> layer
 
   def get(url: String): Task[Response] =
     request(Method.GET, url, Headers.empty, Body.empty)
@@ -28,34 +48,140 @@ object Client:
   def request(base: String, req: Request): Task[Response] =
     request(req.method, join(base, req.url.render), req.headers, req.body)
 
-  private object Live extends Client:
+  def request(method: Method, url: String, headers: Headers = Headers.empty, body: Body = Body.empty): Task[Response] =
+    oneShot(Config(), method, url, headers, body)
+
+  private def oneShot(
+      cfg: Config,
+      method: Method,
+      url: String,
+      headers: Headers,
+      body: Body,
+  ): Task[Response] =
+    ZIO.scoped {
+      for
+        target <- ZIO.attempt(Target.parse(url))
+        t      <- ZIO.acquireRelease(ZIO.attempt(open(cfg, target)))(c => ZIO.succeed(c.close()))
+        _      <- writeRequest(t, method, target, prepare(cfg, headers), body)
+        res    <- readResponse(t)
+      yield decodeBody(res)
+    }
+
+  private final class Pooled(cfg: Config, idle: Ref[Map[PoolKey, Chunk[Transport]]]) extends Client:
     def batched(req: Request): Task[Response] =
       val url =
         if req.url.absolute then req.url.render
         else
           req.header("Host") match
-            case Some(h) => s"http://$h${req.url.render}"
-            case None    => req.url.render
-      Client.request(req.method, url, req.headers, req.body)
+            case Some(h) =>
+              val scheme = if req.secure then "https" else "http"
+              s"$scheme://$h${req.url.render}"
+            case None => req.url.render
+      ZIO.scoped {
+        for
+          target <- ZIO.attempt(Target.parse(url))
+          key = PoolKey(target.scheme, target.host, target.port)
+          t   <- acquire(key, target)
+          res <- writeRequest(t, req.method, target, prepare(cfg, req.headers), req.body)
+            .zipRight(readResponse(t))
+            .tapError(_ => ZIO.succeed(t.close()))
+          _ <-
+            if reusable(req.headers, res.headers) then release(key, t)
+            else ZIO.succeed(t.close())
+        yield decodeBody(res)
+      }
+    end batched
 
-  def request(method: Method, url: String, headers: Headers = Headers.empty, body: Body = Body.empty): Task[Response] =
-    ZIO.scoped {
-      for
-        target <- ZIO.attempt(Target.parse(url))
-        ch     <- ZIO.acquireRelease(ZIO.attempt(open(target)))(c => ZIO.succeed(closeQuietly(c)))
-        _      <- writeRequest(ch, method, target, headers, body)
-        res    <- readResponse(ch)
-      yield res
-    }
+    private def acquire(key: PoolKey, target: Target): Task[Transport] =
+      idle
+        .modify { m =>
+          m.getOrElse(key, Chunk.empty) match
+            case Chunk() => (None, m)
+            case ts      => (Some(ts.head), m.updated(key, ts.drop(1)))
+        }
+        .flatMap {
+          case Some(t) => ZIO.succeed(t)
+          case None    => ZIO.attempt(open(cfg, target))
+        }
+
+    private def release(key: PoolKey, t: Transport): UIO[Unit] =
+      idle.update { m =>
+        val cur = m.getOrElse(key, Chunk.empty)
+        if cur.length >= cfg.poolSize then
+          t.close()
+          m
+        else m.updated(key, cur :+ t)
+      }
+  end Pooled
+
+  private def prepare(cfg: Config, headers: Headers): Headers =
+    var hdrs = headers
+    if cfg.addUserAgent && !hdrs.has(HeaderName.UserAgent) then hdrs = hdrs.add(HeaderName.UserAgent, "heddle")
+    if !hdrs.has(HeaderName.AcceptEncoding) then hdrs = hdrs.add(HeaderName.AcceptEncoding, "gzip")
+    hdrs
+
+  private def reusable(req: Headers, res: Headers): Boolean =
+    !req.get(HeaderName.Connection).exists(_.toLowerCase.contains("close")) &&
+      !res.get(HeaderName.Connection).exists(_.toLowerCase.contains("close"))
+
+  private def decodeBody(res: Response): Response =
+    if res.headers.contentEncoding.contains(heddle.http.ContentEncoding.Gzip) then
+      val raw = res.body.asBytes
+      val out = heddle.server.Decompressor.gzip.decompress(raw)
+      res
+        .copy(headers = res.headers.remove(HeaderName.ContentEncoding).remove(HeaderName.ContentLength))
+        .withBody(Body.fromBytes(out, res.body.mediaType))
+    else res
+
+  private def open(cfg: Config, target: Target): Transport =
+    val ch = SocketChannel.open()
+    ch.connect(InetSocketAddress(target.host, target.port))
+    if !target.tls then Plain(ch)
+    else
+      val sock = ch.socket()
+      val ssl  = cfg.ssl.getSocketFactory
+        .createSocket(sock, target.host, target.port, true)
+        .asInstanceOf[javax.net.ssl.SSLSocket]
+      ssl.setUseClientMode(true)
+      val params = ssl.getSSLParameters
+      params.setEndpointIdentificationAlgorithm("HTTPS")
+      try params.setServerNames(java.util.List.of(javax.net.ssl.SNIHostName(target.host)))
+      catch case _: IllegalArgumentException => ()
+      ssl.setSSLParameters(params)
+      ssl.startHandshake()
+      TlsConn(ssl, ch)
+  end open
+
+  private sealed trait Transport:
+    def src: ConnBuf
+    def send: Chunk[Byte] => Task[Unit]
+    def close(): Unit
+
+  private final case class Plain(ch: SocketChannel) extends Transport:
+    def src: ConnBuf                    = ConnBuf.channel(ByteBuffer.allocate(64 * 1024), ch)
+    def send: Chunk[Byte] => Task[Unit] =
+      val scratch = ByteBuffer.allocate(8192)
+      Nio.writer(ch, scratch)
+    def close(): Unit = closeQuietly(ch)
+
+  private final case class TlsConn(ssl: javax.net.ssl.SSLSocket, ch: SocketChannel) extends Transport:
+    def src: ConnBuf                    = ConnBuf.inputStream(ByteBuffer.allocate(64 * 1024), ssl.getInputStream)
+    def send: Chunk[Byte] => Task[Unit] = heddle.server.Tls.writer(ssl.getOutputStream)
+    def close(): Unit                   =
+      try ssl.close()
+      catch case _: Throwable => ()
+      closeQuietly(ch)
+
+  private final case class PoolKey(scheme: String, host: String, port: Int)
 
   /** Incremental `text/event-stream` parse. Keeps the connection open until the stream ends or is interrupted. */
   def sse(url: String): ZStream[Any, Throwable, ServerSentEvent] =
     ZStream.unwrapScoped {
       for
         target <- ZIO.attempt(Target.parse(url))
-        ch     <- ZIO.acquireRelease(ZIO.attempt(open(target)))(c => ZIO.succeed(closeQuietly(c)))
-        _      <- writeRequest(ch, Method.GET, target, Headers.empty, Body.empty)
-        src = ConnBuf.channel(ByteBuffer.allocate(64 * 1024), ch)
+        t      <- ZIO.acquireRelease(ZIO.attempt(open(Config(), target)))(c => ZIO.succeed(c.close()))
+        _      <- writeRequest(t, Method.GET, target, Headers.empty, Body.empty)
+        src = t.src
         raw    <- src.takeHeaders(64 * 1024).mapError(e => java.io.IOException(e.message))
         parsed <- raw match
           case None    => ZIO.fail(java.io.IOException("empty response"))
@@ -65,26 +191,20 @@ object Client:
       yield decodeSse(bodyStream(src, headers))
     }
 
-  private def open(target: Target): SocketChannel =
-    val ch = SocketChannel.open()
-    ch.connect(InetSocketAddress(target.host, target.port))
-    ch
-
   private def closeQuietly(ch: SocketChannel): Unit =
     try ch.close()
     catch case _: Throwable => ()
 
   private def writeRequest(
-      ch: SocketChannel,
+      t: Transport,
       method: Method,
       target: Target,
       headers: Headers,
       body: Body,
   ): Task[Unit] =
-    val scratch = ByteBuffer.allocate(8192)
-    val send    = Nio.writer(ch, scratch)
-    val len     = body.length
-    var hdrs    = headers
+    val send = t.send
+    val len  = body.length
+    var hdrs = headers
     if !hdrs.has(HeaderName.Host) then hdrs = hdrs.add(HeaderName.Host, target.hostHeader)
     len.foreach(n => if !hdrs.has(HeaderName.ContentLength) then hdrs = hdrs.add(HeaderName.ContentLength, n.toString))
     body.mediaType.foreach(mt =>
@@ -100,9 +220,8 @@ object Client:
         case Body.Stream(s, _, _) => s.runForeachChunk(send))
   end writeRequest
 
-  private def readResponse(ch: SocketChannel): Task[Response] =
-    val buf = ByteBuffer.allocate(64 * 1024)
-    val src = ConnBuf.channel(buf, ch)
+  private def readResponse(t: Transport): Task[Response] =
+    val src = t.src
     src
       .takeHeaders(64 * 1024)
       .mapError(e => java.io.IOException(e.message))
@@ -221,15 +340,20 @@ object Client:
     else if path.startsWith("/") then b + path
     else b + "/" + path
 
-  private final case class Target(host: String, port: Int, path: String, hostHeader: String)
+  private final case class Target(scheme: String, host: String, port: Int, path: String, hostHeader: String):
+    def tls: Boolean = scheme == "https"
 
   private object Target:
     def parse(url: String): Target =
-      val u    = java.net.URI(url)
-      val host = Option(u.getHost).getOrElse("127.0.0.1")
-      val port = if u.getPort > 0 then u.getPort else 80
+      val u      = java.net.URI(url)
+      val scheme = Option(u.getScheme).getOrElse("http").toLowerCase
+      val host   = Option(u.getHost).getOrElse("127.0.0.1")
+      val port   =
+        if u.getPort > 0 then u.getPort
+        else if scheme == "https" then 443
+        else 80
       val p    = Option(u.getRawPath).filter(_.nonEmpty).getOrElse("/")
       val path = Option(u.getRawQuery).fold(p)(q => s"$p?$q")
       val hh   = if u.getPort > 0 then s"$host:${u.getPort}" else host
-      Target(host, port, path, hh)
+      Target(scheme, host, port, path, hh)
 end Client
