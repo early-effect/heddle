@@ -58,7 +58,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, example)
+  .aggregate(heddle, json, brotli, oauth, example)
   .settings(
     name           := "heddle-root",
     publish / skip := true,
@@ -88,8 +88,8 @@ lazy val brotli = project
     description          := "RFC 7932 brotli encoder for heddle",
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
-    libraryDependencies += "org.brotli" % "dec" % "0.1.2" % Test,
   )
+  .settings(MyVersions.brotliTest)
 
 lazy val json = project
   .in(file("json"))
@@ -100,6 +100,20 @@ lazy val json = project
   .settings(
     name                 := "heddle-zio-json",
     description          := "zio-json JsonCodec for heddle",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+
+lazy val oauth = project
+  .in(file("oauth"))
+  .dependsOn(heddle % "compile->compile;test->test", json)
+  .settings(commonSettings)
+  .settings(MyVersions.coreLib)
+  .settings(MyVersions.coreTest)
+  .settings(MyVersions.oauthLib)
+  .settings(
+    name                 := "heddle-oauth",
+    description          := "OAuth2 / OIDC client, resource server, and provider for heddle",
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
   )
