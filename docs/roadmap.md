@@ -22,7 +22,7 @@ Memory and File remain optional provided impls. Bringing your own `ProviderStore
 
 ## Later: public-readiness
 
-- Specular docs (auth, oauth client, resource server, provider deploy, store config).
+- Specular docs site is in-tree (`docs/` + `docs-js/`, `ZipxDocs.pages`). Hub listing waits on the first Pages deploy (`metadata.json`), then `catalog-urls.txt` on early-effect.github.io.
 - First Central tag (`ZipxCentral` is already wired).
 - Ascent / specular branches off `publishLocal`.
 
