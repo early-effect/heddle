@@ -14,6 +14,8 @@ sealed abstract class Endpoint[In, Err, Out]:
   def decodeIn: (PathIn, Request) => IO[Response, In]
   def encodeOut: Out => Response
   def encodeErr: Err => Response
+  def outputCodec: Option[JsonCodec[Out]]
+  def errorCodec: Option[JsonCodec[Err]]
   def doc: EndpointDoc
 
   def query[Q](name: String)(using codec: QueryCodec[Q]): Endpoint[Combine[In, Q], Err, Out] =
@@ -80,6 +82,8 @@ sealed abstract class Endpoint[In, Err, Out]:
       encodeOut = o => Response(status).withBody(Body.fromBytes(j.encodeBytes(o), Some(MediaType.Json))),
       encodeErr = encodeErr,
       doc = doc.copy(responses = Endpoint.replaceSuccess(doc.responses, jsonStatus(status, s.doc))),
+      outputCodec = Some(j),
+      errorCodec = errorCodec,
     )
 
   def outText(status: Status = Status.Ok): Endpoint[In, Err, String] =
@@ -92,6 +96,8 @@ sealed abstract class Endpoint[In, Err, Out]:
           StatusDoc(status, Some(SchemaDoc.Str(None)), Some(MediaType.Text), status.text),
         )
       ),
+      outputCodec = Some(JsonCodec.from(identity, Right(_))),
+      errorCodec = errorCodec,
     )
 
   def outSse: Endpoint[In, Err, ZStream[Any, Throwable, ServerSentEvent]] =
@@ -104,6 +110,8 @@ sealed abstract class Endpoint[In, Err, Out]:
           StatusDoc(Status.Ok, Some(SchemaDoc.Str(None)), Some(MediaType.EventStream), "Server-Sent Events"),
         )
       ),
+      outputCodec = None,
+      errorCodec = errorCodec,
     )
 
   def outEmpty(status: Status = Status.NoContent): Endpoint[In, Err, Unit] =
@@ -111,6 +119,8 @@ sealed abstract class Endpoint[In, Err, Out]:
       encodeOut = (_: Unit) => Response.empty(status),
       encodeErr = encodeErr,
       doc = doc.copy(responses = Endpoint.replaceSuccess(doc.responses, StatusDoc(status, None, None, status.text))),
+      outputCodec = None,
+      errorCodec = errorCodec,
     )
 
   def outError[E1](status: Status)(using s: Schema[E1], j: JsonCodec[E1]): Endpoint[In, E1, Out] =
@@ -118,26 +128,40 @@ sealed abstract class Endpoint[In, Err, Out]:
       encodeOut = encodeOut,
       encodeErr = e => Response(status).withBody(Body.fromBytes(j.encodeBytes(e), Some(MediaType.Json))),
       doc = doc.copy(responses = doc.responses :+ jsonStatus(status, s.doc)),
+      outputCodec = outputCodec,
+      errorCodec = Some(j),
     )
 
   def name(id: String): Endpoint[In, Err, Out] =
-    replace(encodeOut, encodeErr, doc.copy(operationId = Some(id)))
+    replaceDoc(doc.copy(operationId = Some(id)))
 
   def summary(text: String): Endpoint[In, Err, Out] =
-    replace(encodeOut, encodeErr, doc.copy(summary = Some(text)))
+    replaceDoc(doc.copy(summary = Some(text)))
 
   def description(text: String): Endpoint[In, Err, Out] =
-    replace(encodeOut, encodeErr, doc.copy(description = Some(text)))
+    replaceDoc(doc.copy(description = Some(text)))
 
   def tag(tagName: String): Endpoint[In, Err, Out] =
-    replace(encodeOut, encodeErr, doc.copy(tags = doc.tags :+ tagName))
+    replaceDoc(doc.copy(tags = doc.tags :+ tagName))
+
+  def mcp: Endpoint[In, Err, Out] =
+    replaceDoc(doc.copy(promoted = true))
+
+  def mcp(name: String): Endpoint[In, Err, Out] =
+    replaceDoc(doc.copy(promoted = true, mcpName = Some(name)))
+
+  def nestBody: Endpoint[In, Err, Out] =
+    replaceDoc(doc.copy(nestBody = true))
+
+  def hints(h: Hint*): Endpoint[In, Err, Out] =
+    replaceDoc(doc.copy(hints = doc.hints ++ h.toList))
 
   def auth(scheme: SecurityScheme, extra: SecurityScheme*): Endpoint[In, Err, Out] =
     val schemes = scheme :: extra.toList
     val docs    =
       if doc.responses.exists(_.status == Status.Unauthorized) then doc.responses
       else doc.responses :+ StatusDoc(Status.Unauthorized, None, None, "Unauthorized")
-    replace(encodeOut, encodeErr, doc.copy(security = doc.security ++ schemes, responses = docs))
+    replaceDoc(doc.copy(security = doc.security ++ schemes, responses = docs))
 
   def mapIn[B](f: In => B): Endpoint[B, Err, Out] =
     bindSync((in, _) => Right(f(in)), doc)
@@ -157,6 +181,8 @@ sealed abstract class Endpoint[In, Err, Out]:
         },
       encodeOut,
       encodeErr,
+      outputCodec,
+      errorCodec,
       nextDoc,
     )
 
@@ -170,6 +196,8 @@ sealed abstract class Endpoint[In, Err, Out]:
       (pathIn, req) => decodeIn(pathIn, req).flatMap(in => next(in, req)),
       encodeOut,
       encodeErr,
+      outputCodec,
+      errorCodec,
       nextDoc,
     )
 
@@ -177,11 +205,16 @@ sealed abstract class Endpoint[In, Err, Out]:
       encodeOut: O1 => Response,
       encodeErr: E1 => Response,
       doc: EndpointDoc,
+      outputCodec: Option[JsonCodec[O1]],
+      errorCodec: Option[JsonCodec[E1]],
   ): Endpoint[In, E1, O1] =
-    Endpoint.Impl(method, path, decodeIn, encodeOut, encodeErr, doc)
+    Endpoint.Impl(method, path, decodeIn, encodeOut, encodeErr, outputCodec, errorCodec, doc)
 
-  def implement[R](f: In => ZIO[R, Err, Out]): Routes[R, Response] =
-    Routes(
+  private def replaceDoc(next: EndpointDoc): Endpoint[In, Err, Out] =
+    replace(encodeOut, encodeErr, next, outputCodec, errorCodec)
+
+  def implement[R](f: In => ZIO[R, Err, Out]): BoundOp[R, In, Err, Out] =
+    val routes = Routes(
       Route.from(
         method,
         path,
@@ -192,6 +225,8 @@ sealed abstract class Endpoint[In, Err, Out]:
           ),
       )
     )
+    BoundOp(this, f, routes)
+  end implement
 
   private def jsonStatus(status: Status, schema: SchemaDoc): StatusDoc =
     StatusDoc(status, Some(schema), Some(MediaType.Json), status.text)
@@ -226,6 +261,8 @@ object Endpoint:
       (pathIn, _) => ZIO.succeed(pathIn),
       _ => Response.empty(Status.NoContent),
       (n: Nothing) => n,
+      None,
+      None,
       EndpointDoc(
         method = method,
         pathTemplate = path.template,
@@ -247,9 +284,12 @@ object Endpoint:
       val decodeIn: (P, Request) => IO[Response, In],
       val encodeOut: Out => Response,
       val encodeErr: Err => Response,
+      val outputCodec: Option[JsonCodec[Out]],
+      val errorCodec: Option[JsonCodec[Err]],
       val doc: EndpointDoc,
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P
+  end Impl
 
   private def paramDoc(pair: (String, PathKind)): ParamDoc =
     val (name, kind) = pair

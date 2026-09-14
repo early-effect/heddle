@@ -69,6 +69,7 @@ export heddle.endpoint.{
   Schema,
   SchemaDoc,
   SchemaField,
+  SchemaJson,
   OpenApi,
   SwaggerUI,
   JsonCodec,
@@ -76,6 +77,10 @@ export heddle.endpoint.{
   ApiKeyIn,
   OAuthFlow,
   OAuthFlows,
+  Hint,
+  BoundOp,
+  Api,
+  OpArgs,
 }
 export heddle.auth.Auth
 export heddle.server.{HeddleApp, Tls, Files, Compressor, Decompressor, Http2Config}

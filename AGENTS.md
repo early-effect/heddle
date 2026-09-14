@@ -23,7 +23,7 @@ Core packages under `heddle/src/main/scala/heddle/`:
 | `http/` | Request, Response, Body, Method, Status, HttpVersion, Url, Path, QueryParams, MediaType, encodings |
 | `http/header/` | HeaderName, Header, Headers, TypedHeader, Cookie, Auth, Host, dates |
 | `route/` | Handler, Route, Routes, Middleware, PathCodec, PathDsl, QueryCodec, HeaderCodec. Path macros stay here. |
-| `endpoint/` | Endpoint, Schema, OpenApi, JsonCodec |
+| `endpoint/` | Endpoint, BoundOp, Api, Schema, OpenApi, JsonCodec, OpArgs |
 | `Server.scala` | `package heddle` (ZIO Tag). Do not `export Server`. |
 | `server/` | Tls, Files, Compressor, Http2Config, HeddleApp |
 | `client/` | Client |

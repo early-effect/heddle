@@ -42,8 +42,28 @@ Memory and File remain optional provided impls. Bringing your own `ProviderStore
 - WebSocket client.
 - Multi-range `multipart/byteranges`.
 
+## Later: capability hub
+
+`BoundOp` / `Api` is the capability. HTTP, OpenAPI, and MCP are host protocols / descriptions. Do not grow a second tool DSL.
+
+- CLI as a host protocol: argv/subcommands invoke the same `BoundOp` via `OpArgs`. Humans get a CLI the way agents get MCP and browsers get HTTP.
+- MCP client on `heddle.client` (Streamable HTTP, then stdio). Typed `callToolAs[In, Out]`.
+- Resources and prompts as interpreters over `BoundOp` / dedicated values (GET-as-resource, prompt templates).
+- MRTR (SEP-2322): `input_required`, elicitation, sampling, `roots/list`. Needed before tools can ask the client anything.
+- Progress / log notifications on HTTP (`_meta.progressToken` → SSE) and on stdio (`notifications/progress`).
+- Tasks extension (`io.modelcontextprotocol/tasks`).
+- Skills over MCP, MCP Apps (capability + `_meta.ui` only; no iframe host).
+- Official `@modelcontextprotocol/conformance` 2026-07-28 kit as a hard check.
+- CIMD / DCR completeness on the OP; MCP authorization-code client flow.
+- Catalog `invoke` for `inForm` / `inBytes` / `outSse` (HTTP-dispatch those; do not flatten into tools).
+- OpenAPI `x-mcp-*` (or equivalent) so hints round-trip in the docs projection.
+- Dual-era 2025-11-25 (`initialize`, `Mcp-Session-Id`, GET SSE) only if a real client we care about cannot speak 2026-07-28. Default remains latest-spec-only.
+
 ## Out
 
 - Implicit access-token grants.
 - Netty, JNI brotli, a JSON parser for user bodies in core.
 - Requiring saferis (or File, or Memory) to compile `heddle-oauth`.
+- Auto-promoting every REST operation as an MCP tool.
+- A session store (`Mcp-Session-Id`) as the default MCP transport.
+- Embedding a second authorization server inside `heddle-mcp`.

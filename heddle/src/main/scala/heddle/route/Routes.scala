@@ -4,7 +4,7 @@ import heddle.http.{Request, Response, Status}
 import scala.collection.mutable
 import zio.*
 
-sealed abstract class Routes[-R, +E]:
+abstract class Routes[-R, +E]:
   def toChunk: Chunk[Route[R, E]]
 
   def apply(request: Request): ZIO[R, E, Response]

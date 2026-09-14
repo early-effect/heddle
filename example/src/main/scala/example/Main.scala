@@ -77,12 +77,13 @@ object Main extends ZIOAppDefault:
         ),
       )
       verifier <- JwtVerifier.static(key.publicJwksJson, issuer, "")
+      users  = publicApi(store)
+      writes = authedApi(store, nextId)
       op     = Provider.routes(ProviderConfig(issuer), stores, key)
-      authed = (writes(store, nextId) ++ meRoutes)
-        .provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
+      authed = writes.routes.provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
       admin  = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
-      routes = implemented(store) ++ authed ++ admin ++ op ++ preview ++
-        OpenApi.from("Heddle example", "0.1.0", getUser, createUser, listUsers, me).routes("docs")
+      docs   = Api.openApi("Heddle example", "0.1.0", users, writes).routes("docs")
+      routes = users.routes ++ authed ++ admin ++ op ++ preview ++ docs
       _ <- ZIO.logInfo("listening on http://localhost:8080/docs (Authorize against the embedded OP)")
       _ <- Server.sbtInterruptExit
       _ <- Server
@@ -93,27 +94,27 @@ object Main extends ZIOAppDefault:
     end for
   end run
 
-  private def implemented(store: Ref[Map[Int, User]]): Routes[Any, Response] =
-    getUser.implement { id =>
-      store.get.map(_.get(id).toRight(NotFound(s"user $id"))).flatMap(ZIO.fromEither)
-    } ++
-      listUsers.implement { _ =>
+  private def publicApi(store: Ref[Map[Int, User]]): Api[Any] =
+    Api("Heddle example", "0.1.0")
+      .bind(getUser) { id =>
+        store.get.map(_.get(id).toRight(NotFound(s"user $id"))).flatMap(ZIO.fromEither)
+      }
+      .bind(listUsers) { _ =>
         store.get.map(_.values.toList.sortBy(_.id))
       }
 
-  private def writes(store: Ref[Map[Int, User]], nextId: Ref[Int]): Routes[JwtClaim, Response] =
-    createUser.implement { body =>
-      ZIO.service[JwtClaim] *>
-        nextId.modify(n => n -> (n + 1)).flatMap { id =>
-          val user = User(id, body.name)
-          store.update(_ + (id -> user)).as(user)
-        }
-    }
-
-  private def meRoutes: Routes[JwtClaim, Response] =
-    me.implement { _ =>
-      ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
-    }
+  private def authedApi(store: Ref[Map[Int, User]], nextId: Ref[Int]): Api[JwtClaim] =
+    Api("Heddle example", "0.1.0")
+      .bind(createUser) { body =>
+        ZIO.service[JwtClaim] *>
+          nextId.modify(n => n -> (n + 1)).flatMap { id =>
+            val user = User(id, body.name)
+            store.update(_ + (id -> user)).as(user)
+          }
+      }
+      .bind(me) { _ =>
+        ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
+      }
 
   private def preview: Routes[Any, Response] =
     val dir = previewDir
