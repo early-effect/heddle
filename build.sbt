@@ -44,7 +44,14 @@ zipxEnv              := Map(
 )
 zipxCapabilities ++= {
   val upstream = JobCondition.repositoryIs("early-effect/heddle")
-  Seq(ZipxCentral.release.withCondition(upstream))
+  Seq(
+    Capability.once(
+      name = Capability.TestName,
+      command = zipxTasks.session(testFull, LocalProject("docs") / specularSite),
+    ),
+    ZipxCentral.release.withCondition(upstream),
+    ZipxDocs.pages().andCondition(upstream),
+  )
 }
 
 lazy val exampleMcpStdioCp = taskKey[Unit]("write classpath for example MCP stdio subprocess")
@@ -60,7 +67,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, oauth, mcp, example, bench)
+  .aggregate(heddle, json, brotli, oauth, mcp, example, bench, docs, docsJS)
   .settings(
     name           := "heddle-root",
     publish / skip := true,
@@ -185,3 +192,66 @@ lazy val perfTests = project
     name           := "heddle-perf-tests",
     publish / skip := true,
   )
+
+lazy val docsJS = project
+  .in(file("docs-js"))
+  .enablePlugins(ScalaJSPlugin)
+  .settings(
+    name           := "heddle-docsJS",
+    publish / skip := true,
+    zipxPublish    := Some(false),
+    scalacOptions ++= Seq("-deprecation", "-feature", "-language:implicitConversions"),
+    scalaJSUseMainModuleInitializer := true,
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.ESModule)),
+    Compile / mainClass := Some("heddle.docs.ClientMain"),
+    Compile / unmanagedSourceDirectories += (LocalProject("docs") / baseDirectory).value / "shared" / "scala",
+    MyVersions.docsJs,
+  )
+
+lazy val docs = project
+  .in(file("docs"))
+  .dependsOn(heddle, json, brotli, oauth, mcp)
+  .enablePlugins(SpecularPlugin)
+  .settings(commonSettings)
+  .settings(
+    name            := "heddle-docs",
+    publish / skip  := true,
+    publishArtifact := false,
+    zipxPublish     := Some(false),
+    scalacOptions ++= Seq("-language:implicitConversions"),
+    Test / unmanagedSourceDirectories += baseDirectory.value / "shared" / "scala",
+    MyVersions.docsTest,
+    MyVersions.coreTest,
+    dependencyOverrides += MyVersions.moduleID(MyVersions.zioJson),
+    Test / mainClass := None,
+    specularBuildMain      := "heddle.docs.BuildSite",
+    specularMetaProject    := Some(LocalProject("heddle")),
+    specularArtifactKind   := "library",
+    specularSiteDirectory  := (ThisBuild / baseDirectory).value / "target" / "site",
+    specularDisplayVersion := {
+      val fallback = previousStableVersion.value.getOrElse("0.2.0")
+      (v: String) =>
+        val stripped = stripCi(v)
+        if stripped != v then stripped
+        else if v.contains('+') then fallback
+        else v
+    },
+    specularJsLink := Def.uncached {
+      (docsJS / Compile / fastLinkJS).value
+      val outDir = (docsJS / Compile / fastLinkJSOutput).value
+      val mainJs = outDir / "main.js"
+      if (!mainJs.exists)
+        sys.error(
+          s"Expected $mainJs after fastLinkJS; directory contains: " +
+            Option(outDir.list).toSeq.flatten.mkString(", ")
+        )
+      val dest = specularSiteDirectory.value / "assets" / "client.js"
+      IO.createDirectory(dest.getParentFile)
+      IO.copyFile(mainJs, dest)
+      val marker = (ThisBuild / baseDirectory).value / "target" / "specular-client-js.path"
+      IO.write(marker, mainJs.getAbsolutePath)
+    },
+    specularJsLinkDev := Def.uncached(specularJsLink.value),
+  )
+
+addCommandAlias("docsPreview", "~docs/specularPreview")
