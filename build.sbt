@@ -47,6 +47,8 @@ zipxCapabilities ++= {
   Seq(ZipxCentral.release.withCondition(upstream))
 }
 
+lazy val exampleMcpStdioCp = taskKey[Unit]("write classpath for example MCP stdio subprocess")
+
 lazy val commonSettings = Seq(
   scalacOptions ++= Seq(
     "-deprecation",
@@ -136,13 +138,28 @@ lazy val mcp = project
 
 lazy val example = project
   .in(file("example"))
-  .dependsOn(json, oauth)
+  .dependsOn(json, oauth, mcp)
   .settings(commonSettings)
+  .settings(MyVersions.coreTest)
   .settings(
     name                 := "heddle-example",
     publish / skip       := true,
-    test / skip          := true,
     Compile / run / fork := true,
+    Test / fork          := true,
+    exampleMcpStdioCp := Def.uncached {
+      val conv = fileConverter.value
+      val cp   = (Test / fullClasspath).value
+        .map(a => conv.toPath(a.data).toAbsolutePath.toString)
+        .mkString(java.io.File.pathSeparator)
+      val dest = java.nio.file.Path.of("example", "target", "mcp-stdio.classpath")
+      java.nio.file.Files.createDirectories(dest.getParent)
+      java.nio.file.Files.writeString(dest, cp)
+      ()
+    },
+    Test / executeTests := Def.uncached {
+      exampleMcpStdioCp.value
+      (Test / executeTests).value
+    },
   )
 
 lazy val bench = project

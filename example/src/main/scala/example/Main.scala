@@ -3,6 +3,7 @@ package example
 import java.nio.file.{Files as JFiles, Path}
 import heddle.*
 import heddle.json.given
+import heddle.mcp.Mcp
 import heddle.oauth.jose.SigningKey
 import heddle.oauth.provider.*
 import heddle.oauth.rs.{JwtClaim, JwtVerifier}
@@ -64,7 +65,20 @@ object Main extends ZIOAppDefault:
       .tag("auth")
 
   def run =
-    val key = SigningKey.generateRsa("op")
+    ZIO.serviceWithZIO[ZIOAppArgs] { args =>
+      if args.getArgs.contains("--mcp-stdio") then runStdio else runHttp
+    }
+
+  private def runStdio =
+    (for
+      store <- Ref.make(Map(1 -> User(1, "Ada")))
+      mcp   <- ZIO.fromEither(Mcp.from(publicApi(store))).mapError(IllegalArgumentException(_))
+      _     <- mcp.stdio()
+    yield ()).provideLayer(Runtime.removeDefaultLoggers)
+
+  private def runHttp =
+    val key  = SigningKey.generateRsa("op")
+    val meta = s"$issuer/.well-known/oauth-protected-resource"
     for
       store  <- Ref.make(Map(1 -> User(1, "Ada")))
       nextId <- Ref.make(2)
@@ -79,12 +93,19 @@ object Main extends ZIOAppDefault:
       verifier <- JwtVerifier.static(key.publicJwksJson, issuer, "")
       users  = publicApi(store)
       writes = authedApi(store, nextId)
-      op     = Provider.routes(ProviderConfig(issuer), stores, key)
-      authed = writes.routes.provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
+      mcp <- ZIO.fromEither(Mcp.from(users, writes)).mapError(IllegalArgumentException(_)).map(_.withCatalog)
+      op        = Provider.routes(ProviderConfig(issuer), stores, key)
+      authed    = writes.routes.provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
+      mcpAuthed = mcp.routes.provided(
+        Mcp.bearer(meta, List("openid", "profile"))(t =>
+          verifier.verify(t).mapError(_ => Mcp.unauthorized(meta, List("openid", "profile")))
+        )
+      )
       admin  = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
       docs   = Api.openApi("Heddle example", "0.1.0", users, writes).routes("docs")
-      routes = users.routes ++ authed ++ admin ++ op ++ preview ++ docs
-      _ <- ZIO.logInfo("listening on http://localhost:8080/docs (Authorize against the embedded OP)")
+      prm    = Mcp.protectedResource(s"$issuer/mcp", List(issuer), List("openid", "profile"))
+      routes = users.routes ++ authed ++ mcpAuthed ++ prm ++ admin ++ op ++ preview ++ docs
+      _ <- ZIO.logInfo("listening on http://localhost:8080/docs and /mcp (Authorize against the embedded OP)")
       _ <- Server.sbtInterruptExit
       _ <- Server
         .serve(routes @@ (Middleware.requestId() ++ Middleware.cors() ++ Middleware.debug))
@@ -92,20 +113,20 @@ object Main extends ZIOAppDefault:
         .catchAllCause(c => if c.isInterruptedOnly then ZIO.unit else ZIO.refailCause(c))
     yield ()
     end for
-  end run
+  end runHttp
 
-  private def publicApi(store: Ref[Map[Int, User]]): Api[Any] =
+  private[example] def publicApi(store: Ref[Map[Int, User]]): Api[Any] =
     Api("Heddle example", "0.1.0")
-      .bind(getUser) { id =>
+      .bind(getUser.mcp.hints(Hint.ReadOnly)) { id =>
         store.get.map(_.get(id).toRight(NotFound(s"user $id"))).flatMap(ZIO.fromEither)
       }
-      .bind(listUsers) { _ =>
+      .bind(listUsers.mcp.hints(Hint.ReadOnly)) { _ =>
         store.get.map(_.values.toList.sortBy(_.id))
       }
 
   private def authedApi(store: Ref[Map[Int, User]], nextId: Ref[Int]): Api[JwtClaim] =
     Api("Heddle example", "0.1.0")
-      .bind(createUser) { body =>
+      .bind(createUser.mcp) { body =>
         ZIO.service[JwtClaim] *>
           nextId.modify(n => n -> (n + 1)).flatMap { id =>
             val user = User(id, body.name)
