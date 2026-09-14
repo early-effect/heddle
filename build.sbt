@@ -58,7 +58,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, oauth, example)
+  .aggregate(heddle, json, brotli, oauth, mcp, example)
   .settings(
     name           := "heddle-root",
     publish / skip := true,
@@ -118,6 +118,20 @@ lazy val oauth = project
     pomIncludeRepository := { _ => false },
     Compile / run / fork := true,
     Compile / mainClass  := Some("heddle.oauth.provider.ProviderApp"),
+  )
+
+lazy val mcp = project
+  .in(file("mcp"))
+  .dependsOn(heddle % "compile->compile;test->test", json)
+  .settings(commonSettings)
+  .settings(MyVersions.coreLib)
+  .settings(MyVersions.coreTest)
+  .settings(MyVersions.jsonLib)
+  .settings(
+    name                 := "heddle-mcp",
+    description          := "MCP 2026-07-28 server for heddle endpoints",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
   )
 
 lazy val example = project
