@@ -1,6 +1,6 @@
 package heddle.internal.openapi
 
-import heddle.endpoint.{ApiKeyIn, EndpointDoc, OAuthFlow, OpenApi, SchemaDoc, SecurityScheme, StatusDoc}
+import heddle.endpoint.{ApiKeyIn, EndpointDoc, OAuthFlow, OpenApi, SchemaDoc, SchemaJson, SecurityScheme, StatusDoc}
 import scala.collection.mutable
 import zio.Chunk
 import zio.json.*
@@ -24,7 +24,7 @@ private[heddle] object OpenApiJson:
         path -> Json.Obj(methods*)
       }
     val schemaFields =
-      components.toList.map((name, doc) => name -> schemaJson(doc, components, embedNamed = true))
+      components.toList.map((name, doc) => name -> SchemaJson.render(doc, components, embedNamed = true))
     val schemes      = spec.endpoints.flatMap(_.security).distinctBy(_.name)
     val schemeFields = schemes.map(s => s.name -> securitySchemeJson(s))
     val infoFields   =
@@ -83,7 +83,7 @@ private[heddle] object OpenApiJson:
           "name"     -> Json.Str(p.name),
           "in"       -> Json.Str(p.in),
           "required" -> Json.Bool(p.required),
-          "schema"   -> schemaJson(p.schema, mutable.LinkedHashMap.empty, embedNamed = true),
+          "schema"   -> SchemaJson.render(p.schema, mutable.LinkedHashMap.empty, embedNamed = true),
         )
       }
     val requestBody = ep.requestBody.map { body =>
@@ -91,7 +91,7 @@ private[heddle] object OpenApiJson:
         "required" -> Json.Bool(true),
         "content"  -> Json.Obj(
           body.contentType.render -> Json.Obj(
-            "schema" -> schemaJson(body.schema, mutable.LinkedHashMap.empty, embedNamed = true)
+            "schema" -> SchemaJson.render(body.schema, mutable.LinkedHashMap.empty, embedNamed = true)
           )
         ),
       )
@@ -125,52 +125,13 @@ private[heddle] object OpenApiJson:
         List(
           "content" -> Json.Obj(
             ct.render -> Json.Obj(
-              "schema" -> schemaJson(schema, mutable.LinkedHashMap.empty, embedNamed = true)
+              "schema" -> SchemaJson.render(schema, mutable.LinkedHashMap.empty, embedNamed = true)
             )
           )
         )
       case _ => Nil
     Json.Obj(("description" -> Json.Str(r.description)) :: content*)
   end responseJson
-
-  private def schemaJson(
-      doc: SchemaDoc,
-      components: mutable.LinkedHashMap[String, SchemaDoc],
-      embedNamed: Boolean,
-  ): Json =
-    doc match
-      case SchemaDoc.Null =>
-        Json.Obj("type" -> Json.Str("null"))
-      case SchemaDoc.Boolean =>
-        Json.Obj("type" -> Json.Str("boolean"))
-      case SchemaDoc.Integer(format) =>
-        typed("integer", format)
-      case SchemaDoc.Number(format) =>
-        typed("number", format)
-      case SchemaDoc.Str(format) =>
-        typed("string", format)
-      case SchemaDoc.Array(items) =>
-        Json.Obj("type" -> Json.Str("array"), "items" -> schemaJson(items, components, embedNamed))
-      case SchemaDoc.Object(title, _, _) if !embedNamed && title.isDefined =>
-        Json.Obj("$ref" -> Json.Str(s"#/components/schemas/${title.get}"))
-      case SchemaDoc.Object(title, fields, required) =>
-        val props   = Json.Obj(fields.map(f => f.name -> schemaJson(f.doc, components, embedNamed))*)
-        val fields0 =
-          title.map(t => "title" -> Json.Str(t)).toList ++
-            List("type" -> Json.Str("object"), "properties" -> props) ++
-            (if required.isEmpty then Nil
-             else List("required" -> Json.Arr(Chunk.fromIterable(required.map(Json.Str(_))))))
-        Json.Obj(fields0*)
-      case SchemaDoc.OneOf(title, variants) =>
-        val oneOf = List("oneOf" -> Json.Arr(Chunk.fromIterable(variants.map(schemaJson(_, components, embedNamed)))))
-        Json.Obj(title.map(t => "title" -> Json.Str(t)).toList ++ oneOf*)
-      case SchemaDoc.Optional(inner) =>
-        schemaJson(inner, components, embedNamed)
-      case SchemaDoc.Ref(name) =>
-        Json.Obj("$ref" -> Json.Str(s"#/components/schemas/$name"))
-
-  private def typed(tpe: String, format: Option[String]): Json =
-    Json.Obj(List("type" -> Json.Str(tpe)) ++ format.map(f => "format" -> Json.Str(f)).toList*)
 
   private def securitySchemeJson(scheme: SecurityScheme): Json =
     scheme match

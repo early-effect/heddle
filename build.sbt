@@ -47,6 +47,8 @@ zipxCapabilities ++= {
   Seq(ZipxCentral.release.withCondition(upstream))
 }
 
+lazy val exampleMcpStdioCp = taskKey[Unit]("write classpath for example MCP stdio subprocess")
+
 lazy val commonSettings = Seq(
   scalacOptions ++= Seq(
     "-deprecation",
@@ -58,7 +60,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, oauth, example)
+  .aggregate(heddle, json, brotli, oauth, mcp, example)
   .settings(
     name           := "heddle-root",
     publish / skip := true,
@@ -120,15 +122,44 @@ lazy val oauth = project
     Compile / mainClass  := Some("heddle.oauth.provider.ProviderApp"),
   )
 
+lazy val mcp = project
+  .in(file("mcp"))
+  .dependsOn(heddle % "compile->compile;test->test", json)
+  .settings(commonSettings)
+  .settings(MyVersions.coreLib)
+  .settings(MyVersions.coreTest)
+  .settings(MyVersions.jsonLib)
+  .settings(
+    name                 := "heddle-mcp",
+    description          := "MCP 2026-07-28 server for heddle endpoints",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+
 lazy val example = project
   .in(file("example"))
-  .dependsOn(json, oauth)
+  .dependsOn(json, oauth, mcp)
   .settings(commonSettings)
+  .settings(MyVersions.coreTest)
   .settings(
     name                 := "heddle-example",
     publish / skip       := true,
-    test / skip          := true,
     Compile / run / fork := true,
+    Test / fork          := true,
+    exampleMcpStdioCp := Def.uncached {
+      val conv = fileConverter.value
+      val cp   = (Test / fullClasspath).value
+        .map(a => conv.toPath(a.data).toAbsolutePath.toString)
+        .mkString(java.io.File.pathSeparator)
+      val dest = java.nio.file.Path.of("example", "target", "mcp-stdio.classpath")
+      java.nio.file.Files.createDirectories(dest.getParent)
+      java.nio.file.Files.writeString(dest, cp)
+      ()
+    },
+    Test / executeTests := Def.uncached {
+      exampleMcpStdioCp.value
+      (Test / executeTests).value
+    },
   )
 
 lazy val bench = project

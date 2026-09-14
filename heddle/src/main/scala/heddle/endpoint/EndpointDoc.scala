@@ -26,4 +26,15 @@ final case class EndpointDoc(
     description: Option[String],
     tags: List[String],
     security: List[SecurityScheme] = Nil,
-)
+    promoted: Boolean = false,
+    mcpName: Option[String] = None,
+    nestBody: Boolean = false,
+    hints: List[Hint] = Nil,
+):
+  def toolName: String =
+    mcpName.filter(_.nonEmpty).orElse(operationId).getOrElse(derivedToolName)
+
+  private def derivedToolName: String =
+    val segs = pathTemplate.split('/').toList.filter(_.nonEmpty).map(_.filterNot(c => c == '{' || c == '}'))
+    (method.render.toLowerCase :: segs).filter(_.nonEmpty).mkString("_")
+end EndpointDoc

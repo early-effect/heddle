@@ -243,4 +243,4 @@ jobs:
         env:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
       - name: publish
-        run: sbt 'heddle/publishSigned; brotli/publishSigned; json/publishSigned; oauth/publishSigned; sonaRelease'
+        run: sbt 'heddle/publishSigned; brotli/publishSigned; json/publishSigned; mcp/publishSigned; oauth/publishSigned; sonaRelease'

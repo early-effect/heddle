@@ -23,6 +23,8 @@ enum SchemaDoc:
     this match
       case Optional(inner) => (inner, true)
       case other           => (other, false)
+
+  def jsonSchema: zio.json.ast.Json = SchemaJson.render(this)
 end SchemaDoc
 
 trait Schema[A]:

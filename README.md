@@ -36,6 +36,14 @@ Optional OAuth2 / OIDC (resource server, client, and a deployable provider):
 libraryDependencies += "rocks.earlyeffect" %% "heddle-oauth" % "0.1.0"
 ```
 
+Optional MCP 2026-07-28 server (Streamable HTTP + stdio) over the same `Api` / `BoundOp` as OpenAPI:
+
+```scala
+libraryDependencies += "rocks.earlyeffect" %% "heddle-mcp" % "0.1.0"
+```
+
+Promote selected endpoints with `.mcp`, then `Mcp.from(api).map(_.withCatalog)`. Agents hit `POST /mcp` or a `--mcp-stdio` process. The protocol revision is 2026-07-28 only.
+
 ## Routes
 
 ```scala

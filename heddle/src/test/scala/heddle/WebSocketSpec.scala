@@ -106,10 +106,10 @@ object WebSocketSpec extends ZIOSpecDefault:
             .attemptBlocking {
               val port = java.net.URI.create(base).getPort
               val s    = Socket("127.0.0.1", port)
+              s.setTcpNoDelay(true)
               try
                 upgrade(s)
-                val big = Array.fill(WsCodec.MaxPayload + 8)('x'.toByte)
-                writeOpcode(s.getOutputStream, opcode = 2, payload = big)
+                writeOversizeHeader(s.getOutputStream, opcode = 2, len = WsCodec.MaxPayload.toLong + 1)
                 val (op, data) = readOpcode(s.getInputStream)
                 val code       = if data.length >= 2 then ((data(0) & 0xff) << 8) | (data(1) & 0xff) else 0
                 (op, code)
@@ -145,6 +145,23 @@ object WebSocketSpec extends ZIOSpecDefault:
     val framed = WsCodec.frameBytes(opcode, payload, fin = true, mask = Some(mask))
     out.write(framed.toArray)
     out.flush()
+
+  /** Length is in the 2+8 byte header. Do not write the payload: the server closes on the declared size, and a megabyte
+    * write races the close with a TCP RST.
+    */
+  private def writeOversizeHeader(out: OutputStream, opcode: Int, len: Long): Unit =
+    val hdr = Array.ofDim[Byte](10)
+    hdr(0) = (0x80 | (opcode & 0x0f)).toByte
+    hdr(1) = 127.toByte
+    var s = 56
+    var i = 2
+    while s >= 0 do
+      hdr(i) = ((len >> s) & 0xff).toByte
+      s -= 8
+      i += 1
+    out.write(hdr)
+    out.flush()
+  end writeOversizeHeader
 
   private def readFrame(in: InputStream): String =
     val (_, data) = readOpcode(in)
