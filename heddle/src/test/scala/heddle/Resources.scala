@@ -21,16 +21,21 @@ object Resources:
   def platformThreads: Int =
     Thread.getAllStackTraces.keySet.asScala.count(t => t.isAlive && !t.isVirtual)
 
-  def establishedTcp: Option[Int] =
+  def establishedTcp: Option[Int] = lsofEstablished("-iTCP")
+
+  /** Same-process ESTABLISHED sockets on `port` only. Process-wide counts race the parallel live-server suite. */
+  def establishedTcpOn(port: Int): Option[Int] = lsofEstablished(s"-iTCP:$port")
+
+  private def lsofEstablished(filter: String): Option[Int] =
     val os = sys.props.getOrElse("os.name", "").toLowerCase
     if os.contains("win") then None
     else
       Try {
-        val pb   = ProcessBuilder("lsof", "-nP", "-a", "-p", pid.toString, "-iTCP", "-sTCP:ESTABLISHED")
+        val pb   = ProcessBuilder("lsof", "-nP", "-a", "-p", pid.toString, filter, "-sTCP:ESTABLISHED")
         val proc = pb.start()
         val out  = String(proc.getInputStream.readAllBytes())
         proc.waitFor()
         out.linesIterator.drop(1).count(_.nonEmpty)
       }.toOption
-  end establishedTcp
+  end lsofEstablished
 end Resources

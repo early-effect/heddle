@@ -60,7 +60,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, oauth, mcp, example)
+  .aggregate(heddle, json, brotli, oauth, mcp, example, bench)
   .settings(
     name           := "heddle-root",
     publish / skip := true,

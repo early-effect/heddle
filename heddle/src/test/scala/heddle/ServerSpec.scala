@@ -224,7 +224,7 @@ object ServerSpec extends ZIOSpecDefault:
         val config = LiveServer.local.copy(reuseAddress = false)
         for
           port <- ZIO.scoped(Server.install(Routes.empty, config).flatMap(_.port))
-          _    <- ZIO.scoped(Server.install(Routes.empty, config.copy(port = port)).unit)
+          _    <- ZIO.scoped(rebind(config, port).unit)
         yield assertTrue(true)
       ,
       test("interrupting serve unbinds the port"):
@@ -236,7 +236,7 @@ object ServerSpec extends ZIOSpecDefault:
             .fork
           port <- bound.await
           _    <- fiber.interrupt
-          _    <- ZIO.scoped(Server.install(Routes.empty, config.copy(port = port)).unit)
+          _    <- ZIO.scoped(rebind(config, port).unit)
         yield assertTrue(true)
       ,
       test("interrupting Server.serve completes quickly"):
@@ -254,7 +254,7 @@ object ServerSpec extends ZIOSpecDefault:
             first  <- Server.install(Routes.empty, config)
             port   <- first.port
             _      <- first.shutdown
-            second <- Server.install(Routes.empty, config.copy(port = port))
+            second <- rebind(config, port)
             bound  <- second.port
           yield assertTrue(bound == port)
         }
@@ -321,7 +321,11 @@ object ServerSpec extends ZIOSpecDefault:
             yield ()
           }
           .as(assertTrue(true)),
-    ) @@ TestAspect.timeout(10.seconds) @@ TestAspect.withLiveClock
+    ) @@ TestAspect.timeout(10.seconds) @@ TestAspect.withLiveClock @@ TestAspect.sequential
+
+  /** `reuseAddress = false` plus a sibling `bind(0)` can steal the just-freed port; retry the rebind. */
+  private def rebind(config: Server.Config, port: Int) =
+    Server.install(Routes.empty, config.copy(port = port)).retry(Schedule.spaced(20.millis) && Schedule.recurs(25))
 
   private def writeGet(sock: Socket, path: String): String =
     val raw = s"GET $path HTTP/1.1\r\nHost: localhost\r\n\r\n"
