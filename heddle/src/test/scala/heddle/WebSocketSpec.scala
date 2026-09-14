@@ -146,8 +146,8 @@ object WebSocketSpec extends ZIOSpecDefault:
     out.write(framed.toArray)
     out.flush()
 
-  /** Length is in the 2+8 byte header. Do not write the payload: the server closes on the
-    * declared size, and a megabyte write races the close with a TCP RST.
+  /** Length is in the 2+8 byte header. Do not write the payload: the server closes on the declared size, and a megabyte
+    * write races the close with a TCP RST.
     */
   private def writeOversizeHeader(out: OutputStream, opcode: Int, len: Long): Unit =
     val hdr = Array.ofDim[Byte](10)
@@ -161,6 +161,7 @@ object WebSocketSpec extends ZIOSpecDefault:
       i += 1
     out.write(hdr)
     out.flush()
+  end writeOversizeHeader
 
   private def readFrame(in: InputStream): String =
     val (_, data) = readOpcode(in)
