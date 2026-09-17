@@ -1,5 +1,7 @@
 package heddle.client
 
+import heddle.BytesLength
+import heddle.BytesLength.*
 import heddle.error.HttpError
 import heddle.http.{Body, Method, Request, Response, Status}
 import heddle.http.header.{Header, HeaderName, Headers}
@@ -22,34 +24,95 @@ object Client:
 
   final case class Config(
       ssl: javax.net.ssl.SSLContext = javax.net.ssl.SSLContext.getDefault,
-      poolSize: Int = 10,
-      addUserAgent: Boolean = true,
+      maxConnectionsPerHost: Int = Config.defaultMaxConnectionsPerHost,
+      maxIdlePerHost: Int = Config.defaultMaxIdlePerHost,
+      connectTimeout: Duration = Config.defaultConnectTimeout,
+      idleTimeout: Duration = Config.defaultIdleTimeout,
+      poolIdleTimeout: Duration = Config.defaultPoolIdleTimeout,
+      addUserAgent: Boolean = Config.defaultAddUserAgent,
+      maxHeaderBytes: BytesLength = Config.defaultMaxHeaderBytes,
+      maxBodyBytes: BytesLength = Config.defaultMaxBodyBytes,
   )
+
+  object Config:
+    val defaultMaxConnectionsPerHost: Int  = 10
+    val defaultMaxIdlePerHost: Int         = 10
+    val defaultConnectTimeout: Duration    = 10.seconds
+    val defaultIdleTimeout: Duration       = 60.seconds
+    val defaultPoolIdleTimeout: Duration   = 60.seconds
+    val defaultAddUserAgent: Boolean       = true
+    val defaultMaxHeaderBytes: BytesLength = 64.K
+    val defaultMaxBodyBytes: BytesLength   = 10.M
+
+    val default: Config = Config()
+
+    val descriptor: zio.Config[Config] =
+      (
+        zio.Config.int("maxConnectionsPerHost").withDefault(defaultMaxConnectionsPerHost) ++
+          zio.Config.int("maxIdlePerHost").withDefault(defaultMaxIdlePerHost) ++
+          zio.Config.duration("connectTimeout").withDefault(defaultConnectTimeout) ++
+          zio.Config.duration("idleTimeout").withDefault(defaultIdleTimeout) ++
+          zio.Config.duration("poolIdleTimeout").withDefault(defaultPoolIdleTimeout) ++
+          zio.Config.boolean("addUserAgent").withDefault(defaultAddUserAgent) ++
+          zio.Config.long("maxHeaderBytes").map(BytesLength(_)).withDefault(defaultMaxHeaderBytes) ++
+          zio.Config.long("maxBodyBytes").map(BytesLength(_)).withDefault(defaultMaxBodyBytes)
+      ).nested("heddle", "client").map {
+        (
+            maxConnectionsPerHost,
+            maxIdlePerHost,
+            connectTimeout,
+            idleTimeout,
+            poolIdleTimeout,
+            addUserAgent,
+            maxHeaderBytes,
+            maxBodyBytes,
+        ) =>
+          Config(
+            maxConnectionsPerHost = maxConnectionsPerHost,
+            maxIdlePerHost = maxIdlePerHost,
+            connectTimeout = connectTimeout,
+            idleTimeout = idleTimeout,
+            poolIdleTimeout = poolIdleTimeout,
+            addUserAgent = addUserAgent,
+            maxHeaderBytes = maxHeaderBytes,
+            maxBodyBytes = maxBodyBytes,
+          )
+      }
+
+    val layer: ZLayer[Any, zio.Config.Error, Config] =
+      ZLayer(ZIO.config(descriptor))
+  end Config
 
   def layer: ZLayer[Config, Nothing, Client] =
     ZLayer.scoped {
       for
         cfg  <- ZIO.service[Config]
-        idle <- Ref.make(Map.empty[PoolKey, Chunk[Transport]])
-        _    <- ZIO.addFinalizer(
-          idle.get.flatMap { m =>
-            ZIO.foreachDiscard(m.values.flatMap(_.toList))(t => ZIO.succeed(t.close()))
-          }
-        )
+        idle <- Ref.make(Map.empty[PoolKey, PoolState])
+        _    <- ZIO.addFinalizer(closeAll(idle))
+        _    <- evictLoop(cfg, idle).forkScoped
       yield Pooled(cfg, idle)
     }
 
   val live: ULayer[Client] =
-    ZLayer.succeed(Config()) >>> layer
+    ZLayer.succeed(Config.default) >>> layer
 
-  def get(url: String): Task[Response] =
-    request(Method.GET, url, Headers.empty, Body.empty)
+  def get(url: String, config: Config = Config.default): Task[Response] =
+    request(Method.GET, url, Headers.empty, Body.empty, config)
 
   def request(base: String, req: Request): Task[Response] =
-    request(req.method, join(base, req.url.render), req.headers, req.body)
+    request(req.method, join(base, req.url.render), req.headers, req.body, Config.default)
 
-  def request(method: Method, url: String, headers: Headers = Headers.empty, body: Body = Body.empty): Task[Response] =
-    oneShot(Config(), method, url, headers, body)
+  def request(base: String, req: Request, config: Config): Task[Response] =
+    request(req.method, join(base, req.url.render), req.headers, req.body, config)
+
+  def request(
+      method: Method,
+      url: String,
+      headers: Headers = Headers.empty,
+      body: Body = Body.empty,
+      config: Config = Config.default,
+  ): Task[Response] =
+    oneShot(config, method, url, headers, body)
 
   private def oneShot(
       cfg: Config,
@@ -58,16 +121,49 @@ object Client:
       headers: Headers,
       body: Body,
   ): Task[Response] =
+    val prepared = prepare(cfg, headers)
     ZIO.scoped {
       for
         target <- ZIO.attempt(Target.parse(url))
-        t      <- ZIO.acquireRelease(ZIO.attempt(open(cfg, target)))(c => ZIO.succeed(c.close()))
-        _      <- writeRequest(t, method, target, prepare(cfg, headers), body)
-        res    <- readResponse(t)
-      yield decodeBody(res)
+        t      <- ZIO.acquireRelease(open(cfg, target))(c => ZIO.succeed(c.close()))
+        _      <- writeRequest(t, method, target, prepared, body)
+        res    <- readResponse(cfg, t)
+      yield decodeBody(prepared, res)
+    }
+  end oneShot
+
+  private final case class IdleConn(t: Transport, idleAt: Long)
+  private final case class PoolState(idle: Chunk[IdleConn], opened: Int)
+
+  private def closeAll(idle: Ref[Map[PoolKey, PoolState]]): UIO[Unit] =
+    idle.get.flatMap { m =>
+      ZIO.foreachDiscard(m.values.flatMap(_.idle.toList))(c => ZIO.succeed(c.t.close()))
     }
 
-  private final class Pooled(cfg: Config, idle: Ref[Map[PoolKey, Chunk[Transport]]]) extends Client:
+  private def evictLoop(cfg: Config, idle: Ref[Map[PoolKey, PoolState]]): UIO[Nothing] =
+    val tick =
+      if cfg.poolIdleTimeout == Duration.Infinity || cfg.poolIdleTimeout.toNanos <= 0L then 1.second
+      else cfg.poolIdleTimeout.min(1.second).max(10.millis)
+    (ZIO.sleep(tick) *> evictExpired(cfg, idle)).forever
+
+  private def evictExpired(cfg: Config, idle: Ref[Map[PoolKey, PoolState]]): UIO[Unit] =
+    Clock.nanoTime.flatMap { now =>
+      idle
+        .modify { m =>
+          val closed = scala.collection.mutable.ArrayBuffer.empty[Transport]
+          val next   = m.flatMap { (key, st) =>
+            val (keep, drop) = st.idle.partition(c => now - c.idleAt < cfg.poolIdleTimeout.toNanos)
+            drop.foreach(c => closed += c.t)
+            val opened = st.opened - drop.length
+            if keep.isEmpty && opened <= 0 then None
+            else Some(key -> PoolState(keep, opened))
+          }
+          (closed.toList, next)
+        }
+        .flatMap(cs => ZIO.foreachDiscard(cs)(t => ZIO.succeed(t.close())))
+    }
+
+  private final class Pooled(cfg: Config, idle: Ref[Map[PoolKey, PoolState]]) extends Client:
     def batched(req: Request): Task[Response] =
       val url =
         if req.url.absolute then req.url.render
@@ -77,55 +173,90 @@ object Client:
               val scheme = if req.secure then "https" else "http"
               s"$scheme://$h${req.url.render}"
             case None => req.url.render
+      val prepared = prepare(cfg, req.headers)
       ZIO.scoped {
         for
           target <- ZIO.attempt(Target.parse(url))
           key = PoolKey(target.scheme, target.host, target.port)
           t   <- acquire(key, target)
-          res <- writeRequest(t, req.method, target, prepare(cfg, req.headers), req.body)
-            .zipRight(readResponse(t))
-            .tapError(_ => ZIO.succeed(t.close()))
+          res <- writeRequest(t, req.method, target, prepared, req.body)
+            .zipRight(readResponse(cfg, t))
+            .tapError(_ => drop(key, t))
           _ <-
             if reusable(req.headers, res.headers) then release(key, t)
-            else ZIO.succeed(t.close())
-        yield decodeBody(res)
+            else drop(key, t)
+        yield decodeBody(prepared, res)
       }
     end batched
 
     private def acquire(key: PoolKey, target: Target): Task[Transport] =
-      idle
-        .modify { m =>
-          m.getOrElse(key, Chunk.empty) match
-            case Chunk() => (None, m)
-            case ts      => (Some(ts.head), m.updated(key, ts.drop(1)))
+      Clock.nanoTime
+        .flatMap { now =>
+          idle.modify { m =>
+            val st             = m.getOrElse(key, PoolState(Chunk.empty, 0))
+            val (fresh, stale) = st.idle.partition(c => now - c.idleAt < cfg.poolIdleTimeout.toNanos)
+            stale.foreach(c => c.t.close())
+            val opened               = st.opened - stale.length
+            val (take, idle2, open2) =
+              fresh.headOption match
+                case Some(c) =>
+                  (Take.Reuse(c.t), fresh.drop(1), opened)
+                case None if opened < cfg.maxConnectionsPerHost =>
+                  (Take.OpenNew, Chunk.empty[IdleConn], opened + 1)
+                case None =>
+                  (Take.Exhausted, Chunk.empty[IdleConn], opened)
+            (take, m.updated(key, PoolState(idle2, open2)))
+          }
         }
         .flatMap {
-          case Some(t) => ZIO.succeed(t)
-          case None    => ZIO.attempt(open(cfg, target))
+          case Take.Reuse(t) => ZIO.succeed(t)
+          case Take.OpenNew  =>
+            open(cfg, target).tapError(_ =>
+              idle.update { m =>
+                val st = m.getOrElse(key, PoolState(Chunk.empty, 0))
+                m.updated(key, st.copy(opened = math.max(0, st.opened - 1)))
+              }
+            )
+          case Take.Exhausted =>
+            ZIO.fail(java.io.IOException(s"connection pool exhausted for ${key.host}:${key.port}"))
         }
 
     private def release(key: PoolKey, t: Transport): UIO[Unit] =
-      idle.update { m =>
-        val cur = m.getOrElse(key, Chunk.empty)
-        if cur.length >= cfg.poolSize then
-          t.close()
-          m
-        else m.updated(key, cur :+ t)
+      Clock.nanoTime.flatMap { now =>
+        idle.update { m =>
+          val st = m.getOrElse(key, PoolState(Chunk.empty, 0))
+          if st.idle.length >= cfg.maxIdlePerHost then
+            t.close()
+            m.updated(key, st.copy(opened = math.max(0, st.opened - 1)))
+          else m.updated(key, st.copy(idle = st.idle :+ IdleConn(t, now)))
+        }
       }
+
+    private def drop(key: PoolKey, t: Transport): UIO[Unit] =
+      ZIO.succeed(t.close()) *>
+        idle.update { m =>
+          val st = m.getOrElse(key, PoolState(Chunk.empty, 0))
+          m.updated(key, st.copy(opened = math.max(0, st.opened - 1)))
+        }
   end Pooled
+
+  private enum Take:
+    case Reuse(t: Transport)
+    case OpenNew
+    case Exhausted
 
   private def prepare(cfg: Config, headers: Headers): Headers =
     var hdrs = headers
     if cfg.addUserAgent && !hdrs.has(HeaderName.UserAgent) then hdrs = hdrs.add(HeaderName.UserAgent, "heddle")
-    if !hdrs.has(HeaderName.AcceptEncoding) then hdrs = hdrs.add(HeaderName.AcceptEncoding, "gzip")
     hdrs
 
   private def reusable(req: Headers, res: Headers): Boolean =
     !req.get(HeaderName.Connection).exists(_.toLowerCase.contains("close")) &&
       !res.get(HeaderName.Connection).exists(_.toLowerCase.contains("close"))
 
-  private def decodeBody(res: Response): Response =
-    if res.headers.contentEncoding.contains(heddle.http.ContentEncoding.Gzip) then
+  private def decodeBody(reqHeaders: Headers, res: Response): Response =
+    val asked = reqHeaders.get(HeaderName.AcceptEncoding).exists(_.toLowerCase.contains("gzip"))
+    if asked && res.headers.contentEncoding.contains(heddle.http.ContentEncoding.Gzip) then
       val raw = res.body.asBytes
       val out = heddle.server.Decompressor.gzip.decompress(raw)
       res
@@ -133,25 +264,29 @@ object Client:
         .withBody(Body.fromBytes(out, res.body.mediaType))
     else res
 
-  private def open(cfg: Config, target: Target): Transport =
-    val ch = SocketChannel.open()
-    ch.connect(InetSocketAddress(target.host, target.port))
-    if !target.tls then Plain(ch)
-    else
-      val sock = ch.socket()
-      val ssl  = cfg.ssl.getSocketFactory
-        .createSocket(sock, target.host, target.port, true)
-        .asInstanceOf[javax.net.ssl.SSLSocket]
-      ssl.setUseClientMode(true)
-      val params = ssl.getSSLParameters
-      params.setEndpointIdentificationAlgorithm("HTTPS")
-      try params.setServerNames(java.util.List.of(javax.net.ssl.SNIHostName(target.host)))
-      catch case _: IllegalArgumentException => ()
-      ssl.setSSLParameters(params)
-      ssl.startHandshake()
-      TlsConn(ssl, ch)
-    end if
-  end open
+  private def open(cfg: Config, target: Target): Task[Transport] =
+    ZIO.attemptBlockingInterrupt {
+      val ch = SocketChannel.open()
+      val ms =
+        if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
+        else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
+      ch.socket.connect(InetSocketAddress(target.host, target.port), ms)
+      if !target.tls then Plain(ch)
+      else
+        val sock = ch.socket()
+        val ssl  = cfg.ssl.getSocketFactory
+          .createSocket(sock, target.host, target.port, true)
+          .asInstanceOf[javax.net.ssl.SSLSocket]
+        ssl.setUseClientMode(true)
+        val params = ssl.getSSLParameters
+        params.setEndpointIdentificationAlgorithm("HTTPS")
+        try params.setServerNames(java.util.List.of(javax.net.ssl.SNIHostName(target.host)))
+        catch case _: IllegalArgumentException => ()
+        ssl.setSSLParameters(params)
+        ssl.startHandshake()
+        TlsConn(ssl, ch)
+      end if
+    }
 
   private sealed trait Transport:
     def src: ConnBuf
@@ -176,14 +311,15 @@ object Client:
   private final case class PoolKey(scheme: String, host: String, port: Int)
 
   /** Incremental `text/event-stream` parse. Keeps the connection open until the stream ends or is interrupted. */
-  def sse(url: String): ZStream[Any, Throwable, ServerSentEvent] =
+  def sse(url: String, config: Config = Config.default): ZStream[Any, Throwable, ServerSentEvent] =
     ZStream.unwrapScoped {
       for
         target <- ZIO.attempt(Target.parse(url))
-        t      <- ZIO.acquireRelease(ZIO.attempt(open(Config(), target)))(c => ZIO.succeed(c.close()))
-        _      <- writeRequest(t, Method.GET, target, Headers.empty, Body.empty)
+        t      <- ZIO.acquireRelease(open(config, target))(c => ZIO.succeed(c.close()))
+        _      <- writeRequest(t, Method.GET, target, prepare(config, Headers.empty), Body.empty)
         src = t.src
-        raw    <- src.takeHeaders(64 * 1024).mapError(e => java.io.IOException(e.message))
+        _      <- src.setReadTimeout(config.idleTimeout)
+        raw    <- src.takeHeaders(config.maxHeaderBytes.toInt).mapError(e => java.io.IOException(e.message))
         parsed <- raw match
           case None    => ZIO.fail(java.io.IOException("empty response"))
           case Some(h) => ZIO.fromEither(parseResponse(h)).mapError(java.io.IOException(_))
@@ -221,33 +357,36 @@ object Client:
         case Body.Stream(s, _, _) => s.runForeachChunk(send))
   end writeRequest
 
-  private def readResponse(t: Transport): Task[Response] =
+  private def readResponse(cfg: Config, t: Transport): Task[Response] =
     val src = t.src
-    src
-      .takeHeaders(64 * 1024)
-      .mapError(e => java.io.IOException(e.message))
-      .flatMap {
-        case None      => ZIO.fail(java.io.IOException("empty response"))
-        case Some(raw) =>
-          ZIO.fromEither(parseResponse(raw)).mapError(java.io.IOException(_)).flatMap { (status, headers) =>
-            readBody(src, status, headers)
-          }
-      }
+    src.setReadTimeout(cfg.idleTimeout) *>
+      src
+        .takeHeaders(cfg.maxHeaderBytes.toInt)
+        .mapError(e => java.io.IOException(e.message))
+        .flatMap {
+          case None      => ZIO.fail(java.io.IOException("empty response"))
+          case Some(raw) =>
+            ZIO.fromEither(parseResponse(raw)).mapError(java.io.IOException(_)).flatMap { (status, headers) =>
+              readBody(cfg, src, status, headers)
+            }
+        }
   end readResponse
 
-  private def readBody(src: ConnBuf, status: Status, headers: Headers): Task[Response] =
+  private def readBody(cfg: Config, src: ConnBuf, status: Status, headers: Headers): Task[Response] =
     val io: IO[HttpError, Response] =
       headers.contentLength match
         case Some(0) => ZIO.succeed(Response(status, headers, Body.empty))
         case Some(n) =>
-          src.takeUpTo(n).map { bytes =>
-            Response(status, headers, Body.fromBytes(bytes, headers.contentType))
-          }
+          if n > cfg.maxBodyBytes.toLong then ZIO.fail(HttpError.BodyTooLarge)
+          else
+            src.takeUpTo(n).map { bytes =>
+              Response(status, headers, Body.fromBytes(bytes, headers.contentType))
+            }
         case None =>
           if headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked")) then
             Ref.make(0L).flatMap { total =>
               def pieces: IO[HttpError, Chunk[Byte]] =
-                src.readChunkedPiece(total, Long.MaxValue, 64 * 1024).flatMap {
+                src.readChunkedPiece(total, cfg.maxBodyBytes.toLong, cfg.maxHeaderBytes.toInt).flatMap {
                   case None    => ZIO.succeed(Chunk.empty)
                   case Some(c) => pieces.map(c ++ _)
                 }
