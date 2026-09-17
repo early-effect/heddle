@@ -37,9 +37,6 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
       }.assert { case (body, miss) =>
         assertTrue(body == "3", miss == Status.NotFound)
       },
-      illustration {
-        Hub.pathPlay("/users/1")
-      }.assert(_ => assertTrue(true)),
       illustrationIO(Hub.Lives.pathPlay).live.withMountKey(InteractiveRegistry.PathPlayground),
     ),
     section("Middleware")(

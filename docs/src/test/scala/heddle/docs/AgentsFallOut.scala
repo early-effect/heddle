@@ -13,9 +13,7 @@ MCP is a host protocol over `BoundOp`, not a second tool DSL. Mark the ops agent
 with `.mcp` (or `.mcp("explicit_name")`). `Mcp.from(api)` fails on duplicate tool names or
 non-promotable shapes. Protocol revision is **2026-07-28** only.
 """,
-    illustration {
-      Hub.harnessWalk("list")
-    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.harnessWalk).live.withMountKey(InteractiveRegistry.HarnessWalk),
     section("Promote, don't auto-export")(
       md"""
 JSON in and JSON out are required (`OpArgs.promotable`). Form, bytes, and SSE stay on HTTP.
@@ -27,9 +25,8 @@ still find the rest of the `Api`.
     ),
     section("Call the same function")(
       md"""
-`tools/call` with `get_users_id` is `GET /users/{id}`.
-""",
-      illustrationIO(Hub.Lives.harnessWalk).live.withMountKey(InteractiveRegistry.HarnessWalk),
+`tools/call` with `get_users_id` is `GET /users/{id}`. Click **call** on the harness above.
+"""
     ),
     section("Point Grok Build at the hub")(
       md"""

@@ -20,9 +20,7 @@ spec.routes("docs")   // Swagger UI at /docs, spec at /docs/openapi.json
 There is no second source of truth. Content keys are charset-less (`application/json`).
 `Endpoint.auth(SecurityScheme.HttpBearer())` is what Swagger uses for Authorize.
 """,
-    illustration {
-      Hub.swaggerWalk
-    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.swaggerWalk).live.withMountKey(InteractiveRegistry.SwaggerWalk),
     section("The spec is a projection")(
       md"""
 `Api.openApi` / `users.openApi` / `OpenApi.from(...)` render OpenAPI 3.1. This test reads the
@@ -42,10 +40,9 @@ Open [http://localhost:8080/docs](http://localhost:8080/docs).
 2. Authorize against the embedded OP (seed `ada` / `ada`).
 3. `POST /users` with `{"name":"Grace"}`.
 
-Swagger is a host of the same `Api` as `GET /users/1` in these tests. The stylized Try-it-out
-above is the map. The process is the territory.
-""",
-      illustrationIO(Hub.Lives.swaggerWalk).live.withMountKey(InteractiveRegistry.SwaggerWalk),
+Swagger is a host of the same `Api` as `GET /users/1` in these tests. Execute above is the map.
+The process is the territory.
+"""
     ),
     section("Next")(
       md"""

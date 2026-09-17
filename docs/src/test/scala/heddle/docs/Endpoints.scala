@@ -15,9 +15,7 @@ object Endpoints extends DocSpecSuite:
 3.1 and Swagger UI are projections. The teaching path is [Operations are an AST](operations-are-an-ast.html)
 then [Docs and HTTP fall out](docs-and-http-fall-out.html).
 """,
-    illustration {
-      Hub.openApi("get")
-    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.openApi).live.withMountKey(InteractiveRegistry.EndpointsOpenApi),
     section("The DSL")(
       md"""
 `.inJson` / `.out` / `.outError` need `Schema` and `JsonCodec`. `.query`, `.header`, `.auth`,

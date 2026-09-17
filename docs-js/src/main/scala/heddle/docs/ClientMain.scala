@@ -9,10 +9,16 @@ object ClientMain extends ZIOAppDefault:
 
   val extraMounters: Map[String, Mounter] = Map(
     InteractiveRegistry.LandingPoster    -> Mounter.fromAscent(Hub.Lives.landingPoster),
+    InteractiveRegistry.HubPoster        -> Mounter.fromAscent(Hub.Lives.landingPoster),
+    InteractiveRegistry.HostsPoster      -> Mounter.fromAscent(Hub.Lives.landingPoster),
     InteractiveRegistry.HostFanout       -> Mounter.fromAscent(Hub.Lives.hostFanout),
     InteractiveRegistry.OpAnatomy        -> Mounter.fromAscent(Hub.Lives.opAnatomy),
+    InteractiveRegistry.AstAnatomy       -> Mounter.fromAscent(Hub.Lives.opAnatomy),
     InteractiveRegistry.EffectTrace      -> Mounter.fromAscent(Hub.Lives.effectTrace),
+    InteractiveRegistry.EffectWalk       -> Mounter.fromAscent(Hub.Lives.effectTrace),
     InteractiveRegistry.SwaggerWalk      -> Mounter.fromAscent(Hub.Lives.swaggerWalk),
+    InteractiveRegistry.SchemaPoster     -> Mounter.fromAscent(Hub.Lives.schemaPoster),
+    InteractiveRegistry.EndpointsOpenApi -> Mounter.fromAscent(Hub.Lives.openApi),
     InteractiveRegistry.HarnessWalk      -> Mounter.fromAscent(Hub.Lives.harnessWalk),
     InteractiveRegistry.DeskApp          -> Mounter.fromAscent(Hub.Lives.desk),
     InteractiveRegistry.PathPlayground   -> Mounter.fromAscent(Hub.Lives.pathPlay),

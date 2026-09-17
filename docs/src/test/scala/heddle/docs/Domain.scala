@@ -22,7 +22,11 @@ object Domain extends DocSpecSuite:
           E.code("JsonCodec"),
           ".",
         ),
-        Hub.schemaPoster,
+      )
+    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.schemaPoster).live.withMountKey(InteractiveRegistry.SchemaPoster),
+    illustration {
+      Hub.mount(
         E.h2(Hub.H2, "The directory"),
         E.p(
           Hub.Copy,

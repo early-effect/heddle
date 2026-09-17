@@ -22,12 +22,11 @@ The AST is the contract. `ZIO[R, E, A]` is the body.
 `In => ZIO[R, E, Out]` once the endpoint exists. Both are ordinary ZIO. There is no event-loop
 rule. Loom runs accept, read, and write.
 """,
-    illustration {
-      Hub.effectTrace(0)
-    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.effectTrace).live.withMountKey(InteractiveRegistry.EffectWalk),
     section("Walk a request")(
       md"""
-The live trace is on [Bind the effect](bind-the-effect.html).
+Click a step. Decode is not your code. The bind is. Encode is not your code. Interrupting the
+connection interrupts the fiber. Same widget as [Bind the effect](bind-the-effect.html).
 """
     ),
     section("Middleware is still an effect")(

@@ -30,9 +30,7 @@ Interpreters fold that AST:
 | `Mcp.from(api)` | MCP tools (promoted) + optional catalog |
 | CLI (later) | argv / subcommands via `OpArgs` |
 """,
-    illustration {
-      Hub.opAnatomy("mcp")
-    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.opAnatomy).live.withMountKey(InteractiveRegistry.AstAnatomy),
     section("OpArgs is why MCP (and CLI) can share HTTP")(
       md"""
 `OpArgs.promotable` requires JSON in and JSON out. Path params and query strings flatten into
@@ -48,8 +46,7 @@ SSE stay on HTTP. Do not smash them into tools.
     ),
     section("Click through EndpointDoc")(
       md"""
-Each field names its readers. That is the AST, not a metaphor. The live anatomy is on
-[Operations are an AST](operations-are-an-ast.html).
+Each field names its readers. Click one. That is the AST, not a metaphor.
 """
     ),
   )

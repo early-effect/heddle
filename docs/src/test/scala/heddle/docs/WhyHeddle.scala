@@ -37,7 +37,11 @@ object WhyHeddle extends DocSpecSuite:
           E.code(".mcp"),
           ".",
         ),
-        Hub.poster,
+      )
+    }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.landingPoster).live.withMountKey(InteractiveRegistry.HubPoster),
+    illustration {
+      Hub.mount(
         E.h2(Hub.H2, "Progressive, not a conversion"),
         E.p(
           Hub.Copy,
