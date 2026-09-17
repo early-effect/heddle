@@ -209,6 +209,7 @@ lazy val docs = project
     MyVersions.docsTest,
     MyVersions.coreTest,
     dependencyOverrides += MyVersions.moduleID(MyVersions.zioJson),
+    libraryDependencySchemes += "rocks.earlyeffect" %% "heddle" % VersionScheme.Always,
     Test / mainClass := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),
