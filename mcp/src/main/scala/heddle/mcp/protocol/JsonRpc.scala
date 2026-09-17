@@ -4,12 +4,13 @@ import zio.Chunk
 import zio.json.ast.Json
 
 object JsonRpc:
-  val JsonRpcVersion  = "2.0"
-  val ProtocolVersion = "2026-07-28"
-  val MetaVersion     = "io.modelcontextprotocol/protocolVersion"
-  val MetaClientInfo  = "io.modelcontextprotocol/clientInfo"
-  val MetaClientCaps  = "io.modelcontextprotocol/clientCapabilities"
-  val MetaServerInfo  = "io.modelcontextprotocol/serverInfo"
+  val JsonRpcVersion        = "2.0"
+  val ProtocolVersion       = "2026-07-28"
+  val LegacyProtocolVersion = "2025-11-25"
+  val MetaVersion           = "io.modelcontextprotocol/protocolVersion"
+  val MetaClientInfo        = "io.modelcontextprotocol/clientInfo"
+  val MetaClientCaps        = "io.modelcontextprotocol/clientCapabilities"
+  val MetaServerInfo        = "io.modelcontextprotocol/serverInfo"
 
   val ParseError         = -32700
   val InvalidRequest     = -32600

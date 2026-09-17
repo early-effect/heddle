@@ -9,7 +9,7 @@ Guidance for agents working in **heddle** (`early-effect/heddle`). Scala 3 / ZIO
 | [`heddle/`](heddle/) | Published core. ZIO + zio-json. JVM / Loom. |
 | [`brotli/`](brotli/) | Published `heddle-brotli`. RFC 7932 `br`, no JNI. |
 | [`oauth/`](oauth/) | Published `heddle-oauth`. JOSE, resource server, OAuth client, OIDC provider. |
-| [`mcp/`](mcp/) | Published `heddle-mcp`. MCP 2026-07-28 server (HTTP + stdio) over `Api` / `BoundOp`. |
+| [`mcp/`](mcp/) | Published `heddle-mcp`. MCP 2026-07-28 server (HTTP + stdio) over `Api` / `BoundOp`. HTTP and stdio also answer 2025-11-25 `initialize`. |
 | [`example/`](example/) | Runnable users API + embedded OP + Swagger UI + MCP. `publish / skip`. |
 | [`docs/`](docs/) | Specular DocSpecs + `BuildSite`. `publish / skip`. |
 | [`docs-js/`](docs-js/) | Scala.js client for `exampleDom` widgets. |

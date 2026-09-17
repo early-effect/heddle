@@ -2,8 +2,7 @@ package heddle.mcp.transport
 
 import heddle.http.{Method, Request, Response, Status}
 import heddle.http.header.Headers
-import heddle.mcp.protocol.Engine
-import heddle.mcp.protocol.JsonRpc
+import heddle.mcp.protocol.{Engine, Legacy}
 import heddle.mcp.protocol.JsonRpc.*
 import heddle.route.{Handler, Routes}
 import zio.json.EncoderOps
@@ -22,10 +21,10 @@ object Http:
       if !matches(req, segs) then ZIO.succeed(Response.notFound())
       else
         req.method match
-          case Method.POST                => post(engine, req)
-          case Method.GET | Method.DELETE =>
-            ZIO.succeed(Response.methodNotAllowed("POST"))
-          case _ => ZIO.succeed(Response.methodNotAllowed("POST"))
+          case Method.POST   => post(engine, req)
+          case Method.DELETE => ZIO.succeed(Response.empty(Status.Ok))
+          case Method.GET    => ZIO.succeed(Response.methodNotAllowed("POST, DELETE"))
+          case _             => ZIO.succeed(Response.methodNotAllowed("POST, DELETE"))
     })
   end routes
 
@@ -39,6 +38,8 @@ object Http:
           ZIO.succeed(rpcResponse(Status.BadRequest, error(Json.Null, ParseError, "Parse error")))
         case Right(json) =>
           json match
+            case msg: Json.Obj if isLegacy(req.headers, msg) =>
+              LegacyHttp.post(engine, req, msg)
             case msg: Json.Obj =>
               validateHeaders(req.headers, msg) match
                 case Some(err) => ZIO.succeed(rpcResponse(Status.BadRequest, err))
@@ -51,6 +52,11 @@ object Http:
             case _ =>
               ZIO.succeed(rpcResponse(Status.BadRequest, error(Json.Null, ParseError, "Parse error")))
     }
+
+  private def isLegacy(headers: Headers, msg: Json.Obj): Boolean =
+    val method  = methodOf(msg)
+    val headVer = headers.get(ProtocolHeader)
+    method.contains("initialize") || headVer.contains(Legacy.ProtocolVersion)
 
   private def validateHeaders(headers: Headers, msg: Json.Obj): Option[Json.Obj] =
     val id         = parseId(msg)
@@ -75,7 +81,7 @@ object Http:
     else None
   end validateHeaders
 
-  private def httpStatus(rpc: Json.Obj): Status =
+  private[transport] def httpStatus(rpc: Json.Obj): Status =
     rpc
       .get("error")
       .flatMap:
@@ -92,6 +98,6 @@ object Http:
         case _ => None
       .getOrElse(Status.Ok)
 
-  private def rpcResponse(status: Status, body: Json.Obj): Response =
+  private[transport] def rpcResponse(status: Status, body: Json.Obj): Response =
     Response.json(body.toJson, status)
 end Http

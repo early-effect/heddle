@@ -41,14 +41,17 @@ Swagger. Systems hit it from `Client`.
     ),
     section("MCP Streamable HTTP")(
       md"""
-`Mcp.from(api)` speaks JSON-RPC on `POST /mcp`. `tools/list` is the promoted set.
-`tools/call` with `get_show` runs the same function as `GET /shows/1`.
+`Mcp.from(api)` speaks JSON-RPC on `POST /mcp`. Native is 2026-07-28 (`server/discover`).
+The same endpoint answers 2025-11-25 `initialize` so older hosts can list and call.
+`tools/list` is the promoted set. `tools/call` with `get_show` runs the same function as
+`GET /shows/1`.
 """
     ),
     section("stdio")(
       md"""
-`mcp.stdio()` is the same engine on a pipe: one JSON-RPC line in, one line out. Local agent
-runtimes spawn `sbt "example/run -- --mcp-stdio"` (or a published main) and speak that framing.
+`mcp.stdio()` is the same engine on a pipe: one JSON-RPC line in, one line out. Native lines
+carry `_meta`; a 2025 host may send `initialize` first. Local agent runtimes spawn
+`sbt "example/run -- --mcp-stdio"` (or a published main) and speak that framing.
 """
     ),
     section("Toggle the host")(

@@ -5,9 +5,9 @@
 A capability compiler for human-centric AI service hubs.
 
 Write a service once (`Endpoint` / `BoundOp` / `Api`) and host it for every reader that shows
-up: HTTP + OpenAPI / Swagger for humans and systems, MCP 2026-07-28 for agents, a web UI as
-just another HTTP client. CLI is a later interpreter of the same AST. Do not grow a second
-tool DSL.
+up: HTTP + OpenAPI / Swagger for humans and systems, MCP 2026-07-28 for agents (HTTP and stdio
+also answer the 2025-11-25 `initialize` handshake), a web UI as just another HTTP client. CLI is
+a later interpreter of the same AST. Do not grow a second tool DSL.
 
 Handlers are `Request => ZIO[R, E, Response]`. The bind is `In => ZIO[R, E, Out]`. Routing is
 data. Middleware is `@@`. Loom runs accept/read/write as ordinary ZIO.
@@ -70,7 +70,7 @@ url = "http://localhost:8080/mcp"
 | Artifact | Depends on | Role |
 | --- | --- | --- |
 | `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
-| `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` |
+| `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 

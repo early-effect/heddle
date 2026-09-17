@@ -3,6 +3,7 @@ package example
 import java.nio.charset.StandardCharsets
 import heddle.*
 import heddle.mcp.Mcp
+import heddle.mcp.protocol.Legacy
 import heddle.mcp.protocol.JsonRpc.*
 import heddle.mcp.transport.Http
 import zio.*
@@ -66,6 +67,90 @@ object ExampleMcpSpec extends ZIOSpecDefault:
             call.body.asString.contains("Evening bill"),
             !call.body.asString.contains("\"isError\":true"),
           )
+      ,
+      test("HTTP 2025 initialize list and get_show"):
+        def legacy(method: String, params: Json.Obj, id: Int): Json.Obj =
+          obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> params)
+        for
+          office <- BoxOffice.seed
+          mcp    <- ZIO.fromEither(Mcp.from(Main.publicApi(office), Main.writeApi(office)))
+          init   <- mcp.routes(
+            Request.post(
+              "/mcp",
+              Body.json(
+                legacy(
+                  "initialize",
+                  obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+                  1,
+                ).toJson
+              ),
+            )
+          )
+          sid = init.header(Legacy.SessionHeader)
+          list <- mcp.routes(
+            Request
+              .post("/mcp", Body.json(legacy("tools/list", obj(), 2).toJson))
+              .withHeader(Http.ProtocolHeader, Legacy.ProtocolVersion)
+              .withHeader(Legacy.SessionHeader, sid.getOrElse(""))
+          )
+          call <- mcp.routes(
+            Request
+              .post(
+                "/mcp",
+                Body.json(
+                  legacy(
+                    "tools/call",
+                    obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
+                    3,
+                  ).toJson
+                ),
+              )
+              .withHeader(Http.ProtocolHeader, Legacy.ProtocolVersion)
+              .withHeader(Legacy.SessionHeader, sid.getOrElse(""))
+          )
+        yield assertTrue(
+          init.status == Status.Ok,
+          init.body.asString.contains("2025-11-25"),
+          list.status == Status.Ok,
+          list.body.asString.contains("get_show"),
+          !list.body.asString.contains("resultType"),
+          call.status == Status.Ok,
+          call.body.asString.contains("Evening bill"),
+        )
+        end for
+      ,
+      test("stdio 2025 initialize list and get_show"):
+        def legacy(method: String, params: Json.Obj, id: Int): Json.Obj =
+          obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> params)
+        val lines =
+          List(
+            legacy(
+              "initialize",
+              obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+              1,
+            ).toJson,
+            legacy("tools/list", obj(), 2).toJson,
+            legacy(
+              "tools/call",
+              obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
+              3,
+            ).toJson,
+          ).mkString("", "\n", "\n")
+        val in  = java.io.ByteArrayInputStream(lines.getBytes(StandardCharsets.UTF_8))
+        val out = java.io.ByteArrayOutputStream()
+        for
+          office <- BoxOffice.seed
+          mcp    <- ZIO.fromEither(Mcp.from(Main.publicApi(office), Main.writeApi(office)))
+          _      <- mcp.stdio(in, out)
+        yield
+          val text = String(out.toByteArray, StandardCharsets.UTF_8)
+          assertTrue(
+            text.contains("2025-11-25"),
+            text.contains("get_show"),
+            text.contains("Evening bill"),
+            !text.contains("resultType"),
+          )
+        end for
       ,
       test("stdio pipe discover list and get_show"):
         val lines =

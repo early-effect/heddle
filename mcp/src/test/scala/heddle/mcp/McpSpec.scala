@@ -1,6 +1,7 @@
 package heddle.mcp
 
 import heddle.*
+import heddle.mcp.protocol.Legacy
 import heddle.mcp.protocol.JsonRpc.*
 import heddle.mcp.transport.Http
 import zio.*
@@ -41,6 +42,23 @@ object McpSpec extends ZIOSpecDefault:
     )
     val p = obj((params.fields.toList :+ ("_meta" -> meta))*)
     obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> p)
+
+  private def legacyReq(method: String, params: Json.Obj, id: Int): Json.Obj =
+    obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> params)
+
+  private def postLegacy(
+      mcp: Mcp[Any],
+      method: String,
+      params: Json.Obj,
+      id: Int,
+      session: Option[String] = None,
+      protocol: Option[String] = Some(Legacy.ProtocolVersion),
+  ) =
+    val req0 = Request.post("/mcp", Body.json(legacyReq(method, params, id).toJson))
+    val req1 = protocol.fold(req0)(v => req0.withHeader(Http.ProtocolHeader, v))
+    val req  = session.fold(req1)(s => req1.withHeader(Legacy.SessionHeader, s))
+    mcp.routes(req)
+  end postLegacy
 
   def spec =
     suite("Mcp")(
@@ -308,6 +326,126 @@ object McpSpec extends ZIOSpecDefault:
               res.header("WWW-Authenticate").exists(_.contains("resource_metadata")),
             )
           }
-        },
+        }
+      ,
+      test("HTTP initialize is 2025-11-25 with a session id"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          res   <- postLegacy(
+            mcpOf(store),
+            "initialize",
+            obj(
+              "protocolVersion" -> Json.Str(Legacy.ProtocolVersion),
+              "capabilities"    -> obj(),
+              "clientInfo"      -> obj("name" -> Json.Str("test"), "version" -> Json.Str("1")),
+            ),
+            1,
+            protocol = None,
+          )
+        yield
+          val body = res.body.asString
+          assertTrue(
+            res.status == Status.Ok,
+            body.contains("2025-11-25"),
+            body.contains("Shop"),
+            !body.contains("resultType"),
+            res.header(Legacy.SessionHeader).exists(_.nonEmpty),
+          )
+      ,
+      test("HTTP 2025 list and call reuse Engine without 2026 headers"):
+        for
+          store <- Ref.make(Map(1 -> Item(1, "ada")))
+          mcp = mcpOf(store)
+          init <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          sid = init.header(Legacy.SessionHeader)
+          ack  <- postLegacy(mcp, "notifications/initialized", obj(), 2, session = sid)
+          list <- postLegacy(mcp, "tools/list", obj(), 3, session = sid)
+          call <- postLegacy(
+            mcp,
+            "tools/call",
+            obj("name" -> Json.Str("get_items_id"), "arguments" -> obj("id" -> Json.Num(1))),
+            4,
+            session = sid,
+          )
+          http <- api(store).routes(Request.get("/items/1"))
+        yield
+          val listed = list.body.asString
+          val called = call.body.asString
+          assertTrue(
+            ack.status == Status.Accepted,
+            list.status == Status.Ok,
+            listed.contains("get_items_id"),
+            listed.contains("get_items"),
+            !listed.contains("resultType"),
+            !listed.contains("ttlMs"),
+            call.status == Status.Ok,
+            called.contains("ada"),
+            !called.contains("resultType"),
+            http.body.asString.contains("ada"),
+            list.header(Legacy.SessionHeader) == sid,
+          )
+      ,
+      test("DELETE /mcp is 200"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          res   <- mcpOf(store).routes(Request(Method.DELETE, Url.parse("/mcp")))
+        yield assertTrue(res.status == Status.Ok)
+      ,
+      test("modern discover still works on the same Mcp as initialize"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          mcp = mcpOf(store)
+          _ <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          body = req("server/discover", obj()).toJson
+          res <- mcp.routes(
+            Request
+              .post("/mcp", Body.json(body))
+              .withHeader(Http.ProtocolHeader, ProtocolVersion)
+              .withHeader(Http.MethodHeader, "server/discover")
+          )
+        yield assertTrue(res.status == Status.Ok, res.body.asString.contains("2026-07-28"))
+      ,
+      test("stdio initialize then list and call without _meta"):
+        val lines =
+          List(
+            legacyReq(
+              "initialize",
+              obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+              1,
+            ).toJson,
+            legacyReq("notifications/initialized", obj(), 2).toJson,
+            legacyReq("tools/list", obj(), 3).toJson,
+            legacyReq(
+              "tools/call",
+              obj("name" -> Json.Str("get_items_id"), "arguments" -> obj("id" -> Json.Num(1))),
+              4,
+            ).toJson,
+          ).mkString("", "\n", "\n")
+        val in  = java.io.ByteArrayInputStream(lines.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        val out = java.io.ByteArrayOutputStream()
+        for
+          store <- Ref.make(Map(1 -> Item(1, "ada")))
+          _     <- mcpOf(store).stdio(in, out)
+        yield
+          val text = String(out.toByteArray)
+          assertTrue(
+            text.contains("2025-11-25"),
+            text.contains("get_items_id"),
+            text.contains("ada"),
+            !text.contains("resultType"),
+          )
+        end for,
     ) @@ TestAspect.timeout(10.seconds)
 end McpSpec

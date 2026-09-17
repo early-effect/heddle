@@ -11,7 +11,8 @@ object AgentsFallOut extends DocSpecSuite:
     md"""
 MCP is a host protocol over `BoundOp`, not a second tool DSL. `Api.job` promotes the ops
 agents should see. `Mcp.from(api)` fails on duplicate tool names or non-promotable shapes.
-Protocol revision is **2026-07-28** only. The authoring rule is [The tool is the job](the-tool-is-the-job.html).
+Native protocol is **2026-07-28**. HTTP and stdio also answer `initialize`, so Grok Build and
+Cursor `url` / `command` configs work. The authoring rule is [The tool is the job](the-tool-is-the-job.html).
 """,
     illustrationIO(Hub.Lives.harnessWalk).live.withMountKey(InteractiveRegistry.HarnessWalk),
     section("Promote, don't auto-export")(
