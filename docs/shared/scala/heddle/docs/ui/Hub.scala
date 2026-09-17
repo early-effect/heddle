@@ -446,6 +446,10 @@ object Hub:
         S.border(Border.solid(1.px, accent)),
         S.borderRadius.px(8),
         S.background(panel),
+        S.cursor.pointer,
+        S.textAlign.left,
+        Declaration("font-family", font),
+        S.color(ink),
       )
 
   object StepOff
@@ -457,6 +461,10 @@ object Hub:
         S.borderRadius.px(8),
         S.background(board),
         S.opacity(0.7),
+        S.cursor.pointer,
+        S.textAlign.left,
+        Declaration("font-family", font),
+        S.color(ink),
       )
 
   object Hint
@@ -592,17 +600,53 @@ content-type: application/json
 {"id":${p.id},"name":"${p.name}"}"""
 
   def schemaPoster: UI[Any] =
+    schemaPosterAt("JSON")
+
+  def schemaPosterAt(selected: String): UI[Any] =
+    val body = schemaBody(selected)
     E.div(
       Poster,
-      kicker("one type, three readers"),
+      kicker("one type, three readers · click a host"),
       E.div(Bound, kicker("Schema"), E.h3(Title, "User"), E.p(Fine, "id: Int, name: String")),
       E.div(
         Hosts,
-        hostCard("JSON", """{"id":1,"name":"Ada"}"""),
-        hostCard("OpenAPI", "components.schemas.User"),
-        hostCard("MCP args", "inputSchema for get_users_id"),
+        hostCard("JSON", """{"id":1,"name":"Ada"}""", on = selected == "JSON"),
+        hostCard("OpenAPI", "components.schemas.User", on = selected == "OpenAPI"),
+        hostCard("MCP args", "inputSchema for get_users_id", on = selected == "MCP args"),
         hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
       ),
+      E.pre(Payload, body),
+    )
+  end schemaPosterAt
+
+  def schemaBody(selected: String): String =
+    selected match
+      case "OpenAPI"  => "components.schemas.User"
+      case "MCP args" => "get_users_id inputSchema  { id: integer }"
+      case "CLI"      => "--id 1   (later interpreter)"
+      case _          => """{"id":1,"name":"Ada"}"""
+
+  def schemaPosterLive(selected: Source[String]): UI[Any] =
+    E.div(
+      Poster,
+      kicker("one type, three readers · click a host"),
+      E.div(Bound, kicker("Schema"), E.h3(Title, "User"), E.p(Fine, "id: Int, name: String")),
+      E.div(
+        Hosts,
+        hostTile(selected, "JSON", """{"id":1,"name":"Ada"}"""),
+        hostTile(selected, "OpenAPI", "components.schemas.User"),
+        hostTile(selected, "MCP args", "inputSchema for get_users_id"),
+        hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
+      ),
+      selected.map(s => E.pre(Payload, schemaBody(s))),
+    )
+
+  def hostTile(selected: Source[String], label: String, body: String): UI[Any] =
+    E.button(
+      selected.map(s => if s == label then Set[CssClass](CardOn) else Set[CssClass](Card)),
+      Events.onClick(_ => selected.set(label)),
+      E.div(Kicker, label),
+      E.p(Fine, body),
     )
 
   final case class OpField(id: String, label: String, value: String, readers: String)
@@ -670,6 +714,13 @@ content-type: application/json
     "encode"  -> "encodeOut writes application/json. Fiber exits with the connection.",
   )
 
+  def traceSnippet(step: Int): String =
+    step match
+      case 0 => "Request.get(\"/users/1\")"
+      case 1 => "path.matches → Some(1)"
+      case 2 => "store.get.map(_.get(1))  // User(1, Ada)"
+      case _ => "200  {\"id\":1,\"name\":\"Ada\"}"
+
   def effectTrace(step: Int): UI[Any] =
     val i = step.max(0).min(traceSteps.length - 1)
     E.div(
@@ -684,16 +735,33 @@ content-type: application/json
         ),
       ),
       E.p(Fine, traceSteps(i)._2),
-      E.pre(
-        Mono,
-        i match
-          case 0 => "Request.get(\"/users/1\")"
-          case 1 => "path.matches → Some(1)"
-          case 2 => "store.get.map(_.get(1))  // User(1, Ada)"
-          case _ => "200  {\"id\":1,\"name\":\"Ada\"}",
-      ),
+      E.pre(Mono, traceSnippet(i)),
     )
   end effectTrace
+
+  def effectTraceLive(step: Source[Int]): UI[Any] =
+    E.div(
+      Shell,
+      kicker("the effect is the body · click a step"),
+      E.div(
+        Hosts,
+        UI.Fragment(
+          traceSteps.zipWithIndex.map { case ((name, _), n) =>
+            E.button(
+              step.map(i => if i == n then Set[CssClass](StepOn) else Set[CssClass](StepOff)),
+              Events.onClick(_ => step.set(n)),
+              kicker(s"0${n + 1}"),
+              E.strong(name),
+            )
+          }.toVector
+        ),
+      ),
+      step.map { n =>
+        val i = n.max(0).min(traceSteps.length - 1)
+        E.div(Stack, E.p(Fine, traceSteps(i)._2), E.pre(Mono, traceSnippet(i)))
+      },
+    )
+  end effectTraceLive
 
   def hostFanout(host: String): UI[Any] =
     E.div(
@@ -705,13 +773,31 @@ content-type: application/json
     )
 
   def swaggerWalk: UI[Any] =
+    swaggerWalkAt(ran = false)
+
+  def swaggerWalkAt(ran: Boolean): UI[Any] =
     E.div(
       Shell,
       kicker("OpenAPI · Try it out"),
       E.div(Row, method("GET"), E.strong("/users/{id}"), chip("users")),
       E.div(Card, kicker("parameters"), E.div("id · path · integer = 1")),
-      E.div(Row, E.span(ChipOn, "Execute")),
-      E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"name":"Ada"}""")),
+      E.div(Row, E.span(if ran then ChipOn else Chip, "Execute")),
+      if ran then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"name":"Ada"}"""))
+      else E.p(Hint, "Execute runs GET /users/1."),
+      E.p(Hint, "api.openApi.routes(\"docs\") serves this. No second spec."),
+    )
+
+  def swaggerWalkLive(ran: Source[Boolean]): UI[Any] =
+    E.div(
+      Shell,
+      kicker("OpenAPI · Try it out"),
+      E.div(Row, method("GET"), E.strong("/users/{id}"), chip("users")),
+      E.div(Card, kicker("parameters"), E.div("id · path · integer = 1")),
+      E.button(BtnOn, Events.onClick(_ => ran.set(true)), "Execute"),
+      ran.map { ok =>
+        if ok then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"name":"Ada"}"""))
+        else E.p(Hint, "Execute runs GET /users/1.")
+      },
       E.p(Hint, "api.openApi.routes(\"docs\") serves this. No second spec."),
     )
 
@@ -981,18 +1067,15 @@ data: elements <div>hello</div>"""
 
     def effectTrace: URIO[Scope, UI[Any]] =
       for step <- sq(0)
-      yield E.div(
-        Stack,
-        E.div(
-          Row,
-          E.button(Btn, Events.onClick(_ => step.update(n => (n + 1) % traceSteps.length)), "next step"),
-          E.span(Hint, step.map(n => s"${n + 1} / ${traceSteps.length}")),
-        ),
-        step.map(Hub.effectTrace),
-      )
+      yield effectTraceLive(step)
 
     def swaggerWalk: URIO[Scope, UI[Any]] =
-      ZIO.succeed(Hub.swaggerWalk)
+      for ran <- sq(false)
+      yield swaggerWalkLive(ran)
+
+    def schemaPoster: URIO[Scope, UI[Any]] =
+      for selected <- sq("JSON")
+      yield schemaPosterLive(selected)
 
     def harnessWalk: URIO[Scope, UI[Any]] =
       for phase <- sq("list")
