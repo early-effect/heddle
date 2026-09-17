@@ -24,9 +24,9 @@ object ThreeHosts extends DocSpecSuite:
           E.code("OpArgs"),
           " shape, not shipped yet.",
         ),
-        Hub.poster,
       )
     }.assert(_ => assertTrue(true)),
+    illustrationIO(Hub.Lives.landingPoster).live.withMountKey(InteractiveRegistry.HostsPoster),
     section("Write the capability once")(
       md"""
 `getUser` is an `Endpoint`. `.mcp` promotes it as a tool. `Api.bind` is the function agents and
