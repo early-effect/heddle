@@ -166,7 +166,7 @@ object Client:
     def close(): Unit = closeQuietly(ch)
 
   private final case class TlsConn(ssl: javax.net.ssl.SSLSocket, ch: SocketChannel) extends Transport:
-    def src: ConnBuf                    = ConnBuf.inputStream(ByteBuffer.allocate(64 * 1024), ssl.getInputStream)
+    def src: ConnBuf                    = ConnBuf.inputStream(ByteBuffer.allocate(64 * 1024), ssl.getInputStream, ssl)
     def send: Chunk[Byte] => Task[Unit] = heddle.server.Tls.writer(ssl.getOutputStream)
     def close(): Unit                   =
       try ssl.close()

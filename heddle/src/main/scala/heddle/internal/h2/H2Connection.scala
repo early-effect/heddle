@@ -61,10 +61,16 @@ private[heddle] object H2Connection:
     def loop: ZIO[R, HttpError, Unit] =
       if !takingWork.get() then ZIO.unit
       else
-        readFrame(src, config.http2Config.maxFrameSize).flatMap {
-          case None        => ZIO.unit
-          case Some(frame) => handle(routes, out, config, busy, acc, bodies, received, frame, secure) *> loop
-        }
+        src.setReadTimeout(config.idleTimeout) *>
+          Server
+            .awaitWithin(config.idleTimeout)(readFrame(src, config.http2Config.maxFrameSize))
+            .flatMap {
+              case None        => ZIO.unit
+              case Some(frame) =>
+                frame match
+                  case None    => ZIO.unit
+                  case Some(f) => handle(routes, out, config, busy, acc, bodies, received, f, secure) *> loop
+            }
     loop
   end reader
 

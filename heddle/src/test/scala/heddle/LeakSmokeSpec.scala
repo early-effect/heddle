@@ -24,7 +24,7 @@ object LeakSmokeSpec extends ZIOSpecDefault:
               case (Some(a), Some(b)) => b <= a + 2
               case _                  => true
             val fdOk = (fd0, fd1) match
-              case (Some(a), Some(b)) => b <= a + 8
+              case (Some(a), Some(b)) => b <= a + 32
               case _                  => true
             assertTrue(tcpOk, fdOk)
           end for

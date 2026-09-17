@@ -242,6 +242,59 @@ object Http1Spec extends ZIOSpecDefault:
           assertTrue(wire.startsWith("HTTP/1.1 400"), wire.contains("Connection: close"), !wire.contains("A"))
         }
       ,
+      test("maxRequestsPerConnection closes after N"):
+        val routes = Routes(
+          Method.GET / "a" -> Handler.text("A"),
+          Method.GET / "b" -> Handler.text("B"),
+        )
+        val config = Server.Config.default.copy(maxRequestsPerConnection = 1)
+        runWire(routes, get("/a") + get("/b"), config).map { wire =>
+          assertTrue(wire.contains("A"), !wire.contains("B"), wire.contains("Connection: close"))
+        }
+      ,
+      test("headerTimeout of a stalled header block is 408"):
+        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
+        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
+        val config = Server.Config.default.copy(headerTimeout = 10.millis)
+        for
+          remaining <- Ref.make(
+            Chunk.fromArray("GET /x HTTP/1.1\r\nHost: localhost\r\n".getBytes(StandardCharsets.US_ASCII))
+          )
+          out <- Ref.make(Chunk.empty[Byte])
+          pull = remaining
+            .modify { c =>
+              if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
+            }
+            .delay(1.hour)
+          send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
+          _     <- Http1.serveConnection(Routes.empty, pull, send, config, taking, busy)
+          bytes <- out.get
+        yield
+          val wire = String(bytes.toArray, StandardCharsets.US_ASCII)
+          assertTrue(wire.startsWith("HTTP/1.1 408"))
+        end for
+      @@ TestAspect.withLiveClock,
+      test("idleTimeout ends keep-alive when the next request never arrives"):
+        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
+        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
+        val config = Server.Config.default.copy(idleTimeout = 20.millis)
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        for
+          remaining <- Ref.make(Chunk.fromArray(get("/health").getBytes(StandardCharsets.US_ASCII)))
+          out       <- Ref.make(Chunk.empty[Byte])
+          pull = remaining
+            .modify { c =>
+              if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
+            }
+            .flatMap {
+              case None    => ZIO.never
+              case Some(c) => ZIO.succeed(Some(c))
+            }
+          send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
+          done <- Http1.serveConnection(routes, pull, send, config, taking, busy).timeout(2.seconds)
+        yield assertTrue(done.isDefined)
+        end for
+      @@ TestAspect.withLiveClock,
       test("short Content-Length stream does not keep the connection"):
         val routes = Routes(
           Method.GET / "short" -> handler {
