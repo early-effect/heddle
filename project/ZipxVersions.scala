@@ -28,8 +28,6 @@ object MyVersions extends ZipxVersions:
 
   def coreLib    = library(zio, zioStreams, zioJson)
   def coreTest   = library(zioTest, zioTestSbt)
-  def jsonLib    = library(zioJson)
-  def jsonTest   = library(zioTest, zioTestSbt)
   def benchLib   = library(zioHttp)
   def oauthLib   = library(nimbusJose, nimbusOidc)
   def brotliTest = library(brotliDec)

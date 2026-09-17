@@ -12,8 +12,8 @@ object DocsAndHttp extends DocSpecSuite:
 Once the `Api` is bound, HTTP and OpenAPI are free.
 
 ```scala
-val spec = users.openApi
-val http = users.routes
+val spec = api.openApi
+val http = api.routes
 spec.routes("docs")   // Swagger UI at /docs, spec at /docs/openapi.json
 ```
 
@@ -23,7 +23,7 @@ There is no second source of truth. Content keys are charset-less (`application/
     illustrationIO(Hub.Lives.swaggerWalk).live.withMountKey(InteractiveRegistry.SwaggerWalk),
     section("The spec is a projection")(
       md"""
-`Api.openApi` / `users.openApi` / `OpenApi.from(...)` render OpenAPI 3.1. This test reads the
+`Api.openApi` / `OpenApi.from(...)` render OpenAPI 3.1. This test reads the
 JSON we serve, not a fixture we typed twice.
 """,
       illustrationIO(Hub.Lives.openApi).live.withMountKey(InteractiveRegistry.OpenApiPreview),
@@ -36,17 +36,17 @@ sbt example/run
 
 Open [http://localhost:8080/docs](http://localhost:8080/docs).
 
-1. `GET /users/1` → Ada.
+1. `GET /shows/1` → Evening bill.
 2. Authorize against the embedded OP (seed `ada` / `ada`).
-3. `POST /users` with `{"name":"Grace"}`.
+3. `POST /parties` with `{"showId":1,"size":2}`.
 
-Swagger is a host of the same `Api` as `GET /users/1` in these tests. Execute above is the map.
+Swagger is a host of the same `Api` as `GET /shows/1` in these tests. Execute above is the map.
 The process is the territory.
 """
     ),
     section("Next")(
       md"""
-[Agents fall out](agents-fall-out.html). `.mcp` is the only extra mark.
+[Agents fall out](agents-fall-out.html). `Api.job` is the extra mark.
 """
     ),
   )

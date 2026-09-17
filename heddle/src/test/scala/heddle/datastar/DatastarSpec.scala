@@ -39,18 +39,9 @@ object DatastarSpec extends ZIOSpecDefault:
         }
       ,
       test("readSignals decodes a JSON body"):
-        given JsonCodec[Count] = JsonCodec.from(
-          c => s"""{"count":${c.n}}""",
-          s =>
-            val i = s.indexOf(':')
-            if i < 0 then Left("nope")
-            else
-              val n = s.drop(i + 1).takeWhile(_.isDigit)
-              n.toIntOption.toRight("nope").map(Count(_)),
-        )
-        val req = Request.post("/inc", Body.json("""{"count":7}"""))
+        val req = Request.post("/inc", Body.json("""{"n":7}"""))
         req.readSignals[Count].map(c => assertTrue(c.n == 7)),
     ) @@ TestAspect.timeout(15.seconds) @@ TestAspect.withLiveClock
 
-  final case class Count(n: Int)
+  final case class Count(n: Int) derives JsonCodec
 end DatastarSpec

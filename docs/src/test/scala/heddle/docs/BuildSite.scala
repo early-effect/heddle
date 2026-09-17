@@ -20,6 +20,7 @@ object BuildSite extends DocsSite:
       domain: Domain.type,
       operations: Operations.type,
       bind: BindEffect.type,
+      job: TheToolIsTheJob.type,
       docsHttp: DocsAndHttp.type,
       agents: AgentsFallOut.type,
       web: WebApp.type,

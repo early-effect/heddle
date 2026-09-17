@@ -27,9 +27,9 @@ when you need something that is not an HTTP operation.
 `withCatalog` adds `search_operations` and `invoke`.
 """,
       exampleZIO {
-        Users.seed.flatMap { (store, nextId) =>
-          ZIO.fromEither(Users.mcpOf(store, nextId)).map(_.withCatalog).flatMap { mcp =>
-            mcp.handle(Users.rpc("tools/list", obj())).map { out =>
+        BoxOffice.seed.flatMap { store =>
+          ZIO.fromEither(BoxOffice.mcpOf(store)).map(_.withCatalog).flatMap { mcp =>
+            mcp.handle(BoxOffice.rpc("tools/list", obj())).map { out =>
               val json = out.get.toJson
               json.contains("search_operations") && json.contains("invoke")
             }
@@ -42,16 +42,16 @@ The live catalog toggle is on [Agents fall out](agents-fall-out.html).
     ),
     section("JSON-RPC")(
       md"""
-`tools/call` with `get_users_id` is `GET /users/{id}`.
+`tools/call` with `get_show` is `GET /shows/{id}`.
 """,
       exampleZIO {
-        Users.seed.flatMap { (store, nextId) =>
-          ZIO.fromEither(Users.mcpOf(store, nextId)).flatMap { mcp =>
-            val call = Users.rpc(
+        BoxOffice.seed.flatMap { store =>
+          ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
+            val call = BoxOffice.rpc(
               "tools/call",
-              obj("name" -> Json.Str("get_users_id"), "arguments" -> obj("id" -> Json.Num(1))),
+              obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
             )
-            mcp.handle(call).map(_.get.toJson.contains("Ada"))
+            mcp.handle(call).map(_.get.toJson.contains("Evening bill"))
           }
         }
       }.assert(ok => assertTrue(ok)),

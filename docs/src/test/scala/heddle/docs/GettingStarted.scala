@@ -9,11 +9,10 @@ object GettingStarted extends DocSpecSuite:
 
   def doc = page("Install")(
     md"""
-JSON, MCP, OAuth, and brotli are optional artifacts on the same version. JDK 21+.
+MCP, OAuth, and brotli are optional artifacts on the same version. JSON is zio-json on core. JDK 21+.
 
 ```scala
 libraryDependencies += "rocks.earlyeffect" %% "heddle" % "${Landing.docsVersion}"
-libraryDependencies += "rocks.earlyeffect" %% "heddle-zio-json" % "${Landing.docsVersion}"
 libraryDependencies += "rocks.earlyeffect" %% "heddle-mcp" % "${Landing.docsVersion}"
 ```
 

@@ -3,12 +3,11 @@ package heddle
 import zio.*
 import zio.test.*
 
-final case class Book(title: String, pages: Int) derives Schema
+import zio.json.JsonCodec
+
+final case class Book(title: String, pages: Int) derives Schema, JsonCodec
 
 object OpenApiSpec extends ZIOSpecDefault:
-  given JsonCodec[String] = JsonCodec.from(identity, Right(_))
-  given JsonCodec[Book]   =
-    JsonCodec.from(_ => "", _ => Left("unused"))
 
   def spec =
     suite("OpenApi")(

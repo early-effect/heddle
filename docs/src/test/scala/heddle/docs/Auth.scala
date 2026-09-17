@@ -43,7 +43,7 @@ authorization-code+PKCE, client credentials, refresh, device, and userinfo.
 
 A loopback OpenID provider is `sbt oauth/run`
 (`http://127.0.0.1:8080/.well-known/openid-configuration`).
-`sbt example/run` embeds that OP next to the directory API so Swagger Authorize works against the
+`sbt example/run` embeds that OP next to the box office API so Swagger Authorize works against the
 same process. Seed user `ada` / `ada`. Machine client `machine` / `secret`.
 """,
       exampleZIO {

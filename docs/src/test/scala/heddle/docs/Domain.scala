@@ -27,29 +27,29 @@ object Domain extends DocSpecSuite:
     illustrationIO(Hub.Lives.schemaPoster).live.withMountKey(InteractiveRegistry.SchemaPoster),
     illustration {
       Hub.mount(
-        E.h2(Hub.H2, "The directory"),
+        E.h2(Hub.H2, "The box office"),
         E.p(
           Hub.Copy,
-          "The running example in this repo is a people directory. Eight names. That is enough to host humans, systems, and agents.",
+          "The running example in this repo is a box office. Three bills. That is enough to host humans, systems, and agents.",
         ),
       )
     }.assert(_ => assertTrue(true)),
     section("The types")(
       md"""
 ```scala
-final case class User(id: Int, name: String) derives Schema, JsonCodec
-final case class NewUser(name: String) derives Schema, JsonCodec
+final case class Show(id: Int, title: String, remaining: Int) derives Schema, JsonCodec
+final case class Party(showId: Int, size: Int) derives Schema, JsonCodec
 final case class NotFound(message: String) derives Schema, JsonCodec
 ```
 """
     ),
     section("Why Schema exists")(
       md"""
-`derives Schema` is not documentation theater. `User` becomes:
+`derives Schema` is not documentation theater. `Show` becomes:
 
-- the JSON object `{"id":1,"name":"Ada"}` on the wire
-- `components.schemas.User` in OpenAPI
-- the result schema of `get_users_id` for MCP
+- the JSON object `{"id":1,"title":"Evening bill","remaining":12}` on the wire
+- `components.schemas.Show` in OpenAPI
+- the result schema of `get_show` for MCP
 - the shape a future CLI would print and parse
 
 Change the type. Every host moves. That is the point of a compiler.

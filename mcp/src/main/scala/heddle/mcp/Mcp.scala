@@ -1,6 +1,6 @@
 package heddle.mcp
 
-import heddle.endpoint.{Api, BoundOp, JsonCodec, OpArgs, Schema, SchemaJson}
+import heddle.endpoint.{Api, BoundOp, OpArgs, Schema, SchemaJson}
 import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
@@ -10,7 +10,7 @@ import heddle.mcp.protocol.JsonRpc
 import heddle.mcp.protocol.JsonRpc.*
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
-import zio.json.{DecoderOps, EncoderOps}
+import zio.json.{DecoderOps, EncoderOps, JsonCodec}
 import zio.json.ast.Json
 import zio.{Chunk, ZIO, ZNothing}
 
@@ -133,13 +133,13 @@ object Mcp:
       def name: String                                                    = defn.name
       def definition: ToolDef                                             = defn
       def call(args: Json, headers: Headers): ZIO[R, Nothing, CallResult] =
-        ja.decode(args.toJson) match
+        ja.decoder.decodeJson(args.toJson) match
           case Left(msg) => ZIO.succeed(CallResult.Failed(msg))
           case Right(a)  =>
             f(a).fold(
               CallResult.Failed(_),
               b =>
-                val raw  = jb.encode(b)
+                val raw  = jb.encoder.encodeJson(b).toString
                 val json = raw.fromJson[Json].getOrElse(Json.Str(raw))
                 CallResult.Ok(json, raw),
             )

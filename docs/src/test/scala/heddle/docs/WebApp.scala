@@ -11,7 +11,7 @@ object WebApp extends DocSpecSuite:
     md"""
 A browser is not a fourth implementation. It is an HTTP client of `api.routes`.
 
-The directory on [the landing](index.html) is that client: list people, open one. Same
+The box office on [the landing](index.html) is that client: list bills, open one. Same
 `BoundOp` Swagger and Grok call. JSON is a detail, not the UI.
 """,
     illustrationIO(Hub.Lives.desk).live.withMountKey(InteractiveRegistry.DeskApp),
@@ -22,12 +22,12 @@ sbt example/run
 ```
 
 That serves `/preview`, `/docs`, and `POST /mcp` from the real `Api`. The widget above is the
-same directory, replayed.
+same box office, replayed.
 """
     ),
     section("Writes still go through the Api")(
       md"""
-`POST /users` is bound, documented, and (in the example) OAuth-gated. The preview UI will not
+`POST /parties` is bound, documented, and (in the example) OAuth-gated. The preview UI will not
 invent a second create path. If you add a host later, you bind it to this `Api` or you are
 doing it wrong.
 """

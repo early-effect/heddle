@@ -197,12 +197,14 @@ object Engine:
 
   private def encodeOut[R, In, Err, Out](op: BoundOp[R, In, Err, Out], out: Out): Json =
     op.endpoint.outputCodec match
-      case Some(c) => c.encode(out).fromJson[Json].getOrElse(Json.Str(c.encode(out)))
-      case None    => Json.Str(out.toString)
+      case Some(c) =>
+        val raw = c.encoder.encodeJson(out).toString
+        raw.fromJson[Json].getOrElse(Json.Str(raw))
+      case None => Json.Str(out.toString)
 
   private def encodeErr[R, In, Err, Out](op: BoundOp[R, In, Err, Out], err: Err): String =
     op.endpoint.errorCodec match
-      case Some(c) => c.encode(err)
+      case Some(c) => c.encoder.encodeJson(err).toString
       case None    => err.toString
 
   private def successSchema(doc: EndpointDoc): Option[heddle.endpoint.SchemaDoc] =

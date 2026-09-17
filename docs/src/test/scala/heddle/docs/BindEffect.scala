@@ -12,13 +12,13 @@ object BindEffect extends DocSpecSuite:
 `Api.bind` is the implementation. The AST does not run itself.
 
 ```scala
-Api("Users", "0.1.0")
-  .bind(getUser) { id =>
-    store.get.map(_.get(id).toRight(NotFound(s"user $$id"))).flatMap(ZIO.fromEither)
+Api("Box office", "0.1.0")
+  .job(getShow) { id =>
+    shows.get(id)
   }
 ```
 
-The function is `In => ZIO[R, E, Out]`. Here `In` is `Int`, `E` is `NotFound`, `Out` is `User`.
+The function is `In => ZIO[R, E, Out]`. Here `In` is `Int`, `E` is `NotFound`, `Out` is `Show`.
 HTTP will decode the path, run this ZIO, and encode the result. MCP will flatten arguments with
 `OpArgs`, run the same ZIO, and wrap the JSON as tool content.
 """,
@@ -31,7 +31,7 @@ the connection interrupts the fiber.
     ),
     section("Next")(
       md"""
-[Docs and HTTP fall out](docs-and-http-fall-out.html). You do not write OpenAPI by hand.
+[The tool is the job](the-tool-is-the-job.html). Compose that ZIO. Promote the bind agents should call.
 """
     ),
   )

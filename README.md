@@ -26,7 +26,7 @@ Core (ZIO only):
 libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.2.0"
 ```
 
-Optional artifacts, same version: `heddle-zio-json`, `heddle-mcp`, `heddle-oauth`, `heddle-brotli`.
+Optional artifacts, same version: `heddle-mcp`, `heddle-oauth`, `heddle-brotli`.
 
 ## Routes
 
@@ -47,14 +47,14 @@ object Hello extends HeddleApp:
   def routes = app
 ```
 
-Promote selected endpoints with `.mcp`, then `Mcp.from(api)`. Agents hit `POST /mcp` or a
+Promote selected endpoints with `Api.job` (or `.mcp`), then `Mcp.from(api)`. Agents hit `POST /mcp` or a
 `--mcp-stdio` process. Swagger is `api.openApi.routes("docs")`. A browser is an HTTP client
 of `api.routes`.
 
 ## Run the example hub
 
 ```bash
-sbt example/run                      # directory API + OP + Swagger at /docs, UI at /preview, MCP at /mcp
+sbt example/run                      # box office + OP + Swagger at /docs, UI at /preview, MCP at /mcp
 sbt "example/run -- --mcp-stdio"     # same Api on stdio
 ```
 
@@ -69,10 +69,9 @@ url = "http://localhost:8080/mcp"
 
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
-| `heddle-zio-json` | heddle, zio-json | `given JsonCodec[A]` from zio-json |
-| `heddle-mcp` | heddle, heddle-zio-json | MCP 2026-07-28 over `Api` / `BoundOp` |
-| `heddle-oauth` | heddle, heddle-zio-json | JOSE, resource server, OAuth client, OIDC provider |
+| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
+| `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` |
+| `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 
 JDK 21+. Full guide: [earlyeffect.rocks/heddle](https://www.earlyeffect.rocks/heddle/).

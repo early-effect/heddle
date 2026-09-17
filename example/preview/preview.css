@@ -67,7 +67,7 @@ section {
   padding: 1rem 1.1rem;
 }
 
-.people {
+.bills {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -75,7 +75,7 @@ section {
   gap: 0.5rem;
 }
 
-.people button {
+.bills button {
   width: 100%;
   text-align: left;
   padding: 0.7rem 0.85rem;
@@ -88,8 +88,35 @@ section {
   cursor: pointer;
 }
 
-.people button:hover {
+.bills button:hover {
   border-color: var(--accent);
+}
+
+.pickup {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.pickup input {
+  flex: 1;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.pickup button {
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
 }
 
 .mono {

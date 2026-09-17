@@ -23,17 +23,12 @@ object Hub:
   val chalkOk = Color.hex("#7d9b6a")
   val ring    = Color.hex("#c46a52")
 
-  final case class Person(id: Int, name: String, role: String)
+  final case class Bill(id: Int, title: String, remaining: Int)
 
-  val people: List[Person] = List(
-    Person(1, "Ada", "first programmer"),
-    Person(2, "Grace", "COBOL, compilers"),
-    Person(3, "Alan", "computation"),
-    Person(4, "Margaret", "Apollo software"),
-    Person(5, "Edsger", "structured programming"),
-    Person(6, "Barbara", "abstraction"),
-    Person(7, "Donald", "The Art of Computer Programming"),
-    Person(8, "John", "FORTRAN"),
+  val bills: List[Bill] = List(
+    Bill(1, "Evening bill", 12),
+    Bill(2, "Matinee", 8),
+    Bill(3, "Late bill", 2),
   )
 
   object Screen
@@ -529,9 +524,9 @@ object Hub:
       E.div(
         Bound,
         kicker("BoundOp"),
-        E.h3(name, "getUser"),
+        E.h3(name, "getShow"),
         E.p(Fine, "Endpoint + In => ZIO[R, E, Out]. Written once."),
-        E.div(Row, method("GET"), chip("/users/{id}"), chip(".mcp"), chip("ReadOnly")),
+        E.div(Row, method("GET"), chip("/shows/{id}"), chip(".mcp"), chip("ReadOnly")),
       ),
       E.div(
         Hosts,
@@ -570,34 +565,34 @@ object Hub:
       E.p(Fine, body),
     )
 
-  def hostBody(host: String, p: Person = people.head): String =
+  def hostBody(host: String, p: Bill = bills.head): String =
     host match
       case "OpenAPI" =>
-        s"""/users/{id}:
+        s"""/shows/{id}:
   get:
-    operationId: get_users_id
+    operationId: get_show
     summary: Get a user
     responses:
-      "200": { schema: User }
+      "200": { schema: Show }
       "404": { schema: NotFound }"""
       case "MCP" =>
         s"""POST /mcp
 {"method":"tools/call",
- "params":{"name":"get_users_id","arguments":{"id":${p.id}}}}
+ "params":{"name":"get_show","arguments":{"id":${p.id}}}}
 
-→ {"id":${p.id},"name":"${p.name}"}"""
+→ {"id":${p.id},"name":"${p.title}"}"""
       case "stdio" =>
-        s"""stdin  → tools/call get_users_id {"id":${p.id}}
-stdout ← {"id":${p.id},"name":"${p.name}"}
+        s"""stdin  → tools/call get_show {"id":${p.id}}
+stdout ← {"id":${p.id},"name":"${p.title}"}
 
 one JSON-RPC line in, one line out."""
       case _ =>
-        s"""GET /users/${p.id} HTTP/1.1
+        s"""GET /shows/${p.id} HTTP/1.1
 
 HTTP/1.1 200 OK
 content-type: application/json
 
-{"id":${p.id},"name":"${p.name}"}"""
+{"id":${p.id},"name":"${p.title}"}"""
 
   def schemaPoster: UI[Any] =
     schemaPosterAt("JSON")
@@ -607,12 +602,12 @@ content-type: application/json
     E.div(
       Poster,
       kicker("one type, three readers · click a host"),
-      E.div(Bound, kicker("Schema"), E.h3(Title, "User"), E.p(Fine, "id: Int, name: String")),
+      E.div(Bound, kicker("Schema"), E.h3(Title, "Show"), E.p(Fine, "id: Int, title: String, remaining: Int")),
       E.div(
         Hosts,
-        hostCard("JSON", """{"id":1,"name":"Ada"}""", on = selected == "JSON"),
-        hostCard("OpenAPI", "components.schemas.User", on = selected == "OpenAPI"),
-        hostCard("MCP args", "inputSchema for get_users_id", on = selected == "MCP args"),
+        hostCard("JSON", """{"id":1,"title":"Evening bill","remaining":12}""", on = selected == "JSON"),
+        hostCard("OpenAPI", "components.schemas.Show", on = selected == "OpenAPI"),
+        hostCard("MCP args", "inputSchema for get_show", on = selected == "MCP args"),
         hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
       ),
       E.pre(Payload, body),
@@ -621,21 +616,21 @@ content-type: application/json
 
   def schemaBody(selected: String): String =
     selected match
-      case "OpenAPI"  => "components.schemas.User"
-      case "MCP args" => "get_users_id inputSchema  { id: integer }"
+      case "OpenAPI"  => "components.schemas.Show"
+      case "MCP args" => "get_show inputSchema  { id: integer }"
       case "CLI"      => "--id 1   (later interpreter)"
-      case _          => """{"id":1,"name":"Ada"}"""
+      case _          => """{"id":1,"title":"Evening bill","remaining":12}"""
 
   def schemaPosterLive(selected: Source[String]): UI[Any] =
     E.div(
       Poster,
       kicker("one type, three readers · click a host"),
-      E.div(Bound, kicker("Schema"), E.h3(Title, "User"), E.p(Fine, "id: Int, name: String")),
+      E.div(Bound, kicker("Schema"), E.h3(Title, "Show"), E.p(Fine, "id: Int, title: String, remaining: Int")),
       E.div(
         Hosts,
-        hostTile(selected, "JSON", """{"id":1,"name":"Ada"}"""),
-        hostTile(selected, "OpenAPI", "components.schemas.User"),
-        hostTile(selected, "MCP args", "inputSchema for get_users_id"),
+        hostTile(selected, "JSON", """{"id":1,"title":"Evening bill","remaining":12}"""),
+        hostTile(selected, "OpenAPI", "components.schemas.Show"),
+        hostTile(selected, "MCP args", "inputSchema for get_show"),
         hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
       ),
       selected.map(s => E.pre(Payload, schemaBody(s))),
@@ -651,21 +646,21 @@ content-type: application/json
 
   final case class OpField(id: String, label: String, value: String, readers: String)
 
-  val getUserFields: List[OpField] = List(
+  val getShowFields: List[OpField] = List(
     OpField("method", "method", "GET", "HTTP, OpenAPI, derived tool name"),
-    OpField("path", "path", "/users/{id}", "HTTP route, OpenAPI path, OpArgs path fill"),
+    OpField("path", "path", "/shows/{id}", "HTTP route, OpenAPI path, OpArgs path fill"),
     OpField("in", "in", "id: Int", "decodeIn, MCP argument, future CLI flag"),
-    OpField("out", "out", "User @ 200", "encodeOut, OpenAPI response, tool result"),
+    OpField("out", "out", "Show @ 200", "encodeOut, OpenAPI response, tool result"),
     OpField("err", "error", "NotFound @ 404", "encodeErr, OpenAPI, MCP isError"),
-    OpField("mcp", ".mcp", "promoted get_users_id", "Mcp.from tools/list"),
+    OpField("mcp", ".mcp", "promoted get_show", "Mcp.from tools/list"),
     OpField("hint", "hints", "ReadOnly", "MCP tool annotations"),
   )
 
   def opAnatomy(selected: String): UI[Any] =
-    val field = getUserFields.find(_.id == selected).getOrElse(getUserFields.head)
+    val field = getShowFields.find(_.id == selected).getOrElse(getShowFields.head)
     opAnatomyView(
       field,
-      getUserFields.map { f =>
+      getShowFields.map { f =>
         E.div(
           if f.id == field.id then FieldOn else Field,
           E.div(Kicker, f.label),
@@ -676,15 +671,15 @@ content-type: application/json
   end opAnatomy
 
   def opAnatomyLive(selected: Source[String]): UI[Any] =
-    val field = selected.map(id => getUserFields.find(_.id == id).getOrElse(getUserFields.head))
+    val field = selected.map(id => getShowFields.find(_.id == id).getOrElse(getShowFields.head))
     E.div(
       Shell,
       kicker("EndpointDoc · click a field"),
-      E.div(Row, method("GET"), E.strong("/users/{id}"), chip(".mcp", on = true), chip("ReadOnly")),
+      E.div(Row, method("GET"), E.strong("/shows/{id}"), chip(".mcp", on = true), chip("ReadOnly")),
       E.div(
         Hosts,
         UI.Fragment(
-          getUserFields.map { f =>
+          getShowFields.map { f =>
             E.button(
               selected.map(id => if id == f.id then Set[CssClass](FieldOn) else Set[CssClass](Field)),
               Events.onClick(_ => selected.set(f.id)),
@@ -702,24 +697,24 @@ content-type: application/json
     E.div(
       Shell,
       kicker("EndpointDoc"),
-      E.div(Row, method("GET"), E.strong("/users/{id}"), chip(".mcp", on = true), chip("ReadOnly")),
+      E.div(Row, method("GET"), E.strong("/shows/{id}"), chip(".mcp", on = true), chip("ReadOnly")),
       E.div(Hosts, UI.Fragment(fields.toVector)),
       E.div(CardOn, kicker("read by"), E.p(Fine, field.readers)),
     )
 
   val traceSteps: List[(String, String)] = List(
-    "request" -> "GET /users/1 arrives. Path codec captures id = 1.",
+    "request" -> "GET /shows/1 arrives. Path codec captures id = 1.",
     "decode"  -> "decodeIn yields In = 1. Missing/invalid path is already 404.",
-    "run"     -> "BoundOp.run: ZIO[Any, NotFound, User]. Ada is in the store.",
+    "run"     -> "BoundOp.run: ZIO[Any, NotFound, Show]. Evening bill is in the store.",
     "encode"  -> "encodeOut writes application/json. Fiber exits with the connection.",
   )
 
   def traceSnippet(step: Int): String =
     step match
-      case 0 => "Request.get(\"/users/1\")"
+      case 0 => "Request.get(\"/shows/1\")"
       case 1 => "path.matches → Some(1)"
-      case 2 => "store.get.map(_.get(1))  // User(1, Ada)"
-      case _ => "200  {\"id\":1,\"name\":\"Ada\"}"
+      case 2 => "shows.get(1)  // Show(1, Evening bill, 12)"
+      case _ => "200  {\"id\":1,\"title\":\"Evening bill\",\"remaining\":12}"
 
   def effectTrace(step: Int): UI[Any] =
     val i = step.max(0).min(traceSteps.length - 1)
@@ -767,7 +762,7 @@ content-type: application/json
     E.div(
       Shell,
       kicker("same BoundOp"),
-      E.div(Row, E.strong("get_users_id"), chip("ReadOnly", on = true)),
+      E.div(Row, E.strong("get_show"), chip("ReadOnly", on = true)),
       E.pre(Payload, hostBody(host)),
       E.p(Hint, "HTTP, OpenAPI, MCP, and stdio are hosts. They are not copies."),
     )
@@ -779,11 +774,11 @@ content-type: application/json
     E.div(
       Shell,
       kicker("OpenAPI · Try it out"),
-      E.div(Row, method("GET"), E.strong("/users/{id}"), chip("users")),
+      E.div(Row, method("GET"), E.strong("/shows/{id}"), chip("users")),
       E.div(Card, kicker("parameters"), E.div("id · path · integer = 1")),
       E.div(Row, E.span(if ran then ChipOn else Chip, "Execute")),
-      if ran then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"name":"Ada"}"""))
-      else E.p(Hint, "Execute runs GET /users/1."),
+      if ran then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"title":"Evening bill","remaining":12}"""))
+      else E.p(Hint, "Execute runs GET /shows/1."),
       E.p(Hint, "api.openApi.routes(\"docs\") serves this. No second spec."),
     )
 
@@ -791,12 +786,12 @@ content-type: application/json
     E.div(
       Shell,
       kicker("OpenAPI · Try it out"),
-      E.div(Row, method("GET"), E.strong("/users/{id}"), chip("users")),
+      E.div(Row, method("GET"), E.strong("/shows/{id}"), chip("users")),
       E.div(Card, kicker("parameters"), E.div("id · path · integer = 1")),
       E.button(BtnOn, Events.onClick(_ => ran.set(true)), "Execute"),
       ran.map { ok =>
-        if ok then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"name":"Ada"}"""))
-        else E.p(Hint, "Execute runs GET /users/1.")
+        if ok then E.div(CardOn, kicker("200 OK"), E.pre(Mono, """{"id":1,"title":"Evening bill","remaining":12}"""))
+        else E.p(Hint, "Execute runs GET /shows/1.")
       },
       E.p(Hint, "api.openApi.routes(\"docs\") serves this. No second spec."),
     )
@@ -804,16 +799,17 @@ content-type: application/json
   def harnessWalk(phase: String): UI[Any] =
     val body = phase match
       case "call" =>
-        """Grok  →  tools/call  get_users_id  {id: 1}
-hub   ←  {"id":1,"name":"Ada"}
+        """Grok  →  tools/call  get_show  {id: 1}
+hub   ←  {"id":1,"title":"Evening bill","remaining":12}
 
-Same function as GET /users/1."""
+Same function as GET /shows/1."""
       case _ =>
         """Grok  →  tools/list
-hub   ←  get_users_id   GET /users/{id}  ReadOnly
-         get_users      GET /users       ReadOnly
+hub   ←  get_show        GET /shows/{id}  ReadOnly
+         list_shows      GET /shows       ReadOnly
+         seat_the_party  POST /parties
 
-createUser is not promoted. Catalog can still find it."""
+create_hold is not promoted. Catalog can still find it."""
     E.div(
       Shell,
       kicker("harness · Grok Build"),
@@ -823,18 +819,18 @@ createUser is not promoted. Catalog can still find it."""
   end harnessWalk
 
   def desk(selected: Option[Int], host: String = "HTTP"): UI[Any] =
-    val person = selected.flatMap(id => people.find(_.id == id))
+    val person = selected.flatMap(id => bills.find(_.id == id))
     E.div(
       Shell,
-      kicker("directory · a web client"),
+      kicker("box office · a web client"),
       E.div(
         People,
         UI.Fragment(
-          people.map { p =>
+          bills.map { p =>
             E.div(
               if selected.contains(p.id) then CardOn else Card,
-              kicker(s"GET /users/${p.id}"),
-              E.strong(p.name),
+              kicker(s"GET /shows/${p.id}"),
+              E.strong(p.title),
             )
           }.toVector
         ),
@@ -843,36 +839,46 @@ createUser is not promoted. Catalog can still find it."""
         case Some(p) =>
           E.div(
             Stack,
-            E.div(CardOn, kicker(s"GET /users/${p.id} is get_users_id"), E.h3(Title, p.name), E.p(Fine, p.role)),
+            E.div(
+              CardOn,
+              kicker(s"GET /shows/${p.id} is get_show"),
+              E.h3(Title, p.title),
+              E.p(Fine, s"${p.remaining} remaining"),
+            ),
             E.pre(Payload, hostBody(host, p)),
           )
         case None =>
-          E.p(Hint, "pick a person. GET /users/{id} is get_users_id."),
+          E.p(Hint, "pick a bill. GET /shows/{id} is get_show."),
     )
   end desk
 
   def deskLive(selected: Source[Int], host: Source[String]): UI[Any] =
     E.div(
       Shell,
-      kicker("directory · a web client"),
+      kicker("box office · a web client"),
       E.div(
         People,
         UI.Fragment(
-          people.map { p =>
+          bills.map { p =>
             E.button(
               selected.map(id => if id == p.id then Set[CssClass](CardOn) else Set[CssClass](Card)),
               Events.onClick(_ => selected.set(p.id)),
-              kicker(s"GET /users/${p.id}"),
-              E.strong(p.name),
+              kicker(s"GET /shows/${p.id}"),
+              E.strong(p.title),
             )
           }.toVector
         ),
       ),
       selected.map { id =>
-        val p = people.find(_.id == id).getOrElse(people.head)
+        val p = bills.find(_.id == id).getOrElse(bills.head)
         E.div(
           Stack,
-          E.div(CardOn, kicker(s"GET /users/${p.id} is get_users_id"), E.h3(Title, p.name), E.p(Fine, p.role)),
+          E.div(
+            CardOn,
+            kicker(s"GET /shows/${p.id} is get_show"),
+            E.h3(Title, p.title),
+            E.p(Fine, s"${p.remaining} remaining"),
+          ),
           E.div(
             Row,
             modeButton(host, "HTTP"),
@@ -887,15 +893,15 @@ createUser is not promoted. Catalog can still find it."""
 
   def pathPlay(path: String): UI[Any] =
     val (ok, note) = path match
-      case "/users/1"   => (true, "match  id = 1")
-      case "/users/42"  => (true, "match  id = 42")
-      case "/users/ada" => (false, "int(\"id\") rejects non-digits → 404")
-      case "/users"     => (false, "missing capture → 404")
+      case "/shows/1"   => (true, "match  id = 1")
+      case "/shows/42"  => (true, "match  id = 42")
+      case "/shows/ada" => (false, "int(\"id\") rejects non-digits → 404")
+      case "/shows"     => (false, "missing capture → 404")
       case other        => (false, s"no match  $other")
     E.div(
       Shell,
       kicker("PathCodec"),
-      E.div(Row, method("GET"), E.code(""" "users" / int("id") """)),
+      E.div(Row, method("GET"), E.code(""" "shows" / int("id") """)),
       E.pre(Mono, s"$path\n$note"),
       E.p(if ok then Ok else Hint, if ok then "handler runs" else "unmatched. 404."),
     )
@@ -919,15 +925,17 @@ createUser is not promoted. Catalog can still find it."""
   def catalog(mode: String): UI[Any] =
     val body =
       if mode == "catalog" then """tools/list  (withCatalog)
-- get_users_id      GET /users/{id}   ReadOnly
-- get_users         GET /users        ReadOnly
+- get_show          GET /shows/{id}   ReadOnly
+- list_shows        GET /shows        ReadOnly
+- seat_the_party    POST /parties
 - search_operations
-- invoke            # post_users lives here"""
+- invoke            # create_hold lives here"""
       else """tools/list  (promoted only)
-- get_users_id      GET /users/{id}   ReadOnly
-- get_users         GET /users        ReadOnly
+- get_show          GET /shows/{id}   ReadOnly
+- list_shows        GET /shows        ReadOnly
+- seat_the_party    POST /parties
 
-createUser has no .mcp."""
+create_hold has no .mcp."""
     E.div(Shell, kicker("promote, don't auto-export"), E.pre(Mono, body))
   end catalog
 
@@ -937,7 +945,7 @@ createUser has no .mcp."""
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "content": [{ "type": "text", "text": "{\"id\":1,\"name\":\"Ada\"}" }]
+    "content": [{ "type": "text", "text": "{\"id\":1,\"title\":\"Evening bill\",\"remaining\":12}" }]
   }
 }"""
       else """{
@@ -945,13 +953,13 @@ createUser has no .mcp."""
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "get_users_id",
+    "name": "get_show",
     "arguments": { "id": 1 }
   }
 }"""
     E.div(
       Shell,
-      kicker("same function as GET /users/1"),
+      kicker("same function as GET /shows/1"),
       E.pre(Mono, body),
     )
   end rpc
@@ -978,23 +986,23 @@ data: elements <div>hello</div>"""
   def openApi(op: String): UI[Any] =
     val yaml = op match
       case "post" =>
-        """/users:
+        """/parties:
   post:
-    summary: Create a user
-    requestBody: { schema: NewUser }
-    responses: { "201": { schema: User } }"""
+    summary: Hold a contiguous block, price it, return a pickup code
+    requestBody: { schema: Party }
+    responses: { "201": { schema: PartySeated } }"""
       case "list" =>
-        """/users:
+        """/shows:
   get:
-    summary: List users
-    responses: { "200": { schema: User[] } }"""
+    summary: What is on
+    responses: { "200": { schema: Show[] } }"""
       case _ =>
-        """/users/{id}:
+        """/shows/{id}:
   get:
-    summary: Get a user
+    summary: One bill
     parameters: [{ name: id, in: path, schema: integer }]
     responses:
-      "200": { schema: User }
+      "200": { schema: Show }
       "404": { schema: NotFound }"""
     E.div(
       Shell,
@@ -1010,9 +1018,9 @@ data: elements <div>hello</div>"""
       E.div(
         Bound,
         kicker("BoundOp"),
-        E.h3(Display, "getUser"),
+        E.h3(Display, "getShow"),
         E.p(Fine, "Endpoint + In => ZIO[R, E, Out]. Written once."),
-        E.div(Row, method("GET"), chip("/users/{id}"), chip(".mcp"), chip("ReadOnly")),
+        E.div(Row, method("GET"), chip("/shows/{id}"), chip(".mcp"), chip("ReadOnly")),
       ),
       E.div(
         Hosts,
@@ -1050,7 +1058,7 @@ data: elements <div>hello</div>"""
       for host <- sq("HTTP")
       yield E.div(
         Stack,
-        kicker("same BoundOp · get_users_id"),
+        kicker("same BoundOp · get_show"),
         E.div(
           Row,
           modeButton(host, "HTTP"),
@@ -1092,15 +1100,15 @@ data: elements <div>hello</div>"""
       yield deskLive(selected, host)
 
     def pathPlay: URIO[Scope, UI[Any]] =
-      for path <- sq("/users/1")
+      for path <- sq("/shows/1")
       yield E.div(
         Stack,
         E.div(
           Row,
-          modeButton(path, "/users/1"),
-          modeButton(path, "/users/42"),
-          modeButton(path, "/users/ada"),
-          modeButton(path, "/users"),
+          modeButton(path, "/shows/1"),
+          modeButton(path, "/shows/42"),
+          modeButton(path, "/shows/ada"),
+          modeButton(path, "/shows"),
         ),
         path.map(Hub.pathPlay),
       )

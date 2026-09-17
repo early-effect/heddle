@@ -6,9 +6,6 @@ import zio.json.ast.Json
 import zio.test.*
 
 object OpArgsSpec extends ZIOSpecDefault:
-  given JsonCodec[Item]    = JsonCodec.from(_ => """{"id":1,"name":"a"}""", _ => Right(Item(1, "a")))
-  given JsonCodec[NewItem] = JsonCodec.from(n => s"""{"name":"${n.name}"}""", _ => Right(NewItem("a")))
-
   def spec =
     suite("OpArgs")(
       test("flattens path, query, and JSON body fields"):

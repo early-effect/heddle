@@ -1,7 +1,7 @@
 package heddle.endpoint
 
 import java.util.UUID
-import scala.compiletime.{constValue, erasedValue, summonInline}
+import scala.compiletime.{constValue, erasedValue, summonFrom}
 import scala.deriving.Mirror
 import zio.Chunk
 
@@ -91,5 +91,12 @@ object Schema:
   private inline def schemasOf[T <: Tuple]: List[Schema[?]] =
     inline erasedValue[T] match
       case _: EmptyTuple => Nil
-      case _: (h *: t)   => summonInline[Schema[h]] :: schemasOf[t]
+      case _: (h *: t)   => schemaOf[h] :: schemasOf[t]
+
+  private inline def schemaOf[H]: Schema[H] =
+    summonFrom {
+      case s: Schema[H]           => s
+      case m: Mirror.ProductOf[H] => productSchema[H](m)
+      case m: Mirror.SumOf[H]     => sumSchema[H](m)
+    }
 end Schema

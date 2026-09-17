@@ -2,12 +2,12 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Directory · heddle example</title>
+<title>Box office · heddle example</title>
 <link rel="stylesheet" href="/preview/preview.css">
 <body>
   <header>
     <p class="kicker">heddle example · HTTP host</p>
-    <h1>Directory</h1>
+    <h1>Box office</h1>
     <p class="lede">
       Same <code>Api</code> as
       <a href="/docs">Swagger</a>
@@ -17,42 +17,67 @@
   </header>
   <main>
     <section>
-      <h2>People</h2>
-      <ul id="list" class="people"></ul>
+      <h2>What's on</h2>
+      <ul id="list" class="bills"></ul>
     </section>
     <section>
-      <h2>Detail</h2>
-      <pre id="detail" class="mono">pick a person. GET /users/{id} is get_users_id.</pre>
+      <h2>Bill</h2>
+      <pre id="detail" class="mono">pick a bill. GET /shows/{id} is get_show.</pre>
+    </section>
+    <section>
+      <h2>Will call</h2>
+      <form id="pickup" class="pickup">
+        <input name="code" type="text" placeholder="P1001" autocomplete="off" aria-label="Pickup code">
+        <button type="submit">Look up</button>
+      </form>
+      <pre id="ticket" class="mono">GET /pickup/{code} is pickup.</pre>
     </section>
   </main>
-  <p class="hint">Writes go through Swagger Authorize (seed ada / ada). The UI does not invent a private POST.</p>
+  <p class="hint">Seating is <code>seat_the_party</code>. Authorize in Swagger (seed ada / ada). This page does not POST.</p>
   <script>
     const listEl = document.getElementById("list");
     const detailEl = document.getElementById("detail");
-    function show(user) {
-      detailEl.textContent = JSON.stringify(user, null, 2);
+    const ticketEl = document.getElementById("ticket");
+    function showBill(bill) {
+      detailEl.textContent = bill.title + " · " + bill.remaining + " remaining\n" + JSON.stringify(bill, null, 2);
     }
-    fetch("/users")
+    fetch("/shows")
       .then((r) => r.json())
-      .then((users) => {
+      .then((shows) => {
         listEl.replaceChildren();
-        users.forEach((u) => {
+        shows.forEach((s) => {
           const li = document.createElement("li");
           const b = document.createElement("button");
           b.type = "button";
-          b.textContent = u.name + " · " + u.id;
+          b.textContent = s.title + " · " + s.remaining + " seats";
           b.addEventListener("click", () => {
-            fetch("/users/" + u.id)
+            fetch("/shows/" + s.id)
               .then((r) => r.json())
-              .then(show);
+              .then(showBill);
           });
           li.appendChild(b);
           listEl.appendChild(li);
         });
       })
       .catch((e) => {
-        detailEl.textContent = "could not GET /users: " + e;
+        detailEl.textContent = "could not GET /shows: " + e;
       });
+    document.getElementById("pickup").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const code = new FormData(ev.target).get("code");
+      if (!code) return;
+      fetch("/pickup/" + encodeURIComponent(code))
+        .then((r) => {
+          if (!r.ok) throw new Error(r.status + " " + r.statusText);
+          return r.json();
+        })
+        .then((order) => {
+          ticketEl.textContent = JSON.stringify(order, null, 2);
+        })
+        .catch((e) => {
+          ticketEl.textContent = "could not GET /pickup/" + code + ": " + e;
+        });
+    });
     new EventSource("/__preview/reload").addEventListener("reload", function () {});
   </script>
 </body>
