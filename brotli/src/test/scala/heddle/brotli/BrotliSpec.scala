@@ -93,7 +93,7 @@ object BrotliSpec extends ZIOSpecDefault:
               ZIO.succeed(Response.text(req.body.asString))
             )
           ) @@
-            Middleware.decompress(Chunk(Brotli.decompressor))
+            Middleware.decompress(decompressors = Chunk(Brotli.decompressor))
         val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "br")
         routes(req).map { res =>
           assertTrue(res.body.asString == "hello heddle brotli")
