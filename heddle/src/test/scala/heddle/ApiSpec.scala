@@ -46,6 +46,26 @@ object ApiSpec extends ZIOSpecDefault:
       test("BoundOp.input decodes without encoding the response"):
         val ep    = Endpoint.get("items" / int("id")).out[Item]
         val bound = ep.implement(id => ZIO.succeed(Item(id, "x")))
-        bound.input(Request.get("/items/3")).map(id => assertTrue(id == 3)),
+        bound.input(Request.get("/items/3")).map(id => assertTrue(id == 3))
+      ,
+      test("job promotes; resource does not"):
+        val getItem    = Endpoint.get("items" / int("id")).out[Item].name("get_item")
+        val createItem = Endpoint.post("items").inJson[NewItem].out[Item].name("create_item")
+        val api        = Api("Shop", "1.0.0")
+          .resource(createItem)(n => ZIO.succeed(Item(2, n.name)))
+          .job(getItem)(id => ZIO.succeed(Item(id, "x")))
+        val byName = api.openApi.endpoints.map(d => d.toolName -> d.promoted).toMap
+        assertTrue(byName.get("get_item").contains(true), byName.get("create_item").contains(false))
+      ,
+      test("resource unpromotes an endpoint that was marked .mcp"):
+        val ep  = Endpoint.get("items" / int("id")).out[Item].mcp("get_item")
+        val api = Api("Shop", "1.0.0").resource(ep)(id => ZIO.succeed(Item(id, "x")))
+        assertTrue(api.openApi.endpoints.head.promoted == false)
+      ,
+      test("job of an already-promoted endpoint keeps the mcp name"):
+        val ep  = Endpoint.get("items" / int("id")).out[Item].mcp("get_item")
+        val api = Api("Shop", "1.0.0").job(ep)(id => ZIO.succeed(Item(id, "x")))
+        val d   = api.openApi.endpoints.head
+        assertTrue(d.promoted, d.toolName == "get_item"),
     ) @@ TestAspect.timeout(5.seconds)
 end ApiSpec

@@ -90,6 +90,19 @@ object McpSpec extends ZIOSpecDefault:
           val json = out.get.toJson
           assertTrue(json.contains("get_items_id"), json.contains("get_items"), !json.contains("post_items"))
       ,
+      test("job is listed and resource is not"):
+        val getItem    = Endpoint.get("items" / int("id")).out[Item].name("get_item").hints(Hint.ReadOnly)
+        val createItem = Endpoint.post("items").inJson[NewItem].out[Item].name("create_item")
+        val api        = Api("Shop", "1.0.0")
+          .resource(createItem)(n => ZIO.succeed(Item(2, n.name)))
+          .job(getItem)(id => ZIO.succeed(Item(id, "x")))
+        for
+          mcp <- ZIO.fromEither(Mcp.from(api))
+          out <- mcp.handle(req("tools/list", obj()))
+        yield
+          val json = out.get.toJson
+          assertTrue(json.contains("get_item"), !json.contains("create_item"), !json.contains("post_items"))
+      ,
       test("withCatalog adds search_operations and invoke"):
         for
           store <- Ref.make(Map.empty[Int, Item])

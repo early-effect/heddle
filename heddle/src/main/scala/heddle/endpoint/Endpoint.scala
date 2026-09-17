@@ -150,6 +150,9 @@ sealed abstract class Endpoint[In, Err, Out]:
   def mcp(name: String): Endpoint[In, Err, Out] =
     replaceDoc(doc.copy(promoted = true, mcpName = Some(name)))
 
+  def unpromote: Endpoint[In, Err, Out] =
+    replaceDoc(doc.copy(promoted = false))
+
   def nestBody: Endpoint[In, Err, Out] =
     replaceDoc(doc.copy(nestBody = true))
 

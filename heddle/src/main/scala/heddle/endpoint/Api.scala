@@ -14,6 +14,12 @@ final class Api[-R](
     val bound: BoundOp[R & R1, In, Err, Out] = ep.implement(f)
     new Api(title, version, ops :+ bound, description)
 
+  def resource[R1, In, Err, Out](ep: Endpoint[In, Err, Out])(f: In => ZIO[R1, Err, Out]): Api[R & R1] =
+    bind(ep.unpromote)(f)
+
+  def job[R1, In, Err, Out](ep: Endpoint[In, Err, Out])(f: In => ZIO[R1, Err, Out]): Api[R & R1] =
+    bind(if ep.doc.promoted then ep else ep.mcp)(f)
+
   def routes: Routes[R, Response] =
     ops.foldLeft[Routes[R, Response]](Routes.empty)(_ ++ _)
 
