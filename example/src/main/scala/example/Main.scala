@@ -2,67 +2,15 @@ package example
 
 import java.nio.file.{Files as JFiles, Path}
 import heddle.*
-import heddle.json.given
 import heddle.mcp.Mcp
 import heddle.oauth.jose.SigningKey
 import heddle.oauth.provider.*
 import heddle.oauth.rs.{JwtClaim, JwtVerifier}
 import heddle.sse.*
 import zio.*
-import zio.json.JsonCodec
-
-final case class User(id: Int, name: String) derives Schema, JsonCodec
-final case class NewUser(name: String) derives Schema, JsonCodec
-final case class NotFound(message: String) derives Schema, JsonCodec
-final case class Me(sub: String, scopes: List[String]) derives Schema, JsonCodec
 
 object Main extends ZIOAppDefault:
   private val issuer = "http://localhost:8080"
-
-  private val getUser =
-    Endpoint
-      .get("users" / int("id"))
-      .out[User]
-      .outError[NotFound](Status.NotFound)
-      .summary("Get a user")
-      .tag("users")
-
-  private val createUser =
-    Endpoint
-      .post("users")
-      .inJson[NewUser]
-      .out[User](Status.Created)
-      .auth(
-        SecurityScheme.OAuth2(
-          "oauth2",
-          OAuthFlows(
-            authorizationCode = Some(
-              OAuthFlow(
-                authorizationUrl = Some(s"$issuer/authorize"),
-                tokenUrl = Some(s"$issuer/token"),
-                scopes = Map("openid" -> "OpenID", "profile" -> "Profile"),
-              )
-            )
-          ),
-        )
-      )
-      .summary("Create a user")
-      .tag("users")
-
-  private val listUsers =
-    Endpoint
-      .get("users")
-      .out[List[User]]
-      .summary("List users")
-      .tag("users")
-
-  private val me =
-    Endpoint
-      .get("me")
-      .out[Me]
-      .auth(SecurityScheme.HttpBearer(bearerFormat = Some("JWT")))
-      .summary("Current subject")
-      .tag("auth")
 
   def run =
     ZIO.serviceWithZIO[ZIOAppArgs] { args =>
@@ -71,17 +19,16 @@ object Main extends ZIOAppDefault:
 
   private def runStdio =
     (for
-      store <- Ref.make(Map(1 -> User(1, "Ada")))
-      mcp   <- ZIO.fromEither(Mcp.from(publicApi(store))).mapError(IllegalArgumentException(_))
-      _     <- mcp.stdio()
+      office <- BoxOffice.seed
+      mcp    <- ZIO.fromEither(Mcp.from(publicApi(office), writeApi(office))).mapError(IllegalArgumentException(_))
+      _      <- mcp.stdio()
     yield ()).provideLayer(Runtime.removeDefaultLoggers)
 
   private def runHttp =
     val key  = SigningKey.generateRsa("op")
     val meta = s"$issuer/.well-known/oauth-protected-resource"
     for
-      store  <- Ref.make(Map(1 -> User(1, "Ada")))
-      nextId <- Ref.make(2)
+      office <- BoxOffice.seed
       stores <- MemoryStores.seed(
         List(UserRecord("u1", "ada", Passwords.hash("ada"), Map("email" -> "ada@example.test"))),
         List(
@@ -91,22 +38,23 @@ object Main extends ZIOAppDefault:
         ),
       )
       verifier <- JwtVerifier.static(key.publicJwksJson, issuer, "")
-      users  = publicApi(store)
-      writes = authedApi(store, nextId)
-      mcp <- ZIO.fromEither(Mcp.from(users, writes)).mapError(IllegalArgumentException(_)).map(_.withCatalog)
+      public = publicApi(office)
+      writes = writeApi(office)
+      meApi  = Api("Box office", "0.1.0").resource(Endpoints.me) { _ =>
+        ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
+      }
+      mcp <- ZIO.fromEither(Mcp.from(public, writes)).mapError(IllegalArgumentException(_)).map(_.withCatalog)
       op        = Provider.routes(ProviderConfig(issuer), stores, key)
-      authed    = writes.routes.provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
+      authed    = (writes.routes ++ meApi.routes).provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
       mcpAuthed = mcp.routes.provided(
         Mcp.bearer(meta, List("openid", "profile"))(t =>
           verifier.verify(t).mapError(_ => Mcp.unauthorized(meta, List("openid", "profile")))
         )
       )
-      admin = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
-      docs  = Api.openApi("Heddle example", "0.1.0", users, writes).routes("docs")
-      prm   = Mcp.protectedResource(s"$issuer/mcp", List(issuer), List("openid", "profile"))
-      // Public hosts first. `provided` / auth middleware 401 before path match, and `++`
-      // only continues on 404/405, so authed routes would swallow /docs and /preview.
-      routes = preview ++ docs ++ users.routes ++ prm ++ op ++ admin ++ authed ++ mcpAuthed
+      admin  = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
+      docs   = Api.openApi("Heddle example", "0.1.0", public, writes, meApi).routes("docs")
+      prm    = Mcp.protectedResource(s"$issuer/mcp", List(issuer), List("openid", "profile"))
+      routes = preview ++ docs ++ public.routes ++ prm ++ op ++ admin ++ authed ++ mcpAuthed
       _ <- ZIO.logInfo("listening on http://localhost:8080/docs and /mcp (Authorize against the embedded OP)")
       _ <- Server.sbtInterruptExit
       _ <- Server
@@ -117,27 +65,18 @@ object Main extends ZIOAppDefault:
     end for
   end runHttp
 
-  private[example] def publicApi(store: Ref[Map[Int, User]]): Api[Any] =
-    Api("Heddle example", "0.1.0")
-      .bind(getUser.mcp.hints(Hint.ReadOnly)) { id =>
-        store.get.map(_.get(id).toRight(NotFound(s"user $id"))).flatMap(ZIO.fromEither)
-      }
-      .bind(listUsers.mcp.hints(Hint.ReadOnly)) { _ =>
-        store.get.map(_.values.toList.sortBy(_.id))
-      }
+  private[example] def publicApi(office: BoxOffice): Api[Any] =
+    Api("Box office", "0.1.0")
+      .job(Endpoints.listShows)(_ => office.listShows)
+      .job(Endpoints.getShow)(office.get)
+      .resource(Endpoints.listSeats)(office.remainingSeats)
+      .job(Endpoints.pickup)(office.pickup)
 
-  private def authedApi(store: Ref[Map[Int, User]], nextId: Ref[Int]): Api[JwtClaim] =
-    Api("Heddle example", "0.1.0")
-      .bind(createUser.mcp) { body =>
-        ZIO.service[JwtClaim] *>
-          nextId.modify(n => n -> (n + 1)).flatMap { id =>
-            val user = User(id, body.name)
-            store.update(_ + (id -> user)).as(user)
-          }
-      }
-      .bind(me) { _ =>
-        ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
-      }
+  private[example] def writeApi(office: BoxOffice): Api[Any] =
+    Api("Box office", "0.1.0")
+      .resource(Endpoints.createHold(issuer))(office.hold)
+      .resource(Endpoints.createOrder(issuer))(office.orderFromHold)
+      .job(Endpoints.seatTheParty(issuer))(office.seat)
 
   private def preview: Routes[Any, Response] =
     val dir = previewDir
@@ -160,7 +99,6 @@ object Main extends ZIOAppDefault:
   private def file(path: Path): UIO[Response] =
     Files.fromPath(path).fold(_ => Response.notFound(), identity)
 
-  /** `sbt example/run` cwd is the example module; a repo-root run still works. */
   private def previewDir: Path =
     val here     = Path.of("preview")
     val fromRoot = Path.of("example", "preview")

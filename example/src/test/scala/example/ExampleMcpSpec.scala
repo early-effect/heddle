@@ -35,53 +35,60 @@ object ExampleMcpSpec extends ZIOSpecDefault:
 
   def spec =
     suite("example MCP")(
-      test("HTTP loopback discover list and get_users_id"):
+      test("HTTP loopback discover list and get_show"):
         for
-          store <- Ref.make(Map(1 -> User(1, "Ada")))
-          mcp   <- ZIO.fromEither(Mcp.from(Main.publicApi(store)))
-          http  <- Main.publicApi(store).routes(Request.get("/users/1"))
-          disc  <- postMcp(mcp.routes, "server/discover", obj(), 1)
-          list  <- postMcp(mcp.routes, "tools/list", obj(), 2)
-          call  <- postMcp(
+          office <- BoxOffice.seed
+          mcp    <- ZIO.fromEither(Mcp.from(Main.publicApi(office), Main.writeApi(office)))
+          http   <- Main.publicApi(office).routes(Request.get("/shows/1"))
+          disc   <- postMcp(mcp.routes, "server/discover", obj(), 1)
+          list   <- postMcp(mcp.routes, "tools/list", obj(), 2)
+          call   <- postMcp(
             mcp.routes,
             "tools/call",
-            obj("name" -> Json.Str("get_users_id"), "arguments" -> obj("id" -> Json.Num(1))),
+            obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
             3,
-            Some("get_users_id"),
+            Some("get_show"),
           )
-        yield assertTrue(
-          http.status == Status.Ok,
-          http.body.asString.contains("Ada"),
-          disc.status == Status.Ok,
-          disc.body.asString.contains("2026-07-28"),
-          list.body.asString.contains("get_users_id"),
-          call.status == Status.Ok,
-          call.body.asString.contains("Ada"),
-          !call.body.asString.contains("\"isError\":true"),
-        )
+        yield
+          val listed = list.body.asString
+          assertTrue(
+            http.status == Status.Ok,
+            http.body.asString.contains("Evening bill"),
+            disc.status == Status.Ok,
+            disc.body.asString.contains("2026-07-28"),
+            listed.contains("get_show"),
+            listed.contains("seat_the_party"),
+            listed.contains("list_shows"),
+            listed.contains("pickup"),
+            !listed.contains("create_hold"),
+            !listed.contains("create_order"),
+            call.status == Status.Ok,
+            call.body.asString.contains("Evening bill"),
+            !call.body.asString.contains("\"isError\":true"),
+          )
       ,
-      test("stdio pipe discover list and get_users_id"):
+      test("stdio pipe discover list and get_show"):
         val lines =
           List(
             mcpReq("server/discover", obj(), 1).toJson,
             mcpReq("tools/list", obj(), 2).toJson,
             mcpReq(
               "tools/call",
-              obj("name" -> Json.Str("get_users_id"), "arguments" -> obj("id" -> Json.Num(1))),
+              obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
               3,
             ).toJson,
           ).mkString("", "\n", "\n")
         val in  = java.io.ByteArrayInputStream(lines.getBytes(StandardCharsets.UTF_8))
         val out = java.io.ByteArrayOutputStream()
         for
-          store <- Ref.make(Map(1 -> User(1, "Ada")))
-          mcp   <- ZIO.fromEither(Mcp.from(Main.publicApi(store)))
-          _     <- mcp.stdio(in, out)
+          office <- BoxOffice.seed
+          mcp    <- ZIO.fromEither(Mcp.from(Main.publicApi(office), Main.writeApi(office)))
+          _      <- mcp.stdio(in, out)
         yield
           val text = String(out.toByteArray, StandardCharsets.UTF_8)
-          assertTrue(text.contains("2026-07-28"), text.contains("get_users_id"), text.contains("Ada"))
+          assertTrue(text.contains("2026-07-28"), text.contains("get_show"), text.contains("Evening bill"))
       ,
-      test("subprocess --mcp-stdio discover list and get_users_id"):
+      test("subprocess --mcp-stdio discover list and get_show"):
         ZIO
           .attemptBlocking {
             val javaHome = sys.props("java.home")
@@ -107,7 +114,7 @@ object ExampleMcpSpec extends ZIOSpecDefault:
                   mcpReq("tools/list", obj(), 2).toJson,
                   mcpReq(
                     "tools/call",
-                    obj("name" -> Json.Str("get_users_id"), "arguments" -> obj("id" -> Json.Num(1))),
+                    obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
                     3,
                   ).toJson,
                 ).mkString("", "\n", "\n")
@@ -125,8 +132,8 @@ object ExampleMcpSpec extends ZIOSpecDefault:
             assertTrue(
               code == 0,
               text.contains("2026-07-28"),
-              text.contains("get_users_id"),
-              text.contains("Ada"),
+              text.contains("get_show"),
+              text.contains("Evening bill"),
             )
           },
     ) @@ TestAspect.timeout(30.seconds)
