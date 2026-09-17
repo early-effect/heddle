@@ -1,7 +1,6 @@
 package heddle.mcp
 
 import heddle.*
-import heddle.json.given
 import heddle.mcp.protocol.JsonRpc.*
 import heddle.mcp.transport.Http
 import zio.*

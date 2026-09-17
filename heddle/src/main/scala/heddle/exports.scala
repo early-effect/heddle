@@ -72,7 +72,6 @@ export heddle.endpoint.{
   SchemaJson,
   OpenApi,
   SwaggerUI,
-  JsonCodec,
   SecurityScheme,
   ApiKeyIn,
   OAuthFlow,
@@ -90,3 +89,4 @@ export heddle.error.{HeddleError, HttpError, ServerError}
 export heddle.route.QueryCodec.given
 export heddle.route.HeaderCodec.given
 export heddle.endpoint.Schema.given
+export zio.json.JsonCodec

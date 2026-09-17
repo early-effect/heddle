@@ -1,9 +1,11 @@
 package heddle.endpoint
 
+import java.nio.charset.StandardCharsets
 import heddle.http.{Body, Form, MediaType, Method, Request, Response, Status}
 import heddle.http.header.TypedHeader
 import heddle.route.{Combine, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
 import heddle.sse.{ServerSentEvent, Sse}
+import zio.json.JsonCodec
 import zio.stream.ZStream
 import zio.{Chunk, IO, ZIO}
 
@@ -40,13 +42,13 @@ sealed abstract class Endpoint[In, Err, Out]:
       doc.copy(headers = doc.headers :+ ParamDoc(t.name.render, "header", required = true, SchemaDoc.Str(None))),
     )
 
-  def inJson[B](using s: Schema[B], j: JsonCodec[B]): Endpoint[Combine[In, B], Err, Out] =
+  def inJson[B](using s: Schema[B], codec: JsonCodec[B]): Endpoint[Combine[In, B], Err, Out] =
     bindNext(
       (in, req) =>
         req.body.collect
           .mapError(e => Response.badRequest(e.getMessage))
           .flatMap { raw =>
-            j.decodeBytes(raw) match
+            Endpoint.jsonDecode(raw) match
               case Left(msg) => ZIO.fail(Response.badRequest(msg))
               case Right(b)  => ZIO.succeed(Combine(in, b))
           },
@@ -74,12 +76,12 @@ sealed abstract class Endpoint[In, Err, Out]:
       doc.copy(requestBody = Some(MediaDoc(SchemaDoc.Str(Some("binary")), MediaType.OctetStream))),
     )
 
-  def out[O](using s: Schema[O], j: JsonCodec[O]): Endpoint[In, Err, O] =
+  def out[O](using Schema[O], JsonCodec[O]): Endpoint[In, Err, O] =
     out(Status.Ok)
 
   def out[O](status: Status)(using s: Schema[O], j: JsonCodec[O]): Endpoint[In, Err, O] =
     replace(
-      encodeOut = o => Response(status).withBody(Body.fromBytes(j.encodeBytes(o), Some(MediaType.Json))),
+      encodeOut = o => Response(status).withBody(Body.fromBytes(Endpoint.jsonBytes(o), Some(MediaType.Json))),
       encodeErr = encodeErr,
       doc = doc.copy(responses = Endpoint.replaceSuccess(doc.responses, jsonStatus(status, s.doc))),
       outputCodec = Some(j),
@@ -96,7 +98,7 @@ sealed abstract class Endpoint[In, Err, Out]:
           StatusDoc(status, Some(SchemaDoc.Str(None)), Some(MediaType.Text), status.text),
         )
       ),
-      outputCodec = Some(JsonCodec.from(identity, Right(_))),
+      outputCodec = Some(summon[JsonCodec[String]]),
       errorCodec = errorCodec,
     )
 
@@ -126,7 +128,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def outError[E1](status: Status)(using s: Schema[E1], j: JsonCodec[E1]): Endpoint[In, E1, Out] =
     replace(
       encodeOut = encodeOut,
-      encodeErr = e => Response(status).withBody(Body.fromBytes(j.encodeBytes(e), Some(MediaType.Json))),
+      encodeErr = e => Response(status).withBody(Body.fromBytes(Endpoint.jsonBytes(e), Some(MediaType.Json))),
       doc = doc.copy(responses = doc.responses :+ jsonStatus(status, s.doc)),
       outputCodec = outputCodec,
       errorCodec = Some(j),
@@ -306,4 +308,10 @@ object Endpoint:
   private[heddle] def replaceSuccess(responses: List[StatusDoc], next: StatusDoc): List[StatusDoc] =
     val withoutPlaceholder = responses.filterNot(r => r.status == Status.NoContent && r.schema.isEmpty)
     next :: withoutPlaceholder.filterNot(_.status == next.status)
+
+  private def jsonBytes[A](a: A)(using c: JsonCodec[A]): Chunk[Byte] =
+    Chunk.fromArray(c.encoder.encodeJson(a).toString.getBytes(StandardCharsets.UTF_8))
+
+  private def jsonDecode[A](raw: Chunk[Byte])(using c: JsonCodec[A]): Either[String, A] =
+    c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8))
 end Endpoint

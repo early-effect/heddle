@@ -47,8 +47,7 @@ val getUser =
 ```
 
 `.mcp` is an explicit promotion. Heddle will not auto-export every REST operation as a tool.
-`.inJson` / `.out` need `Schema` and `JsonCodec` (`import heddle.json.given` after adding
-`heddle-zio-json`).
+`.inJson` / `.out` need `Schema` and `JsonCodec` (`derives Schema, JsonCodec` on the domain type).
 """
     ),
     section("Click a field")(

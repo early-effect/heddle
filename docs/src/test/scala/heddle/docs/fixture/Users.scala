@@ -1,7 +1,6 @@
 package heddle.docs.fixture
 
 import heddle.*
-import heddle.json.given
 import heddle.mcp.Mcp
 import heddle.mcp.protocol.JsonRpc.*
 import zio.*

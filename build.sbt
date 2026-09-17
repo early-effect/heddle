@@ -67,7 +67,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, json, brotli, oauth, mcp, example, bench, docs, docsJS)
+  .aggregate(heddle, brotli, oauth, mcp, example, bench, docs, docsJS)
   .settings(
     name           := "heddle-root",
     publish / skip := true,
@@ -100,22 +100,9 @@ lazy val brotli = project
   )
   .settings(MyVersions.brotliTest)
 
-lazy val json = project
-  .in(file("json"))
-  .dependsOn(heddle % "compile->compile;test->test")
-  .settings(commonSettings)
-  .settings(MyVersions.jsonLib)
-  .settings(MyVersions.jsonTest)
-  .settings(
-    name                 := "heddle-zio-json",
-    description          := "zio-json JsonCodec for heddle",
-    publishMavenStyle    := true,
-    pomIncludeRepository := { _ => false },
-  )
-
 lazy val oauth = project
   .in(file("oauth"))
-  .dependsOn(heddle % "compile->compile;test->test", json)
+  .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -131,11 +118,10 @@ lazy val oauth = project
 
 lazy val mcp = project
   .in(file("mcp"))
-  .dependsOn(heddle % "compile->compile;test->test", json)
+  .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
-  .settings(MyVersions.jsonLib)
   .settings(
     name                 := "heddle-mcp",
     description          := "MCP 2026-07-28 server for heddle endpoints",
@@ -145,7 +131,7 @@ lazy val mcp = project
 
 lazy val example = project
   .in(file("example"))
-  .dependsOn(json, oauth, mcp)
+  .dependsOn(oauth, mcp)
   .settings(commonSettings)
   .settings(MyVersions.coreTest)
   .settings(
@@ -210,7 +196,7 @@ lazy val docsJS = project
 
 lazy val docs = project
   .in(file("docs"))
-  .dependsOn(heddle, json, brotli, oauth, mcp)
+  .dependsOn(heddle, brotli, oauth, mcp)
   .enablePlugins(SpecularPlugin)
   .settings(commonSettings)
   .settings(

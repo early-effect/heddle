@@ -1,14 +1,13 @@
 package heddle
 
 import zio.*
+import zio.json.JsonCodec
 import zio.test.*
 
-final case class Item(id: Int, name: String) derives Schema
-final case class NewItem(name: String) derives Schema
+final case class Item(id: Int, name: String) derives Schema, JsonCodec
+final case class NewItem(name: String) derives Schema, JsonCodec
 
 object ApiSpec extends ZIOSpecDefault:
-  given JsonCodec[Item]    = JsonCodec.from(_ => """{"id":1,"name":"a"}""", _ => Right(Item(1, "a")))
-  given JsonCodec[NewItem] = JsonCodec.from(_ => """{"name":"a"}""", s => Right(NewItem(s)))
 
   def spec =
     suite("Api")(

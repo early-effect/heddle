@@ -30,6 +30,14 @@ object SchemaSpec extends ZIOSpecDefault:
             assertTrue(fields.headOption.exists(_.doc match
               case SchemaDoc.Array(SchemaDoc.Object(Some("Person"), _, _)) => true
               case _                                                       => false))
-          case _ => assertTrue(false),
+          case _ => assertTrue(false)
+      ,
+      test("payload enum derives a OneOf"):
+        enum Boom derives Schema:
+          case Out(id: Int)
+          case Nope(id: Int, n: Int)
+        summon[Schema[Boom]].doc match
+          case SchemaDoc.OneOf(Some("Boom"), variants) => assertTrue(variants.length == 2)
+          case _                                       => assertTrue(false),
     ) @@ TestAspect.timeout(5.seconds)
 end SchemaSpec

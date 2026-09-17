@@ -4,8 +4,6 @@ import zio.*
 import zio.test.*
 
 object EndpointSpec extends ZIOSpecDefault:
-  given JsonCodec[String] = JsonCodec.from(identity, Right(_))
-
   def spec =
     suite("Endpoint")(
       test("text endpoint implements to a route"):
@@ -34,7 +32,7 @@ object EndpointSpec extends ZIOSpecDefault:
         val routes = ep.implement(_ => ZIO.succeed("hi"))
         routes(Request.get("/msg")).map { res =>
           assertTrue(
-            res.body.asString == "hi",
+            res.body.asString == "\"hi\"",
             res.header("Content-Type").exists(_.contains("application/json")),
           )
         }
@@ -42,15 +40,15 @@ object EndpointSpec extends ZIOSpecDefault:
       test("json input uses the provided JsonCodec"):
         val ep     = Endpoint.post("echo").inJson[String].out[String]
         val routes = ep.implement(body => ZIO.succeed(body))
-        routes(Request.post("/echo", Body.json("ping"))).map { res =>
-          assertTrue(res.body.asString == "ping")
+        routes(Request.post("/echo", Body.json("\"ping\""))).map { res =>
+          assertTrue(res.body.asString == "\"ping\"")
         }
       ,
       test("outError maps a typed error to a status"):
         val ep     = Endpoint.get("boom").out[String].outError[String](Status.BadRequest)
         val routes = ep.implement(_ => ZIO.fail("nope"))
         routes(Request.get("/boom")).map { res =>
-          assertTrue(res.status == Status.BadRequest, res.body.asString == "nope")
+          assertTrue(res.status == Status.BadRequest, res.body.asString == "\"nope\"")
         }
       ,
       test("header input is combined into implement"):

@@ -46,7 +46,7 @@ def events[R, E <: Throwable](h: Handler[R & Datastar & Scope, E]): Handler[R, N
 extension (req: Request)
   def readSignals[A](using codec: JsonCodec[A]): Task[A] =
     req.body.utf8.flatMap { json =>
-      ZIO.fromEither(codec.decode(json)).mapError(msg => IllegalArgumentException(msg))
+      ZIO.fromEither(codec.decoder.decodeJson(json)).mapError(msg => IllegalArgumentException(msg))
     }
 
 object ServerSentEventGenerator:
