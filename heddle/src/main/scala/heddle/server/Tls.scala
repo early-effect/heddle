@@ -21,13 +21,20 @@ final class Tls private (ctx: SSLContext):
         val ssl  = ctx.getSocketFactory
           .createSocket(sock, sock.getInetAddress.getHostName, sock.getPort, true)
           .asInstanceOf[SSLSocket]
-        ssl.setUseClientMode(false)
-        if alpn.nonEmpty then
-          val params = ssl.getSSLParameters
-          params.setApplicationProtocols(alpn.toArray)
-          ssl.setSSLParameters(params)
-        ssl.startHandshake()
-        Tls.Session(ssl)
+        try
+          ssl.setUseClientMode(false)
+          if alpn.nonEmpty then
+            val params = ssl.getSSLParameters
+            params.setApplicationProtocols(alpn.toArray)
+            ssl.setSSLParameters(params)
+          ssl.startHandshake()
+          Tls.Session(ssl)
+        catch
+          case e: Throwable =>
+            try ssl.close()
+            catch case _: Throwable => ()
+            throw e
+        end try
       }
       .mapError(HttpError.Io(_))
 end Tls
@@ -38,7 +45,7 @@ object Tls:
       Option(socket.getApplicationProtocol).getOrElse("")
 
     def src(buf: ByteBuffer): ConnBuf =
-      ConnBuf.inputStream(buf, socket.getInputStream)
+      ConnBuf.inputStream(buf, socket.getInputStream, socket)
 
     def send: Chunk[Byte] => Task[Unit] =
       Tls.writer(socket.getOutputStream)
@@ -93,7 +100,7 @@ object Tls:
 
   private[heddle] def pull(in: InputStream, n: Int): IO[HttpError, Option[Chunk[Byte]]] =
     ZIO
-      .attempt {
+      .attemptBlockingInterrupt {
         val arr = Array.ofDim[Byte](n)
         val got = in.read(arr)
         if got < 0 then None

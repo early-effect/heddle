@@ -78,6 +78,19 @@ object FilesSpec extends ZIOSpecDefault:
           }
         }
       ,
+      test("Range bytes=6-8 seeks instead of reading from the start"):
+        withTempFile("0123456789", ".txt") { path =>
+          Files.fromPath(path, Request.get("/x").withHeader("Range", "bytes=6-8")).flatMap { res =>
+            res.body.utf8.map { s =>
+              assertTrue(
+                res.status == Status.PartialContent,
+                s == "678",
+                res.header("Content-Range").contains("bytes 6-8/10"),
+              )
+            }
+          }
+        }
+      ,
       test("directory jail rejects .."):
         withTempDir { dir =>
           val secret = dir.resolve("secret.txt")

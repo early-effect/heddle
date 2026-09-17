@@ -14,7 +14,7 @@ private[heddle] object Nio:
       .attempt {
         val ch = ServerSocketChannel.open()
         ch.setOption(StandardSocketOptions.SO_REUSEADDR, config.reuseAddress)
-        ch.bind(InetSocketAddress(config.host, config.port))
+        ch.bind(InetSocketAddress(config.host, config.port), config.soBacklog)
         ch
       }
       .mapError(ServerError.BindFailed(config.host, config.port, _))

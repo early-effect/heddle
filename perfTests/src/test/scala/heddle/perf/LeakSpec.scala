@@ -33,6 +33,7 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp0  <- ZIO.succeed(Resources.establishedTcp)
             heap0 <- ZIO.succeed(Resources.heapUsed)
+            fd0   <- ZIO.succeed(Resources.openFiles)
             _     <- ZIO.attemptBlocking {
               val sock = Socket("127.0.0.1", port)
               sock.getOutputStream.write(
@@ -45,7 +46,8 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp1  <- ZIO.succeed(Resources.establishedTcp)
             heap1 <- ZIO.succeed(Resources.heapUsed)
-          yield leaked(tcp0, tcp1, heap0, heap1)
+            fd1   <- ZIO.succeed(Resources.openFiles)
+          yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
         }
       ,
       test("idle keep-alive then client close returns TCP to baseline"):
@@ -57,6 +59,7 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp0  <- ZIO.succeed(Resources.establishedTcp)
             heap0 <- ZIO.succeed(Resources.heapUsed)
+            fd0   <- ZIO.succeed(Resources.openFiles)
             _     <- ZIO.attemptBlocking {
               val sock = Socket("127.0.0.1", port)
               sock.getOutputStream.write("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes)
@@ -67,7 +70,8 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp1  <- ZIO.succeed(Resources.establishedTcp)
             heap1 <- ZIO.succeed(Resources.heapUsed)
-          yield leaked(tcp0, tcp1, heap0, heap1)
+            fd1   <- ZIO.succeed(Resources.openFiles)
+          yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
         }
       ,
       test("client disconnect on a streaming response does not leak"):
@@ -84,6 +88,7 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp0  <- ZIO.succeed(Resources.establishedTcp)
             heap0 <- ZIO.succeed(Resources.heapUsed)
+            fd0   <- ZIO.succeed(Resources.openFiles)
             _     <- ZIO.attemptBlocking {
               val sock = Socket("127.0.0.1", port)
               sock.getOutputStream.write("GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes)
@@ -95,7 +100,8 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.succeed(Resources.gc())
             tcp1  <- ZIO.succeed(Resources.establishedTcp)
             heap1 <- ZIO.succeed(Resources.heapUsed)
-          yield leaked(tcp0, tcp1, heap0, heap1)
+            fd1   <- ZIO.succeed(Resources.openFiles)
+          yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
         }
       ,
       test("three load cycles do not stair-step heap or TCP"):
@@ -137,6 +143,7 @@ object LeakSpec extends ZIOSpecDefault:
         _     <- ZIO.succeed(Resources.gc())
         tcp0  <- ZIO.succeed(Resources.establishedTcp)
         heap0 <- ZIO.succeed(Resources.heapUsed)
+        fd0   <- ZIO.succeed(Resources.openFiles)
         pt0   <- ZIO.succeed(Resources.platformThreads)
         _     <- ZIO.foreachDiscard(0 until n) { _ =>
           ZIO.attemptBlocking {
@@ -151,8 +158,9 @@ object LeakSpec extends ZIOSpecDefault:
         _     <- ZIO.succeed(Resources.gc())
         tcp1  <- ZIO.succeed(Resources.establishedTcp)
         heap1 <- ZIO.succeed(Resources.heapUsed)
+        fd1   <- ZIO.succeed(Resources.openFiles)
         pt1   <- ZIO.succeed(Resources.platformThreads)
-      yield leaked(tcp0, tcp1, heap0, heap1) && assertTrue(pt1 <= pt0 + 8)
+      yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1) && assertTrue(pt1 <= pt0 + 8)
     }
 
   private def soakKeepAlive(n: Int): ZIO[Any, Any, TestResult] =
@@ -164,6 +172,7 @@ object LeakSpec extends ZIOSpecDefault:
         _     <- ZIO.succeed(Resources.gc())
         tcp0  <- ZIO.succeed(Resources.establishedTcp)
         heap0 <- ZIO.succeed(Resources.heapUsed)
+        fd0   <- ZIO.succeed(Resources.openFiles)
         socks <- ZIO.foreachPar(0 until n) { _ =>
           ZIO.attemptBlocking {
             val sock = Socket("127.0.0.1", port)
@@ -177,7 +186,8 @@ object LeakSpec extends ZIOSpecDefault:
         _     <- ZIO.succeed(Resources.gc())
         tcp1  <- ZIO.succeed(Resources.establishedTcp)
         heap1 <- ZIO.succeed(Resources.heapUsed)
-      yield leaked(tcp0, tcp1, heap0, heap1)
+        fd1   <- ZIO.succeed(Resources.openFiles)
+      yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
     }
 
   private def hits(port: Int, n: Int): Task[Unit] =
@@ -199,9 +209,14 @@ object LeakSpec extends ZIOSpecDefault:
       tcp1: Option[Int],
       heap0: Long,
       heap1: Long,
+      fd0: Option[Int],
+      fd1: Option[Int],
   ): TestResult =
     val tcpOk = (tcp0, tcp1) match
       case (Some(a), Some(b)) => b <= a + 2
       case _                  => true
-    assertTrue(tcpOk, heap1 <= heap0 + 16L * 1024 * 1024)
+    val fdOk = (fd0, fd1) match
+      case (Some(a), Some(b)) => b <= a + 8
+      case _                  => true
+    assertTrue(tcpOk, fdOk, heap1 <= heap0 + 16L * 1024 * 1024)
 end LeakSpec

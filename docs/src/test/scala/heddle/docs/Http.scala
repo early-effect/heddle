@@ -41,7 +41,12 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
     ),
     section("Middleware")(
       md"""
-`@@` applies middleware. `a ++ b` composes: the request hits `b` first (outer), then `a`.
+`@@` wraps **this** `Routes` value. `++` is try left, then right on 404/405.
+Gzip, decompress, CORS, auth, and `Middleware.timeout` attach to whoever you wrap.
+Global gzip is `all @@ Middleware.compress()`, which is still wrapping routes, not a
+server flag. Partial gzip is `(api ++ files) @@ Middleware.compress() ++ sse`.
+
+Why that split exists is on [What stays open](what-stays-open.html).
 """,
       exampleZIO {
         val routes =
@@ -57,7 +62,8 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
 `Server.install` / `Server.serve` shift onto ZIO's Loom executor. Accept and connections are
 ordinary ZIO fibers. TLS is a compose-time layer, not a protocol flag:
 `Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
-ALPN offers `h2` and `http/1.1` on that bind.
+ALPN offers `h2` and `http/1.1` on that bind. Idle, header, and connection caps live on
+`Server.Config`. See [What stays open](what-stays-open.html).
 """,
       exampleZIO {
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -78,9 +84,12 @@ ALPN offers `h2` and `http/1.1` on that bind.
     ),
     section("Client, files, compression")(
       md"""
-`Client.get` / `Client.batched` are the HTTP/1.1 client. A caller-given file is `Files.fromPath`.
+`Client.get` / `Client.batched` are the HTTP/1.1 client. One-shot helpers take
+`Client.Config` (default named values, including connect and read timeouts).
+A caller-given file is `Files.fromPath`.
 Compression is `@@ Middleware.compress` (gzip in core). Add `heddle-brotli` and pass
-`Brotli.compressor` when you want `br`. Incoming `Content-Encoding` is `@@ Middleware.decompress`.
+`Brotli.compressor` when you want `br`. Incoming `Content-Encoding` is
+`@@ Middleware.decompress(maxBytes = ...)`.
 """,
       exampleValue {
         Brotli.encode(zio.Chunk.fromArray("hi".getBytes("UTF-8"))).nonEmpty
