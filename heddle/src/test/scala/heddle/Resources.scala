@@ -26,6 +26,15 @@ object Resources:
   /** Same-process ESTABLISHED sockets on `port` only. Process-wide counts race the parallel live-server suite. */
   def establishedTcpOn(port: Int): Option[Int] = lsofEstablished(s"-iTCP:$port")
 
+  /** Open file descriptors for this process. Linux `/proc/<pid>/fd`, else `/dev/fd`. */
+  def openFiles: Option[Int] =
+    Try {
+      val linux = java.nio.file.Path.of(s"/proc/$pid/fd")
+      val dir   = if java.nio.file.Files.isDirectory(linux) then linux else java.nio.file.Path.of("/dev/fd")
+      if !java.nio.file.Files.isDirectory(dir) then None
+      else Some(java.nio.file.Files.list(dir).count().toInt)
+    }.toOption.flatten
+
   private def lsofEstablished(filter: String): Option[Int] =
     val os = sys.props.getOrElse("os.name", "").toLowerCase
     if os.contains("win") then None

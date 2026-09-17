@@ -116,10 +116,9 @@ object Server:
       tls        <- ZIO.environmentWith[R & Scope](_.getDynamic[Tls])
       takingWork <- ZIO.succeed(java.util.concurrent.atomic.AtomicBoolean(true))
       live       <- ZIO.succeed(ConcurrentHashMap.newKeySet[Conn]())
-      fibers     <- Ref.make(Chunk.empty[Fiber[Any, Any]])
       ss         <- ZIO.acquireRelease(Nio.openServer(config))(ss => ZIO.succeed(closeQuietly(ss)))
-      halt0 = halt(ss, live, fibers, takingWork, config.gracefulShutdownTimeout).withClock(clock)
-      _ <- acceptLoop(app, ss, config, live, fibers, takingWork, tls).forkScoped
+      halt0 = halt(ss, live, takingWork, config.gracefulShutdownTimeout).withClock(clock)
+      _ <- acceptLoop(app, ss, config, live, takingWork, tls).forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(ss, halt0)
     end for
@@ -129,12 +128,16 @@ object Server:
     (Runtime.enableLoomBasedExecutor ++ Runtime.enableLoomBasedBlockingExecutor)
       .mapError(e => ServerError.LoomUnavailable(e))
 
-  private final class Conn(val ch: SocketChannel, val busy: java.util.concurrent.atomic.AtomicBoolean)
+  /** Live connection. `fiber` is set after `forkDaemon`; halt interrupts whatever is still in `live`. */
+  private final class Conn(
+      val ch: SocketChannel,
+      val busy: java.util.concurrent.atomic.AtomicBoolean,
+      val fiber: java.util.concurrent.atomic.AtomicReference[Fiber[Any, Any]],
+  )
 
   private def halt(
       ss: ServerSocketChannel,
       live: java.util.Set[Conn],
-      fibers: Ref[Chunk[Fiber[Any, Any]]],
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       grace: Duration,
   ): UIO[Unit] =
@@ -143,7 +146,17 @@ object Server:
       ZIO.succeed(closeIdle(live)) *>
       waitUntilIdle(live, grace) *>
       ZIO.succeed(live.forEach(c => closeQuietly(c.ch))) *>
-      fibers.get.flatMap(fs => ZIO.foreachParDiscard(fs)(_.interrupt))
+      interruptLive(live)
+
+  private def interruptLive(live: java.util.Set[Conn]): UIO[Unit] =
+    ZIO.suspendSucceed {
+      val it = live.iterator()
+      val fs = scala.collection.mutable.ArrayBuffer.empty[Fiber[Any, Any]]
+      while it.hasNext do
+        val f = it.next().fiber.get()
+        if f != null then fs += f
+      ZIO.foreachParDiscard(fs)(_.interrupt)
+    }
 
   private def anyBusy(live: java.util.Set[Conn]): Boolean =
     val it = live.iterator()
@@ -176,18 +189,16 @@ object Server:
       ss: ServerSocketChannel,
       config: Config,
       live: java.util.Set[Conn],
-      fibers: Ref[Chunk[Fiber[Any, Any]]],
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
   ): ZIO[R, Nothing, Nothing] =
-    acceptOne(routes, ss, config, live, fibers, takingWork, tls).forever
+    acceptOne(routes, ss, config, live, takingWork, tls).forever
 
   private def acceptOne[R](
       routes: Routes[R, Response],
       ss: ServerSocketChannel,
       config: Config,
       live: java.util.Set[Conn],
-      fibers: Ref[Chunk[Fiber[Any, Any]]],
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
   ): ZIO[R, Nothing, Unit] =
@@ -200,13 +211,14 @@ object Server:
         ch =>
           for
             _ <- ZIO.attempt(ch.setOption(StandardSocketOptions.TCP_NODELAY, config.tcpNoDelay)).ignore
-            busy = java.util.concurrent.atomic.AtomicBoolean(false)
-            conn = Conn(ch, busy)
+            busy     = java.util.concurrent.atomic.AtomicBoolean(false)
+            fiberRef = java.util.concurrent.atomic.AtomicReference[Fiber[Any, Any]]()
+            conn     = Conn(ch, busy, fiberRef)
             _     <- ZIO.succeed { live.add(conn); () }
             fiber <- runConnection(routes, ch, config, takingWork, busy, tls)
               .ensuring(ZIO.succeed { live.remove(conn); () } *> ZIO.succeed(closeQuietly(ch)))
               .forkDaemon // not a child of accept: interrupting accept must not abort in-flight work
-            _ <- fibers.update(_ :+ fiber)
+            _ <- ZIO.succeed { fiberRef.set(fiber); () }
           yield (),
       )
 
@@ -231,10 +243,12 @@ object Server:
           val src   = session.src(readBuf)
           val send  = session.send
           val proto = session.applicationProtocol
-          if proto == "h2" && config.http2 then
-            consumePreface(src) *>
-              heddle.internal.h2.H2Connection.serve(routes, src, send, config, takingWork, busy, secure = true)
-          else Http1.serveConnection(routes, src, send, config, takingWork, busy, secure = true)
+          val work  =
+            if proto == "h2" && config.http2 then
+              consumePreface(src) *>
+                heddle.internal.h2.H2Connection.serve(routes, src, send, config, takingWork, busy, secure = true)
+            else Http1.serveConnection(routes, src, send, config, takingWork, busy, secure = true)
+          work.ensuring(ZIO.succeed(closeQuietly(session.socket)))
         }
     end match
   end runConnection

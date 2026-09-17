@@ -21,13 +21,20 @@ final class Tls private (ctx: SSLContext):
         val ssl  = ctx.getSocketFactory
           .createSocket(sock, sock.getInetAddress.getHostName, sock.getPort, true)
           .asInstanceOf[SSLSocket]
-        ssl.setUseClientMode(false)
-        if alpn.nonEmpty then
-          val params = ssl.getSSLParameters
-          params.setApplicationProtocols(alpn.toArray)
-          ssl.setSSLParameters(params)
-        ssl.startHandshake()
-        Tls.Session(ssl)
+        try
+          ssl.setUseClientMode(false)
+          if alpn.nonEmpty then
+            val params = ssl.getSSLParameters
+            params.setApplicationProtocols(alpn.toArray)
+            ssl.setSSLParameters(params)
+          ssl.startHandshake()
+          Tls.Session(ssl)
+        catch
+          case e: Throwable =>
+            try ssl.close()
+            catch case _: Throwable => ()
+            throw e
+        end try
       }
       .mapError(HttpError.Io(_))
 end Tls

@@ -2,7 +2,8 @@ package heddle.server
 
 import heddle.http.{Body, MediaType, Request, Response, Status}
 import heddle.http.header.{ByteRange, ContentRange, EntityTag, HeaderName}
-import java.nio.file.{Files as JFiles, Path}
+import java.nio.channels.FileChannel
+import java.nio.file.{Files as JFiles, Path, StandardOpenOption}
 import zio.*
 import zio.stream.ZStream
 
@@ -131,21 +132,22 @@ object Files:
           Some((start, size - 1))
 
   private def sliceStream(path: Path, start: Long, len: Long): ZStream[Any, Throwable, Byte] =
-    ZStream
-      .fromInputStreamZIO(
-        ZIO
-          .attemptBlocking {
-            val in   = JFiles.newInputStream(path)
-            var left = start
-            while left > 0 do
-              val skipped = in.skip(left)
-              if skipped <= 0 then left = 0
-              else left -= skipped
-            in
-          }
-          .refineToOrDie[java.io.IOException]
-      )
-      .take(len)
+    ZStream.unwrapScoped {
+      ZIO
+        .acquireRelease(
+          ZIO
+            .attemptBlocking {
+              val ch = FileChannel.open(path, StandardOpenOption.READ)
+              if start > 0 then ch.position(start)
+              java.nio.channels.Channels.newInputStream(ch)
+            }
+            .refineToOrDie[java.io.IOException]
+        )(in =>
+          ZIO.succeed(try in.close()
+          catch case _: Throwable => ())
+        )
+        .map(in => ZStream.fromInputStream(in, 8192).take(len))
+    }
 
   private def normalizePrefix(prefix: String): String =
     val p = if prefix.startsWith("/") then prefix else s"/$prefix"
