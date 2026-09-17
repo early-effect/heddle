@@ -1,12 +1,22 @@
 # Heddle
 
-HTTP as an effect. Loom under the floor.
+![Write the service once](docs/landing.png)
 
-A ZIO-first HTTP library: handlers are `Request => ZIO[R, E, Response]`, routing is data, middleware is `@@`. Write a capability once (`BoundOp` / `Api`) and host it for humans, systems, and agents: HTTP + OpenAPI / Swagger, MCP 2026-07-28 over Streamable HTTP, or a stdio process.
+A capability compiler for human-centric AI service hubs.
 
-Docs (tests-as-docs, live examples): [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
+Write a service once (`Endpoint` / `BoundOp` / `Api`) and host it for every reader that shows
+up: HTTP + OpenAPI / Swagger for humans and systems, MCP 2026-07-28 for agents, a web UI as
+just another HTTP client. CLI is a later interpreter of the same AST. Do not grow a second
+tool DSL.
 
-`import heddle.*` is a curated facade over `heddle.http`, `heddle.route`, `heddle.endpoint`, `heddle.server`, `heddle.client`, and `heddle.error`. SSE, WebSocket, and Datastar stay in their own packages.
+Handlers are `Request => ZIO[R, E, Response]`. The bind is `In => ZIO[R, E, Out]`. Routing is
+data. Middleware is `@@`. Loom runs accept/read/write as ordinary ZIO.
+
+Docs (tests-as-docs, live Ascent examples): [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
+
+`import heddle.*` is a curated facade over `heddle.http`, `heddle.route`, `heddle.endpoint`,
+`heddle.server`, `heddle.client`, and `heddle.error`. SSE, WebSocket, and Datastar stay in
+their own packages.
 
 ## Install
 
@@ -37,13 +47,22 @@ object Hello extends HeddleApp:
   def routes = app
 ```
 
-Promote selected endpoints with `.mcp`, then `Mcp.from(api)`. Agents hit `POST /mcp` or a `--mcp-stdio` process.
+Promote selected endpoints with `.mcp`, then `Mcp.from(api)`. Agents hit `POST /mcp` or a
+`--mcp-stdio` process. Swagger is `api.openApi.routes("docs")`. A browser is an HTTP client
+of `api.routes`.
 
-## Run the example
+## Run the example hub
 
 ```bash
-sbt example/run                      # users API + embedded OP + Swagger at /docs, MCP at /mcp
+sbt example/run                      # directory API + OP + Swagger at /docs, UI at /preview, MCP at /mcp
 sbt "example/run -- --mcp-stdio"     # same Api on stdio
+```
+
+Grok Build against the running process:
+
+```toml
+[mcp_servers.heddle-example]
+url = "http://localhost:8080/mcp"
 ```
 
 ## Modules

@@ -1,10 +1,12 @@
 package heddle.docs
 
+import ascent.html.Html
 import earlyeffect.docs.EarlyEffectTheme
 import specular.*
 import specular.site.*
 import zio.*
 
+import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 
 /** Docs-as-tests site builder (Test classpath; `docs/specularSite`). */
@@ -13,11 +15,21 @@ object BuildSite extends DocsSite:
   @navLabel("Start")
   final case class Start(why: WhyHeddle.type, started: GettingStarted.type, hosts: ThreeHosts.type)
 
-  @navLabel("HTTP")
-  final case class HttpNav(http: Http.type)
+  @navLabel("Tutorial")
+  final case class Tutorial(
+      domain: Domain.type,
+      operations: Operations.type,
+      bind: BindEffect.type,
+      docsHttp: DocsAndHttp.type,
+      agents: AgentsFallOut.type,
+      web: WebApp.type,
+  )
 
-  @navLabel("Endpoints")
-  final case class EndpointsNav(endpoints: Endpoints.type)
+  @navLabel("Compiler")
+  final case class Compiler(ast: TheAst.type, effects: Effects.type)
+
+  @navLabel("HTTP")
+  final case class HttpNav(http: Http.type, endpoints: Endpoints.type)
 
   @navLabel("Agents")
   final case class AgentsNav(agents: Agents.type)
@@ -33,8 +45,9 @@ object BuildSite extends DocsSite:
 
   final case class HeddleNav(
       start: Start,
+      tutorial: Tutorial,
+      compiler: Compiler,
       http: HttpNav,
-      endpoints: EndpointsNav,
       agents: AgentsNav,
       auth: AuthNav,
       realtime: RealtimeNav,
@@ -48,44 +61,12 @@ object BuildSite extends DocsSite:
   override def site: SiteModel =
     val m       = meta
     val branded = EarlyEffectTheme.brand(super.site)
-    val v       = m.docsVersion
-    val org     = m.organization
     branded.copy(
       nav = Some(siteNav),
       pages = siteNav.pages,
       clientScript = Some("assets/client.js"),
-      summaryMarkdown = Some(
-        """**Heddle** is HTTP as an effect. Write a capability once (`BoundOp` / `Api`) and host it
-for humans, systems, and agents: HTTP + OpenAPI for browsers and services, MCP over Streamable HTTP
-or stdio for agents.
-
-Handlers are `Request => ZIO[R, E, Response]`. Routing is data. Middleware is `@@`. Loom runs
-accept/read/write as ordinary ZIO. You can stop at `Routes` + `HeddleApp`. `Api` is how the other
-hosts appear, not a rewrite.
-"""
-      ),
-      installSnippets = Vector(
-        CodeSnippet(
-          "Core",
-          s"""libraryDependencies += "$org" %% "heddle" % "$v"""",
-        ),
-        CodeSnippet(
-          "JSON (zio-json)",
-          s"""libraryDependencies += "$org" %% "heddle-zio-json" % "$v"""",
-        ),
-        CodeSnippet(
-          "MCP (agents)",
-          s"""libraryDependencies += "$org" %% "heddle-mcp" % "$v"""",
-        ),
-        CodeSnippet(
-          "OAuth / OIDC",
-          s"""libraryDependencies += "$org" %% "heddle-oauth" % "$v"""",
-        ),
-        CodeSnippet(
-          "Brotli",
-          s"""libraryDependencies += "$org" %% "heddle-brotli" % "$v"""",
-        ),
-      ),
+      summaryMarkdown = Some("Start at [The hub](the-hub.html)."),
+      installSnippets = Vector.empty,
       brand = Some(
         Brand(
           name = m.title.getOrElse("heddle"),
@@ -100,7 +81,35 @@ hosts appear, not a rewrite.
 
   override def afterBuild(out: Path, result: SiteOutput): Task[Unit] =
     val _ = result
-    EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out)
+    EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out) *> writeLanding(out)
+
+  private def writeLanding(out: Path): Task[Unit] =
+    Html.renderPage(Landing.document).flatMap { page =>
+      ZIO.attempt {
+        val html =
+          s"""<!DOCTYPE html>
+             |<html lang="en">
+             |<head>
+             |  <meta charset="utf-8"/>
+             |  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+             |  <title>heddle</title>
+             |  <meta name="description" content="Write the service once. HTTP, OpenAPI, and MCP are hosts of the same BoundOp."/>
+             |  <link rel="icon" href="images/logo.png"/>
+             |  <link rel="stylesheet" href="assets/theme.css"/>
+             |  <link rel="stylesheet" href="assets/index.css"/>
+             |  <script type="module" src="assets/client.js"></script>
+             |  <style>html,body{margin:0;background:var(--specular-bg);}</style>
+             |</head>
+             |<body>
+             |${page.html}
+             |</body>
+             |</html>
+             |""".stripMargin
+        Files.writeString(out.resolve("index.html"), html, StandardCharsets.UTF_8)
+        Files.writeString(out.resolve("assets/index.css"), page.css, StandardCharsets.UTF_8)
+        ()
+      }
+    }
 
   private def copyClientBundle(out: Path): Task[Unit] =
     ZIO.attempt {

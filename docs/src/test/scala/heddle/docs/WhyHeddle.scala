@@ -1,67 +1,99 @@
 package heddle.docs
 
-import heddle.*
+import ascent.*
+import ascent.dsl.*
+import heddle.docs.ui.Hub
 import specular.*
 import specular.ziotest.DocSpecSuite
-import zio.*
 import zio.test.*
 
 object WhyHeddle extends DocSpecSuite:
 
-  def doc = page("Why Heddle")(
-    md"""
-Heddle is **HTTP as an effect**. Loom sits under the floor.
+  def doc = page("The hub")(
+    illustration {
+      Hub.mount(
+        E.p(Hub.Lead, E.strong("Heddle is a capability compiler.")),
+        E.p(
+          Hub.Copy,
+          "You write a service idea once: domain types, operations, and an effect that runs them. That value is the AST. Everything a human, a system, or an agent uses is an interpreter of it.",
+        ),
+        E.ul(
+          Hub.Bullets,
+          E.li(E.strong("Humans"), " get HTTP, OpenAPI / Swagger, and a web UI."),
+          E.li(E.strong("Systems"), " get the same HTTP, plus ", E.code("Client"), "."),
+          E.li(E.strong("Agents"), " get MCP 2026-07-28 over Streamable HTTP or a stdio process."),
+          E.li(
+            E.strong("CLI"),
+            " is a later interpreter of the same ",
+            E.code("OpArgs"),
+            ". It is not a second product.",
+          ),
+        ),
+        E.p(
+          Hub.Copy,
+          "That shape is a human-centric AI service hub. Agents do not get a shadow API. They get the same ",
+          E.code("BoundOp"),
+          ", marked with ",
+          E.code(".mcp"),
+          ".",
+        ),
+        Hub.poster,
+        E.h2(Hub.H2, "Progressive, not a conversion"),
+        E.p(
+          Hub.Copy,
+          "Day one is ",
+          E.code("Routes"),
+          " and ",
+          E.code("HeddleApp"),
+          ". That is already a service. You can stop there.",
+        ),
+        E.p(
+          Hub.Copy,
+          E.code("Endpoint"),
+          " + ",
+          E.code("Api.bind"),
+          " is how documentation and the other hosts appear. OpenAPI is a projection. MCP is a host protocol. stdio is the same engine on a pipe. Do not grow a second tool DSL.",
+        ),
+        E.h2(Hub.H2, "The effect is the body"),
+        E.p(
+          Hub.Copy,
+          "A handler is ",
+          E.code("Request => ZIO[R, E, Response]"),
+          ". ",
+          E.code("Api.bind"),
+          " is ",
+          E.code("In => ZIO[R, E, Out]"),
+          ". Accept, read, and write are ordinary ZIO on Loom. Interrupt a connection and the fiber stops. Typed errors stay in ",
+          E.code("E"),
+          " until a host maps them to HTTP or MCP.",
+        ),
+        E.p(Hub.Copy, "The AST is the contract. The effect is the work. Hosts are projections."),
+        E.h2(Hub.H2, "Where to go"),
+        E.ul(
+          Hub.Bullets,
+          E.li(E.a(A.href("install.html"), "Install"), " if you want a server in one file."),
+          E.li(
+            E.a(A.href("one-capability-many-hosts.html"), "One capability, many hosts"),
+            " if you want the thesis in one demo.",
+          ),
+          E.li(
+            E.a(A.href("index.html"), "the landing"),
+            " to click Ada and flip HTTP / OpenAPI / MCP on the same id.",
+          ),
+          E.li(
+            E.a(A.href("domain-is-data.html"), "Domain is data"),
+            " to build a hub end to end.",
+          ),
+        ),
+      )
+    }.assert(_ => assertTrue(true)),
+    section("A server is still a server")(
+      md"""
+This is the only snippet on this page that is meant to be copied. The rest is the hub, not a code sample.
 
-A handler is `Request => ZIO[R, E, Response]`. Routing is data. Middleware is `@@`. You write a
-capability once (`BoundOp` / `Api`) and host it for the readers that actually show up:
-
-- **Humans** get HTTP plus OpenAPI / Swagger.
-- **Systems** get the same HTTP, plus `Client`.
-- **Agents** get MCP 2026-07-28 over Streamable HTTP (`POST /mcp`) or a stdio process.
-
-That is the product. The rest of this site is how to grow into it without a rewrite.
-
-```mermaid
-flowchart LR
-  Op[BoundOp / Api]
-  Op --> HTTP[HTTP + OpenAPI]
-  Op --> McpHttp[MCP Streamable HTTP]
-  Op --> Stdio[MCP stdio]
-  HTTP --> Humans[Humans and systems]
-  McpHttp --> Agents[Agents]
-  Stdio --> Local[Local agent processes]
+```scala
+val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
 ```
-""",
-    section("Progressive, not a conversion")(
-      md"""
-Day one is `Routes` and `HeddleApp`. That is already a service. You can stop there.
-
-`Endpoint` + `Api.bind` is how documentation and the other hosts appear: OpenAPI is a projection,
-MCP is a host protocol, stdio is the same engine on a pipe. Do not grow a second tool DSL.
-`BoundOp` is the capability.
-""",
-      exampleZIO {
-        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        routes(Request.get("/health")).map(res => (res.status, res.body.asString))
-      }.assert { case (status, body) =>
-        assertTrue(status == Status.Ok, body == "ok")
-      },
-    ),
-    section("Effect safety is the default")(
-      md"""
-Accept, read, and write are ordinary ZIO on Loom (`Runtime.enableLoomBasedExecutor`). There is no
-event-loop rule and no thread-local contract you have to remember. Interrupt a connection and the
-fiber stops; open a body stream and it closes with the request.
-
-JDK 21+ is required. Typed errors stay in `E` until a handler maps them to a `Response`. `Task` is
-an edge, not the public shape of a route.
-"""
-    ),
-    section("Performance")(
-      md"""
-Throughput is on-par with zio-http, without sacrificing effect safety. We measure that with
-`./scripts/bench-compare.sh` in the repo; the number that matters is the one on your hardware, not
-a leaderboard in these docs.
 """
     ),
   )

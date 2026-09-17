@@ -101,10 +101,12 @@ object Main extends ZIOAppDefault:
           verifier.verify(t).mapError(_ => Mcp.unauthorized(meta, List("openid", "profile")))
         )
       )
-      admin  = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
-      docs   = Api.openApi("Heddle example", "0.1.0", users, writes).routes("docs")
-      prm    = Mcp.protectedResource(s"$issuer/mcp", List(issuer), List("openid", "profile"))
-      routes = users.routes ++ authed ++ mcpAuthed ++ prm ++ admin ++ op ++ preview ++ docs
+      admin = Routes(Method.GET / "admin" -> Handler.text("admin-ok")) @@ Middleware.basicAuth("admin", "admin")
+      docs  = Api.openApi("Heddle example", "0.1.0", users, writes).routes("docs")
+      prm   = Mcp.protectedResource(s"$issuer/mcp", List(issuer), List("openid", "profile"))
+      // Public hosts first. `provided` / auth middleware 401 before path match, and `++`
+      // only continues on 404/405, so authed routes would swallow /docs and /preview.
+      routes = preview ++ docs ++ users.routes ++ prm ++ op ++ admin ++ authed ++ mcpAuthed
       _ <- ZIO.logInfo("listening on http://localhost:8080/docs and /mcp (Authorize against the embedded OP)")
       _ <- Server.sbtInterruptExit
       _ <- Server

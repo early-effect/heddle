@@ -14,6 +14,9 @@ object Auth extends DocSpecSuite:
     md"""
 HTTP primitives live in core. JWT verification lives in `heddle-oauth`. Missing credentials from
 `Auth.*` are 401 with `WWW-Authenticate`.
+
+On the example hub, writes and MCP HTTP share one bearer. Swagger Authorize and `POST /mcp` are
+not two security stories.
 """,
     section("Basic, Bearer, API key")(
       md"""
@@ -38,8 +41,9 @@ that need a subject. API keys are `Auth.apiKey` / `Middleware.apiKey`.
 `heddle-oauth` signs and verifies JWTs (Nimbus under a Scala API), fetches JWKS, and speaks
 authorization-code+PKCE, client credentials, refresh, device, and userinfo.
 
-A loopback OpenID provider is `sbt oauth/run` (`http://127.0.0.1:8080/.well-known/openid-configuration`).
-`sbt example/run` embeds that OP next to the users API so Swagger Authorize works against the
+A loopback OpenID provider is `sbt oauth/run`
+(`http://127.0.0.1:8080/.well-known/openid-configuration`).
+`sbt example/run` embeds that OP next to the directory API so Swagger Authorize works against the
 same process. Seed user `ada` / `ada`. Machine client `machine` / `secret`.
 """,
       exampleZIO {
