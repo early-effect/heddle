@@ -435,17 +435,18 @@ object McpSpec extends ZIOSpecDefault:
           ).mkString("", "\n", "\n")
         val in  = java.io.ByteArrayInputStream(lines.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val out = java.io.ByteArrayOutputStream()
-        for
-          store <- Ref.make(Map(1 -> Item(1, "ada")))
-          _     <- mcpOf(store).stdio(in, out)
-        yield
-          val text = String(out.toByteArray)
-          assertTrue(
-            text.contains("2025-11-25"),
-            text.contains("get_items_id"),
-            text.contains("ada"),
-            !text.contains("resultType"),
-          )
-        end for,
+        val ran =
+          for
+            store <- Ref.make(Map(1 -> Item(1, "ada")))
+            _     <- mcpOf(store).stdio(in, out)
+          yield
+            val text = String(out.toByteArray)
+            assertTrue(
+              text.contains("2025-11-25"),
+              text.contains("get_items_id"),
+              text.contains("ada"),
+              !text.contains("resultType"),
+            )
+        ran,
     ) @@ TestAspect.timeout(10.seconds)
 end McpSpec
