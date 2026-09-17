@@ -42,7 +42,7 @@ Swagger. Systems hit it from `Client`.
     section("MCP Streamable HTTP")(
       md"""
 `Mcp.from(api)` speaks JSON-RPC on `POST /mcp`. `tools/list` is the promoted set.
-`tools/call` with `get_users_id` runs the same function as `GET /users/1`.
+`tools/call` with `get_show` runs the same function as `GET /shows/1`.
 """
     ),
     section("stdio")(

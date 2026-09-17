@@ -33,8 +33,8 @@ packages. Datastar `readSignals` is an extension on `Request`.
 sbt example/run
 ```
 
-- http://localhost:8080/docs — directory API + Swagger, Authorize against the embedded OP
-- http://localhost:8080/preview — directory UI (same `Api`)
+- http://localhost:8080/docs — box office API + Swagger, Authorize against the embedded OP
+- http://localhost:8080/preview — box office UI (same `Api`)
 - http://localhost:8080/mcp — Streamable HTTP MCP (`POST`)
 - `sbt "example/run -- --mcp-stdio"` — same `Api`, stdio JSON-RPC
 

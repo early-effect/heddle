@@ -32,21 +32,20 @@ object Operations extends DocSpecSuite:
         ),
       )
     }.assert(_ => assertTrue(true)),
-    section("Write getUser")(
+    section("Write getShow")(
       md"""
 ```scala
-val getUser =
+val getShow =
   Endpoint
-    .get("users" / int("id"))
-    .out[User]
+    .get("shows" / int("id"))
+    .out[Show]
     .outError[NotFound](Status.NotFound)
-    .summary("Get a user")
-    .tag("users")
-    .mcp
+    .name("get_show")
+    .summary("One bill")
     .hints(Hint.ReadOnly)
 ```
 
-`.mcp` is an explicit promotion. Heddle will not auto-export every REST operation as a tool.
+`Api.job` is explicit promotion. Heddle will not auto-export every REST operation as a tool.
 `.inJson` / `.out` need `Schema` and `JsonCodec` (`derives Schema, JsonCodec` on the domain type).
 """
     ),

@@ -47,14 +47,14 @@ object Hello extends HeddleApp:
   def routes = app
 ```
 
-Promote selected endpoints with `.mcp`, then `Mcp.from(api)`. Agents hit `POST /mcp` or a
+Promote selected endpoints with `Api.job` (or `.mcp`), then `Mcp.from(api)`. Agents hit `POST /mcp` or a
 `--mcp-stdio` process. Swagger is `api.openApi.routes("docs")`. A browser is an HTTP client
 of `api.routes`.
 
 ## Run the example hub
 
 ```bash
-sbt example/run                      # directory API + OP + Swagger at /docs, UI at /preview, MCP at /mcp
+sbt example/run                      # box office + OP + Swagger at /docs, UI at /preview, MCP at /mcp
 sbt "example/run -- --mcp-stdio"     # same Api on stdio
 ```
 

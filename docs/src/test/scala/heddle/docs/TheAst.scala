@@ -38,10 +38,10 @@ the same JSON object a tool call (or a future CLI) already knows how to pass. Fo
 SSE stay on HTTP. Do not smash them into tools.
 """,
       exampleValue {
-        OpArgs.promotable(Users.getUser.doc)
+        OpArgs.promotable(BoxOffice.getShow.doc)
       }.assert(ok => assertTrue(ok)),
       exampleValue {
-        OpArgs.inputSchema(Users.getUser.doc).map(_.jsonSchema.toString).exists(_.contains("id"))
+        OpArgs.inputSchema(BoxOffice.getShow.doc).map(_.jsonSchema.toString).exists(_.contains("id"))
       }.assert(ok => assertTrue(ok)),
     ),
     section("Click through EndpointDoc")(

@@ -22,21 +22,18 @@ then [Docs and HTTP fall out](docs-and-http-fall-out.html).
 `.summary`, `.tag` are documentation that also drives decoding.
 """,
       exampleZIO {
-        Users.seed.flatMap { (store, nextId) =>
-          val users = Users.api(store, nextId)
-          users
-            .routes(Request.post("/users", Body.json("""{"name":"Bob"}""")))
-            .map(res => (res.status, res.body.asString))
+        BoxOffice.seed.flatMap { store =>
+          BoxOffice.api(store).routes(Request.get("/shows/1")).map(res => (res.status, res.body.asString))
         }
       }.assert { case (status, body) =>
-        assertTrue(status == Status.Created, body.contains("Bob"))
+        assertTrue(status == Status.Ok, body.contains("Evening bill"))
       },
     ),
     section("OpenAPI is a projection")(
       exampleZIO {
-        Users.seed.map { (store, nextId) =>
-          val json = Users.api(store, nextId).openApi.toJson
-          json.contains("/users/{id}") && json.contains("Get a user")
+        BoxOffice.seed.map { store =>
+          val json = BoxOffice.api(store).openApi.toJson
+          json.contains("/shows/{id}") && json.contains("One bill")
         }
       }.assert(ok => assertTrue(ok)),
       md"""
@@ -49,8 +46,8 @@ The live projection is on [Docs and HTTP fall out](docs-and-http-fall-out.html).
 query, and JSON body into tool arguments; non-JSON bodies are not promotable.
 """,
       exampleZIO {
-        Users.seed.flatMap { (store, nextId) =>
-          Users.api(store, nextId).routes(Request.get("/users/99")).map(_.status)
+        BoxOffice.seed.flatMap { store =>
+          BoxOffice.api(store).routes(Request.get("/shows/99")).map(_.status)
         }
       }.assert(status => assertTrue(status == Status.NotFound)),
     ),

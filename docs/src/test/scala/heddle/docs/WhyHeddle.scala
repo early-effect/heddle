@@ -82,7 +82,7 @@ object WhyHeddle extends DocSpecSuite:
           ),
           E.li(
             E.a(A.href("index.html"), "the landing"),
-            " to click Ada and flip HTTP / OpenAPI / MCP on the same id.",
+            " to click Evening bill and flip HTTP / OpenAPI / MCP on the same id.",
           ),
           E.li(
             E.a(A.href("domain-is-data.html"), "Domain is data"),
