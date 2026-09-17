@@ -1,5 +1,6 @@
 package heddle
 
+import BytesLength.*
 import zio.*
 import zio.test.*
 
@@ -170,6 +171,18 @@ object MiddlewareSpec extends ZIOSpecDefault:
           yield assertTrue(a.header("X-M").contains("1"), b.header("X-M").contains("1")),
       ),
       suite("compress")(
+        test("decompress rejects a body larger than maxBytes"):
+          val raw    = "n" * 2048
+          val enc    = Compressor.gzip.compress(Chunk.fromArray(raw.getBytes))
+          val routes =
+            Routes(
+              Method.POST / "echo" -> Handler.fromFunctionZIO((req: Request) =>
+                ZIO.succeed(Response.text(req.body.asString))
+              )
+            ) @@ Middleware.decompress(maxBytes = 8.B)
+          val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "gzip")
+          routes(req).map(res => assertTrue(res.status == Status.ContentTooLarge))
+        ,
         test("decompress recovers a gzip request body"):
           val raw    = "hello gzip"
           val enc    = Compressor.gzip.compress(Chunk.fromArray(raw.getBytes))

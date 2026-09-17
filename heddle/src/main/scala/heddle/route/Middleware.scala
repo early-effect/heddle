@@ -2,9 +2,11 @@ package heddle.route
 
 import heddle.auth.Auth
 import heddle.endpoint.ApiKeyIn
+import heddle.BytesLength
 import heddle.http.{Body, ContentEncoding, Method, Request, Response, Status}
 import heddle.http.header.{BasicCredentials, HeaderName}
 import heddle.server.{Compressor, Decompressor, Files}
+import heddle.Server
 import java.util.UUID
 import zio.*
 import zio.Chunk
@@ -194,7 +196,10 @@ object Middleware:
       }
     }
 
-  def decompress(decompressors: Chunk[Decompressor] = Chunk(Decompressor.gzip)): Middleware[Any] =
+  def decompress(
+      maxBytes: BytesLength = Server.Config.defaultMaxBodyBytes,
+      decompressors: Chunk[Decompressor] = Chunk(Decompressor.gzip),
+  ): Middleware[Any] =
     interceptZIO { req =>
       req.header("Content-Encoding").map(_.trim.toLowerCase).filter(_.nonEmpty) match
         case None | Some("identity") => ZIO.succeed(req)
@@ -207,12 +212,15 @@ object Middleware:
                 .foldZIO(
                   _ => ZIO.fail(Response.badRequest("Invalid Content-Encoding")),
                   out =>
-                    ZIO.succeed(
-                      req.copy(
-                        headers = req.headers.remove(HeaderName.ContentEncoding).remove(HeaderName.ContentLength),
-                        body = Body.fromBytes(out, req.body.mediaType),
-                      )
-                    ),
+                    if out.length > maxBytes.toLong then
+                      ZIO.fail(Response.text("Decompressed body too large", Status.ContentTooLarge))
+                    else
+                      ZIO.succeed(
+                        req.copy(
+                          headers = req.headers.remove(HeaderName.ContentEncoding).remove(HeaderName.ContentLength),
+                          body = Body.fromBytes(out, req.body.mediaType),
+                        )
+                      ),
                 )
     }
 

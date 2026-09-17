@@ -3,8 +3,8 @@ package heddle
 import BytesLength.*
 import heddle.error.{HttpError, ServerError}
 import heddle.http.Response
-import heddle.route.{Middleware, Routes}
-import heddle.server.{Compressor, Http2Config}
+import heddle.route.Routes
+import heddle.server.Http2Config
 import java.nio.channels.{ClosedChannelException, ServerSocketChannel, SocketChannel}
 import java.net.StandardSocketOptions
 import java.util.concurrent.ConcurrentHashMap
@@ -33,8 +33,6 @@ object Server:
       soKeepAlive: Boolean = Config.defaultSoKeepAlive,
       http2: Boolean = Config.defaultHttp2,
       http2Config: Http2Config = Http2Config(),
-      compressors: Chunk[Compressor] = Chunk.empty,
-      compressMinBytes: Int = 0,
   ):
     def port(n: Int): Config = copy(port = n)
   end Config
@@ -149,9 +147,6 @@ object Server:
     ZIO.serviceWithZIO[Config](config => install(routes, config))
 
   def install[R](routes: Routes[R, Response], config: Config): ZIO[R & Scope, ServerError, Server] =
-    val app =
-      if config.compressors.isEmpty then routes
-      else routes @@ Middleware.compress(config.compressMinBytes, config.compressors)
     for
       _          <- loom.build.unit
       clock      <- ZIO.clock
@@ -161,7 +156,7 @@ object Server:
       inflight   <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))
       ss         <- ZIO.acquireRelease(Nio.openServer(config))(ss => ZIO.succeed(closeQuietly(ss)))
       halt0 = halt(ss, live, takingWork, config.gracefulShutdownTimeout).withClock(clock)
-      _ <- acceptLoop(app, ss, config, live, inflight, takingWork, tls).forkScoped
+      _ <- acceptLoop(routes, ss, config, live, inflight, takingWork, tls).forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(ss, halt0)
     end for
