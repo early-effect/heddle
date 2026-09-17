@@ -18,7 +18,7 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
 | Artifact | Depends on | Role |
 | --- | --- | --- |
 | `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
-| `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` |
+| `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 
@@ -35,7 +35,7 @@ sbt example/run
 
 - http://localhost:8080/docs — box office API + Swagger, Authorize against the embedded OP
 - http://localhost:8080/preview — box office UI (same `Api`)
-- http://localhost:8080/mcp — Streamable HTTP MCP (`POST`)
+- http://localhost:8080/mcp — Streamable HTTP MCP (`POST`; 2026 native, 2025 `initialize`)
 - `sbt "example/run -- --mcp-stdio"` — same `Api`, stdio JSON-RPC
 
 Seed users: `ada` / `ada`. Machine client `machine` / `secret`.

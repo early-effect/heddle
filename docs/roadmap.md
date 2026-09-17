@@ -57,7 +57,7 @@ Memory and File remain optional provided impls. Bringing your own `ProviderStore
 - CIMD / DCR completeness on the OP; MCP authorization-code client flow.
 - Catalog `invoke` for `inForm` / `inBytes` / `outSse` (HTTP-dispatch those; do not flatten into tools).
 - OpenAPI `x-mcp-*` (or equivalent) so hints round-trip in the docs projection.
-- Dual-era 2025-11-25 (`initialize`, `Mcp-Session-Id`, GET SSE) only if a real client we care about cannot speak 2026-07-28. Default remains latest-spec-only.
+- Dual-era 2025-11-25 `initialize` on HTTP and stdio (ephemeral session echo, GET 405). Done. GET SSE as a back-channel, MRTR, and progress stay Later. Native remains 2026-07-28.
 
 ## Out
 

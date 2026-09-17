@@ -35,18 +35,21 @@ final class Engine[-R](
     tools.map(t => t.name -> t).toMap
 
   def handle(raw: Json, headers: Headers): ZIO[R, Nothing, Option[Json.Obj]] =
+    handleRaw(raw, headers, requireVersion = true)
+
+  def handleCompat(raw: Json, headers: Headers): ZIO[R, Nothing, Option[Json.Obj]] =
+    handleRaw(raw, headers, requireVersion = false)
+
+  private def handleRaw(raw: Json, headers: Headers, requireVersion: Boolean): ZIO[R, Nothing, Option[Json.Obj]] =
     raw match
-      case msg: Json.Obj => handleObj(msg, headers)
+      case msg: Json.Obj => handleObj(msg, headers, requireVersion)
       case _             => ZIO.succeed(Some(error(Json.Null, ParseError, "Parse error")))
 
-  def handleLine(line: String, headers: Headers): ZIO[R, Nothing, Option[Json.Obj]] =
-    if line.isBlank then ZIO.succeed(None)
-    else
-      line.fromJson[Json] match
-        case Left(_)    => ZIO.succeed(Some(error(Json.Null, ParseError, "Parse error")))
-        case Right(msg) => handle(msg, headers)
-
-  private def handleObj(msg: Json.Obj, headers: Headers): ZIO[R, Nothing, Option[Json.Obj]] =
+  private def handleObj(
+      msg: Json.Obj,
+      headers: Headers,
+      requireVersion: Boolean,
+  ): ZIO[R, Nothing, Option[Json.Obj]] =
     val id = parseId(msg)
     methodOf(msg) match
       case None =>
@@ -55,29 +58,42 @@ final class Engine[-R](
         ZIO.succeed(None)
       case Some(method) =>
         val params = paramsOf(msg)
-        dispatch(id, method, params, headers).map(Some(_))
+        dispatch(id, method, params, headers, requireVersion).map(Some(_))
   end handleObj
 
-  private def dispatch(id: Json, method: String, params: Json.Obj, headers: Headers): ZIO[R, Nothing, Json.Obj] =
-    protocolVersion(params) match
-      case None =>
-        ZIO.succeed(error(id, InvalidParams, "missing protocol version"))
-      case Some(ver) if ver != ProtocolVersion =>
-        ZIO.succeed(
-          error(
-            id,
-            UnsupportedVersion,
-            "Unsupported protocol version",
-            Some(obj("supported" -> Json.Arr(Json.Str(ProtocolVersion)), "requested" -> Json.Str(ver))),
+  private def dispatch(
+      id: Json,
+      method: String,
+      params: Json.Obj,
+      headers: Headers,
+      requireVersion: Boolean,
+  ): ZIO[R, Nothing, Json.Obj] =
+    def run: ZIO[R, Nothing, Json.Obj] =
+      method match
+        case "server/discover" if !requireVersion =>
+          ZIO.succeed(error(id, MethodNotFound, s"Method not found: $method"))
+        case "server/discover" => ZIO.succeed(result(id, discover))
+        case "ping"            => ZIO.succeed(result(id, wrap(complete())))
+        case "tools/list"      => ZIO.succeed(result(id, listTools))
+        case "tools/call"      => callTool(id, params, headers)
+        case _                 => ZIO.succeed(error(id, MethodNotFound, s"Method not found: $method"))
+    if !requireVersion then run
+    else
+      protocolVersion(params) match
+        case None =>
+          ZIO.succeed(error(id, InvalidParams, "missing protocol version"))
+        case Some(ver) if ver != ProtocolVersion =>
+          ZIO.succeed(
+            error(
+              id,
+              UnsupportedVersion,
+              "Unsupported protocol version",
+              Some(obj("supported" -> Json.Arr(Json.Str(ProtocolVersion)), "requested" -> Json.Str(ver))),
+            )
           )
-        )
-      case Some(_) =>
-        method match
-          case "server/discover" => ZIO.succeed(result(id, discover))
-          case "ping"            => ZIO.succeed(result(id, wrap(complete())))
-          case "tools/list"      => ZIO.succeed(result(id, listTools))
-          case "tools/call"      => callTool(id, params, headers)
-          case _                 => ZIO.succeed(error(id, MethodNotFound, s"Method not found: $method"))
+        case Some(_) => run
+    end if
+  end dispatch
 
   private def discover: Json.Obj =
     val caps  = obj("tools" -> obj())

@@ -18,7 +18,7 @@ MCP is a host protocol over `BoundOp`. The tutorial is [Agents fall out](agents-
 This page is the remaining knobs.
 
 Mark ops with `.mcp`. `Mcp.from(api)` fails on duplicate tool names or non-promotable shapes.
-Protocol revision is **2026-07-28** only. Native tools (`.tool("name")(f)`) sit beside bound ops
+Native protocol is **2026-07-28**. Native tools (`.tool("name")(f)`) sit beside bound ops
 when you need something that is not an HTTP operation.
 """,
     section("Promote vs catalog")(
@@ -57,10 +57,31 @@ The live catalog toggle is on [Agents fall out](agents-fall-out.html).
       }.assert(ok => assertTrue(ok)),
       illustrationIO(Hub.Lives.rpc).live.withMountKey(InteractiveRegistry.JsonRpcInspector),
     ),
+    section("Protocol eras")(
+      md"""
+Native MCP is **2026-07-28**: `server/discover`, version in `_meta`, POST only, no session store.
+Grok Build, Cursor, and Claude Code still send `initialize`. HTTP and stdio answer that handshake
+so those hosts can list tools and call one. Authors do not opt in.
+
+| | Native (2026-07-28) | Compat (2025-11-25) |
+| --- | --- | --- |
+| Handshake | `server/discover` | `initialize` / `notifications/initialized` |
+| Session | none | HTTP mints an ephemeral `Mcp-Session-Id` and echoes it. It is not looked up. stdio has no session header. |
+| HTTP | POST | POST; GET 405; DELETE 200 |
+| stdio | `_meta` on every line | `initialize` then the rest of that process is 2025 |
+
+`initialize` selects compat. `MCP-Protocol-Version: 2026-07-28`, `_meta` version `2026-07-28`, or
+`server/discover` selects native. Missing 2026 headers on a non-initialize POST is still an error.
+
+GET is 405 on purpose. A live SSE back-channel is how 2025 hosts asked the client for sampling
+and elicitation. 2026 replaced that with MRTR. Do not grow a GET stream as "the" notification path.
+"""
+    ),
     section("HTTP and stdio")(
       md"""
 `mcp.routes` is Streamable HTTP at `/mcp` (`mcp.at("other")` to move it). `mcp.stdio()` reads
-JSON-RPC lines from stdin and writes lines to stdout.
+JSON-RPC lines from stdin and writes lines to stdout. Both transports speak native 2026 and the
+2025 handshake.
 
 Do not embed a second authorization server inside `heddle-mcp`. When the HTTP transport needs a
 bearer token, `Mcp.bearer` + `Mcp.protectedResource` advertise the resource metadata. JWT

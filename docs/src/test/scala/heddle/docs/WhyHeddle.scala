@@ -21,7 +21,10 @@ object WhyHeddle extends DocSpecSuite:
           Hub.Bullets,
           E.li(E.strong("Humans"), " get HTTP, OpenAPI / Swagger, and a web UI."),
           E.li(E.strong("Systems"), " get the same HTTP, plus ", E.code("Client"), "."),
-          E.li(E.strong("Agents"), " get MCP 2026-07-28 over Streamable HTTP or a stdio process."),
+          E.li(
+            E.strong("Agents"),
+            " get MCP 2026-07-28 over Streamable HTTP or a stdio process, plus the 2025 handshake for hosts that still send it.",
+          ),
           E.li(
             E.strong("CLI"),
             " is a later interpreter of the same ",
