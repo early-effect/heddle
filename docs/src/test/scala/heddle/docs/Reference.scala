@@ -9,7 +9,8 @@ object Reference extends DocSpecSuite:
 
   def doc = page("Reference")(
     md"""
-Published artifacts, the facade, the example app, and the knobs that are not a tutorial.
+Published artifacts, the facade, the example hub, and the knobs that are not a tutorial.
+How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html).
 """,
     section("Modules")(
       md"""
@@ -26,17 +27,15 @@ Published artifacts, the facade, the example app, and the knobs that are not a t
 packages. Datastar `readSignals` is an extension on `Request`.
 """
     ),
-    section("Example app")(
+    section("Example hub")(
       md"""
 ```bash
 sbt example/run
 ```
 
-Then:
-
-- http://localhost:8080/docs — users API + Swagger, Authorize against the embedded OP
+- http://localhost:8080/docs — directory API + Swagger, Authorize against the embedded OP
+- http://localhost:8080/preview — directory UI (same `Api`)
 - http://localhost:8080/mcp — Streamable HTTP MCP (`POST`)
-- http://localhost:8080/preview — static files + SSE reload
 - `sbt "example/run -- --mcp-stdio"` — same `Api`, stdio JSON-RPC
 
 Seed users: `ada` / `ada`. Machine client `machine` / `secret`.

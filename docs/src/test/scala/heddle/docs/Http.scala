@@ -2,6 +2,7 @@ package heddle.docs
 
 import heddle.*
 import heddle.brotli.Brotli
+import heddle.docs.ui.Hub
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -15,6 +16,8 @@ The HTTP surface is the one you already know how to hold: `Request`, `Response`,
 `Handler`, `Middleware`, `Server`, `Client`. Bodies on the wire are streams.
 `Body.asString` / `asBytes` are for in-memory bodies; use `collect` otherwise. `maxBodyBytes` is a
 cap, not a buffer.
+
+If you are building a hub, start at [The hub](the-hub.html) and come back here for the knobs.
 """,
     section("Routes and the path DSL")(
       md"""
@@ -34,13 +37,14 @@ cap, not a buffer.
       }.assert { case (body, miss) =>
         assertTrue(body == "3", miss == Status.NotFound)
       },
-      exampleDom(InteractiveRegistry.PathPlayground)
-        .fromSource("docs-js/src/main/scala/heddle/docs/widget/PathPlayground.scala", "demo"),
+      illustration {
+        Hub.pathPlay("/users/1")
+      }.assert(_ => assertTrue(true)),
+      illustrationIO(Hub.Lives.pathPlay).live.withMountKey(InteractiveRegistry.PathPlayground),
     ),
     section("Middleware")(
       md"""
 `@@` applies middleware. `a ++ b` composes: the request hits `b` first (outer), then `a`.
-`requestId`, `cors`, `compress` / `decompress`, `debug`, and the auth helpers live here.
 """,
       exampleZIO {
         val routes =
@@ -49,18 +53,14 @@ cap, not a buffer.
           res.header("X-Request-Id").exists(_.nonEmpty)
         }
       }.assert(hasId => assertTrue(hasId)),
-      exampleDom(InteractiveRegistry.MiddlewareStack)
-        .fromSource("docs-js/src/main/scala/heddle/docs/widget/MiddlewareStack.scala", "demo"),
+      illustrationIO(Hub.Lives.middleware).live.withMountKey(InteractiveRegistry.MiddlewareStack),
     ),
     section("Server")(
       md"""
 `Server.install` / `Server.serve` shift onto ZIO's Loom executor. Accept and connections are
-ordinary ZIO fibers. `Server.Config` carries bind address, HTTP/1.1 limits, NIO `chunkSize`
-(8 KiB), and `gracefulShutdownTimeout` (10s). Incoming bodies are streams.
-
-TLS is a compose-time layer, not a protocol flag: `Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
-ALPN offers `h2` and `http/1.1` on that bind. Cleartext still speaks both: the 24-byte HTTP/2
-preface is h2c prior-knowledge, anything else is HTTP/1.1.
+ordinary ZIO fibers. TLS is a compose-time layer, not a protocol flag:
+`Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
+ALPN offers `h2` and `http/1.1` on that bind.
 """,
       exampleZIO {
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))

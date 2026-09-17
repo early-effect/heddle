@@ -1,1 +1,105 @@
-body { font-family: sans-serif; }
+:root {
+  --bg: #1c1d1f;
+  --surface: #2a2b2e;
+  --text: #e8e6dc;
+  --muted: #9a978c;
+  --accent: #c46a52;
+  --link: #d4a574;
+  --border: #3f4145;
+  --code: #121314;
+  --font: "Avenir Next", Avenir, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.45;
+}
+
+body {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2.25rem 1.25rem 3rem;
+}
+
+.kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+h1 {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 2rem;
+  font-weight: 650;
+}
+
+h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.05rem;
+}
+
+.lede, .hint {
+  color: var(--muted);
+}
+
+a { color: var(--link); }
+
+code, .mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+main {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+}
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.people button {
+  width: 100%;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.people button:hover {
+  border-color: var(--accent);
+}
+
+.mono {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: var(--code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+}
+
+.hint { font-size: 0.92rem; }

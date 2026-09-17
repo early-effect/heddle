@@ -1,11 +1,58 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<title>heddle preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Directory · heddle example</title>
 <link rel="stylesheet" href="/preview/preview.css">
 <body>
-  <p>heddle preview</p>
+  <header>
+    <p class="kicker">heddle example · HTTP host</p>
+    <h1>Directory</h1>
+    <p class="lede">
+      Same <code>Api</code> as
+      <a href="/docs">Swagger</a>
+      and <code>POST /mcp</code>.
+      This page is a browser client, not a second implementation.
+    </p>
+  </header>
+  <main>
+    <section>
+      <h2>People</h2>
+      <ul id="list" class="people"></ul>
+    </section>
+    <section>
+      <h2>Detail</h2>
+      <pre id="detail" class="mono">pick a person. GET /users/{id} is get_users_id.</pre>
+    </section>
+  </main>
+  <p class="hint">Writes go through Swagger Authorize (seed ada / ada). The UI does not invent a private POST.</p>
   <script>
+    const listEl = document.getElementById("list");
+    const detailEl = document.getElementById("detail");
+    function show(user) {
+      detailEl.textContent = JSON.stringify(user, null, 2);
+    }
+    fetch("/users")
+      .then((r) => r.json())
+      .then((users) => {
+        listEl.replaceChildren();
+        users.forEach((u) => {
+          const li = document.createElement("li");
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = u.name + " · " + u.id;
+          b.addEventListener("click", () => {
+            fetch("/users/" + u.id)
+              .then((r) => r.json())
+              .then(show);
+          });
+          li.appendChild(b);
+          listEl.appendChild(li);
+        });
+      })
+      .catch((e) => {
+        detailEl.textContent = "could not GET /users: " + e;
+      });
     new EventSource("/__preview/reload").addEventListener("reload", function () {});
   </script>
 </body>

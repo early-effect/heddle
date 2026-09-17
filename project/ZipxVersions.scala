@@ -15,7 +15,7 @@ object MyVersions extends ZipxVersions:
   val nimbusOidc = Lib("com.nimbusds", "oauth2-oidc-sdk", "11.28").java
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
-  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.16.1")
+  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.16.4")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.7.1")
@@ -24,7 +24,7 @@ object MyVersions extends ZipxVersions:
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val dynver         = Plugin("com.github.sbt", "sbt-dynver", "5.1.1")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
-  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.16.1")
+  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.16.4")
 
   def coreLib    = library(zio, zioStreams, zioJson)
   def coreTest   = library(zioTest, zioTestSbt)
@@ -33,6 +33,6 @@ object MyVersions extends ZipxVersions:
   def benchLib   = library(zioHttp)
   def oauthLib   = library(nimbusJose, nimbusOidc)
   def brotliTest = library(brotliDec)
-  def docsTest   = library(specularZioTest, specularTheme)
+  def docsTest   = library(specularZioTest, specularTheme, ascentCss)
   def docsJs     = library(specular, ascentJs, ascentCss, zio)
 end MyVersions
