@@ -19,7 +19,7 @@ private[heddle] object Http1:
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
   ): ZIO[R, HttpError, Unit] =
-    val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize, config.maxHeaderBytes))
+    val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
     serveConnection(routes, ConnBuf.fromPull(buf, pull), send, config, takingWork, busy)
   end serveConnection
 
@@ -126,7 +126,7 @@ private[heddle] object Http1:
   ): IO[HttpError, Option[(Request, IO[HttpError, Unit])]] =
     src.setReadTimeout(config.headerTimeout) *>
       Server
-        .awaitWithin(config.headerTimeout)(src.takeHeaders(config.maxHeaderBytes))
+        .awaitWithin(config.headerTimeout)(src.takeHeaders(config.maxHeaderBytes.toInt))
         .catchSome {
           case HttpError.Io(_: java.nio.channels.ClosedByInterruptException) => ZIO.succeed(None)
           case HttpError.Io(_: java.net.SocketTimeoutException)              => ZIO.fail(HttpError.Timeout)
@@ -156,13 +156,13 @@ private[heddle] object Http1:
         case None      => ZIO.succeed(Body.empty -> ZIO.unit)
         case Some(raw) =>
           raw.toLongOption match
-            case None                               => ZIO.fail(HttpError.Malformed(s"Invalid Content-Length: $raw"))
-            case Some(n) if n < 0                   => ZIO.fail(HttpError.Malformed("Negative Content-Length"))
-            case Some(n) if n > config.maxBodyBytes => ZIO.fail(HttpError.BodyTooLarge)
-            case Some(0)                            => ZIO.succeed(Body.empty -> ZIO.unit)
-            case Some(n)                            =>
+            case None             => ZIO.fail(HttpError.Malformed(s"Invalid Content-Length: $raw"))
+            case Some(n) if n < 0 => ZIO.fail(HttpError.Malformed("Negative Content-Length"))
+            case Some(n) if n > config.maxBodyBytes.toLong => ZIO.fail(HttpError.BodyTooLarge)
+            case Some(0)                                   => ZIO.succeed(Body.empty -> ZIO.unit)
+            case Some(n)                                   =>
               Ref.make(n).map { left =>
-                val body     = Body.Stream(src.takeBytes(left, config.chunkSize), headers.contentType, Some(n))
+                val body     = Body.Stream(src.takeBytes(left, config.chunkSize.toInt), headers.contentType, Some(n))
                 val leftover = left.get.flatMap(src.drop)
                 (body, leftover)
               }
@@ -184,7 +184,7 @@ private[heddle] object Http1:
             case true  => ZIO.fail(None)
             case false =>
               src
-                .readChunkedPiece(total, config.maxBodyBytes, config.maxHeaderBytes)
+                .readChunkedPiece(total, config.maxBodyBytes.toLong, config.maxHeaderBytes.toInt)
                 .mapError(e => Some(src.toThrowable(e)))
                 .flatMap {
                   case None    => done.set(true) *> ZIO.fail(None)
@@ -196,7 +196,7 @@ private[heddle] object Http1:
         case true  => ZIO.unit
         case false =>
           def drain: IO[HttpError, Unit] =
-            src.readChunkedPiece(total, config.maxBodyBytes, config.maxHeaderBytes).flatMap {
+            src.readChunkedPiece(total, config.maxBodyBytes.toLong, config.maxHeaderBytes.toInt).flatMap {
               case None    => done.set(true)
               case Some(_) => drain
             }

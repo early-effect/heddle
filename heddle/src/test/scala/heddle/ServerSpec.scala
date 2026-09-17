@@ -1,5 +1,6 @@
 package heddle
 
+import BytesLength.*
 import java.io.{ByteArrayOutputStream, InputStream}
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -171,7 +172,7 @@ object ServerSpec extends ZIOSpecDefault:
       ,
       test("rejects a body larger than maxBodyBytes"):
         val routes = Routes(Method.POST / "echo" -> Handler.text("ok"))
-        val config = LiveServer.local.copy(maxBodyBytes = 4)
+        val config = LiveServer.local.copy(maxBodyBytes = 4.B)
         LiveServer(routes, config) { base =>
           Client.request(Method.POST, s"$base/echo", body = Body.text("hello")).map { res =>
             assertTrue(res.status == Status.ContentTooLarge)
@@ -180,7 +181,7 @@ object ServerSpec extends ZIOSpecDefault:
       ,
       test("rejects headers larger than maxHeaderBytes"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok"))
-        val config = LiveServer.local.copy(maxHeaderBytes = 64)
+        val config = LiveServer.local.copy(maxHeaderBytes = 64.B)
         LiveServer(routes, config) { base =>
           Client.request(Method.GET, s"$base/x", headers = Headers("X-Big", "a" * 200)).map { res =>
             assertTrue(res.status == Status.RequestHeaderFieldsTooLarge)

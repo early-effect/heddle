@@ -1,5 +1,6 @@
 package heddle
 
+import BytesLength.*
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import heddle.internal.engine.Http1
@@ -29,7 +30,7 @@ object Http1Spec extends ZIOSpecDefault:
         }
       ,
       test("serveConnection writes 431 when headers exceed maxHeaderBytes"):
-        val config = Server.Config.default.copy(maxHeaderBytes = 64)
+        val config = Server.Config.default.copy(maxHeaderBytes = 64.B)
         runWire(Routes.empty, get("/x", headers = s"X-Big: ${"a" * 200}"), config).map { wire =>
           assertTrue(wire.startsWith("HTTP/1.1 431"))
         }

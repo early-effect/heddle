@@ -22,21 +22,35 @@ private[heddle] object H2Connection:
   ): ZIO[R, HttpError, Unit] =
     val h2 = config.http2Config
     for
-      out <- Queue.unbounded[H2Frame]
-      _   <- write(send, H2Frame.Settings(ack = false, localSettings(h2)))
-      wf  <- writer(out, send).forkDaemon
-      _   <- (reader(routes, src, out, config, takingWork, busy, secure) *>
+      out     <- Queue.bounded[H2Frame](h2.maxOutstandingFrames)
+      flow    <- H2Flow.make(h2.initialWindowSize.toInt)
+      streams <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))
+      fibers  <- ZIO.succeed(java.util.concurrent.ConcurrentHashMap.newKeySet[Fiber[Any, Any]]())
+      _       <- write(send, H2Frame.Settings(ack = false, localSettings(h2)))
+      wf      <- writer(out, send).forkDaemon
+      _       <- (reader(routes, src, out, flow, streams, fibers, config, takingWork, busy, secure) *>
         out.offer(H2Frame.GoAway(0, 0x0)).unit)
-        .ensuring(out.shutdown *> wf.interrupt)
+        .ensuring(
+          interruptAll(fibers) *> out.shutdown *> wf.interrupt
+        )
     yield ()
+    end for
   end serve
+
+  private def interruptAll(fibers: java.util.Set[Fiber[Any, Any]]): UIO[Unit] =
+    ZIO.suspendSucceed {
+      val it = fibers.iterator()
+      val fs = scala.collection.mutable.ArrayBuffer.empty[Fiber[Any, Any]]
+      while it.hasNext do fs += it.next()
+      ZIO.foreachParDiscard(fs)(_.interrupt)
+    }
 
   private def localSettings(h2: Http2Config): Chunk[(Int, Int)] =
     Chunk(
       3 -> h2.maxConcurrentStreams,
-      4 -> h2.initialWindowSize,
-      5 -> h2.maxFrameSize,
-      6 -> h2.maxHeaderListSize,
+      4 -> h2.initialWindowSize.toInt,
+      5 -> h2.maxFrameSize.toInt,
+      6 -> h2.maxHeaderListSize.toInt,
       8 -> 1, // SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441)
     )
 
@@ -50,6 +64,9 @@ private[heddle] object H2Connection:
       routes: Routes[R, Response],
       src: ConnBuf,
       out: Queue[H2Frame],
+      flow: H2Flow,
+      streams: java.util.concurrent.atomic.AtomicInteger,
+      fibers: java.util.Set[Fiber[Any, Any]],
       config: Server.Config,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
@@ -63,13 +80,27 @@ private[heddle] object H2Connection:
       else
         src.setReadTimeout(config.idleTimeout) *>
           Server
-            .awaitWithin(config.idleTimeout)(readFrame(src, config.http2Config.maxFrameSize))
+            .awaitWithin(config.idleTimeout)(readFrame(src, config.http2Config.maxFrameSize.toInt))
             .flatMap {
               case None        => ZIO.unit
               case Some(frame) =>
                 frame match
                   case None    => ZIO.unit
-                  case Some(f) => handle(routes, out, config, busy, acc, bodies, received, f, secure) *> loop
+                  case Some(f) =>
+                    handle(
+                      routes,
+                      out,
+                      flow,
+                      streams,
+                      fibers,
+                      config,
+                      busy,
+                      acc,
+                      bodies,
+                      received,
+                      f,
+                      secure,
+                    ) *> loop
             }
     loop
   end reader
@@ -77,6 +108,9 @@ private[heddle] object H2Connection:
   private def handle[R](
       routes: Routes[R, Response],
       out: Queue[H2Frame],
+      flow: H2Flow,
+      streams: java.util.concurrent.atomic.AtomicInteger,
+      fibers: java.util.Set[Fiber[Any, Any]],
       config: Server.Config,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       acc: scala.collection.concurrent.TrieMap[Int, Chunk[Byte]],
@@ -90,33 +124,49 @@ private[heddle] object H2Connection:
       case H2Frame.Settings(false, _)  => out.offer(H2Frame.Settings(ack = true, Chunk.empty)).unit
       case H2Frame.Ping(false, opaque) => out.offer(H2Frame.Ping(ack = true, opaque)).unit
       case H2Frame.Ping(true, _)       => ZIO.unit
-      case H2Frame.WindowUpdate(_, _)  => ZIO.unit
+      case H2Frame.WindowUpdate(id, n) => flow.creditSend(id, n)
       case H2Frame.GoAway(_, _, _)     => ZIO.unit
       case H2Frame.RstStream(id, _)    =>
         received.remove(id)
-        bodies.remove(id).fold(ZIO.unit)(_.offer(None).unit)
+        flow.close(id) *>
+          bodies.remove(id).fold(ZIO.unit)(_.offer(None).unit)
       case H2Frame.Data(id, data, end, _) =>
-        val n = received.getOrElse(id, 0L) + data.length
-        if n > config.maxBodyBytes then
-          received.remove(id)
-          bodies.remove(id).fold(ZIO.unit)(_.offer(None).unit) *>
-            out.offer(H2Frame.RstStream(id, 0x7)).unit
-        else
-          received.update(id, n)
-          bodies.get(id) match
-            case None    => ZIO.unit
-            case Some(q) =>
-              val put = if data.nonEmpty then q.offer(Some(data)).unit else ZIO.unit
-              put *> (if end then
-                        received.remove(id); q.offer(None).unit
-                      else ZIO.unit)
-        end if
+        val n = data.length
+        flow.takeRecv(id, n).flatMap { ok =>
+          if !ok then
+            received.remove(id)
+            bodies.remove(id).fold(ZIO.unit)(_.offer(None).unit) *>
+              out.offer(H2Frame.RstStream(id, H2Flow.FlowControlError)).unit
+          else
+            val total = received.getOrElse(id, 0L) + n
+            if total > config.maxBodyBytes.toLong then
+              received.remove(id)
+              bodies.remove(id).fold(ZIO.unit)(_.offer(None).unit) *>
+                out.offer(H2Frame.RstStream(id, H2Flow.RefusedStream)).unit
+            else
+              received.update(id, total)
+              bodies.get(id) match
+                case None    => ZIO.unit
+                case Some(q) =>
+                  val put = if n > 0 then q.offer(Some(data)).unit else ZIO.unit
+                  put *>
+                    flow.restoreRecv(id, n) *>
+                    (if n > 0 then
+                       out.offer(H2Frame.WindowUpdate(0, n)).unit *>
+                         out.offer(H2Frame.WindowUpdate(id, n)).unit
+                     else ZIO.unit) *>
+                    (if end then
+                       received.remove(id); q.offer(None).unit
+                     else ZIO.unit)
+              end match
+            end if
+        }
       case H2Frame.Headers(id, block, endStream, endHeaders, _, _, _) =>
         val prev = acc.getOrElse(id, Chunk.empty)
         val next = prev ++ block
         if endHeaders then
           acc.remove(id)
-          openStream(routes, out, config, busy, bodies, id, next, endStream, secure)
+          openStream(routes, out, flow, streams, fibers, config, busy, bodies, id, next, endStream, secure)
         else
           val _ = acc.put(id, next)
           ZIO.unit
@@ -125,7 +175,7 @@ private[heddle] object H2Connection:
         val next = prev ++ block
         if endHeaders then
           acc.remove(id)
-          openStream(routes, out, config, busy, bodies, id, next, endStream = false, secure)
+          openStream(routes, out, flow, streams, fibers, config, busy, bodies, id, next, endStream = false, secure)
         else
           acc.put(id, next)
           ZIO.unit
@@ -134,6 +184,9 @@ private[heddle] object H2Connection:
   private def openStream[R](
       routes: Routes[R, Response],
       out: Queue[H2Frame],
+      flow: H2Flow,
+      streams: java.util.concurrent.atomic.AtomicInteger,
+      fibers: java.util.Set[Fiber[Any, Any]],
       config: Server.Config,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       bodies: scala.collection.concurrent.TrieMap[Int, Queue[Option[Chunk[Byte]]]],
@@ -142,31 +195,43 @@ private[heddle] object H2Connection:
       endStream: Boolean,
       secure: Boolean,
   ): ZIO[R, HttpError, Unit] =
-    val hdrs = Hpack.decode(block)
-    for
-      q <- Queue.unbounded[Option[Chunk[Byte]]]
-      _ <- ZIO.succeed { if !endStream then bodies.put(id, q); () }
-      body =
-        if endStream then Body.empty
-        else
-          Body.stream(
-            ZStream.fromQueue(q).takeWhile(_.isDefined).collect { case Some(c) => c }.flattenChunks,
-            None,
-            None,
-          )
-      req = requestOf(hdrs, body, secure)
-      _ <- ZIO.succeed(busy.set(true))
-      run =
-        routes(req)
-          .catchAllCause { c =>
-            if c.isInterruptedOnly then ZIO.interrupt
-            else ZIO.succeed(Response.internalServerError())
-          }
-          .flatMap(res => respond(out, config, id, res, bodies))
-          .ensuring(ZIO.succeed(busy.set(false)))
-      _ <- run.forkDaemon
-    yield ()
-    end for
+    if streams.incrementAndGet() > config.http2Config.maxConcurrentStreams then
+      streams.decrementAndGet()
+      out.offer(H2Frame.RstStream(id, H2Flow.RefusedStream)).unit
+    else
+      val hdrs = Hpack.decode(block)
+      for
+        _ <- flow.open(id)
+        q <- Queue.bounded[Option[Chunk[Byte]]](config.http2Config.maxOutstandingFrames)
+        _ <- ZIO.succeed { if !endStream then bodies.put(id, q); () }
+        body =
+          if endStream then Body.empty
+          else
+            Body.stream(
+              ZStream.fromQueue(q).takeWhile(_.isDefined).collect { case Some(c) => c }.flattenChunks,
+              None,
+              None,
+            )
+        req = requestOf(hdrs, body, secure)
+        _ <- ZIO.succeed(busy.set(true))
+        run =
+          routes(req)
+            .catchAllCause { c =>
+              if c.isInterruptedOnly then ZIO.interrupt
+              else ZIO.succeed(Response.internalServerError())
+            }
+            .flatMap(res => respond(out, flow, config, id, res, bodies))
+            .ensuring(
+              ZIO.succeed {
+                busy.set(false)
+                streams.decrementAndGet()
+                ()
+              } *> flow.close(id)
+            )
+        fiber <- run.forkDaemon
+        _     <- ZIO.succeed { fibers.add(fiber); () }
+      yield ()
+      end for
   end openStream
 
   private def requestOf(hdrs: Chunk[(String, String)], body: Body, secure: Boolean): Request =
@@ -183,6 +248,7 @@ private[heddle] object H2Connection:
 
   private def respond(
       out: Queue[H2Frame],
+      flow: H2Flow,
       config: Server.Config,
       id: Int,
       res: Response,
@@ -194,12 +260,12 @@ private[heddle] object H2Connection:
     val block = Hpack.encode(hs)
     res.ws match
       case Some(run) =>
-        val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize, 4096))
+        val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, 4096))
         for
           q <- bodies.get(id) match
             case Some(existing) => ZIO.succeed(existing)
             case None           =>
-              Queue.unbounded[Option[Chunk[Byte]]].flatMap { nq =>
+              Queue.bounded[Option[Chunk[Byte]]](config.http2Config.maxOutstandingFrames).flatMap { nq =>
                 ZIO.succeed { bodies.put(id, nq); nq }
               }
           src = ConnBuf.fromPull(
@@ -209,7 +275,7 @@ private[heddle] object H2Connection:
               case Some(c) => Some(c)
             },
           )
-          send = (c: Chunk[Byte]) => emitData(out, id, c, config.http2Config.maxFrameSize)
+          send = (c: Chunk[Byte]) => emitData(out, flow, id, c, config.http2Config.maxFrameSize.toInt)
           _ <- out.offer(H2Frame.Headers(id, block, endStream = false, endHeaders = true))
           _ <- run(src, send).mapError(HttpError.Io(_))
           _ <- out.offer(H2Frame.Data(id, Chunk.empty, endStream = true))
@@ -221,35 +287,45 @@ private[heddle] object H2Connection:
             out.offer(H2Frame.Headers(id, block, endStream = true, endHeaders = true)).unit
           case Body.Bytes(bytes, _) =>
             out.offer(H2Frame.Headers(id, block, endStream = false, endHeaders = true)) *>
-              dataFrames(out, config, id, ZStream.fromChunk(bytes))
+              dataFrames(out, flow, config, id, ZStream.fromChunk(bytes))
           case Body.Stream(s, _, _) =>
             out.offer(H2Frame.Headers(id, block, endStream = false, endHeaders = true)) *>
-              dataFrames(out, config, id, s)
+              dataFrames(out, flow, config, id, s)
     end match
   end respond
 
   private def dataFrames(
       out: Queue[H2Frame],
+      flow: H2Flow,
       config: Server.Config,
       id: Int,
       stream: ZStream[Any, Throwable, Byte],
   ): IO[HttpError, Unit] =
-    val max = config.http2Config.maxFrameSize
+    val max = config.http2Config.maxFrameSize.toInt
     stream
       .mapChunksZIO { c =>
         if c.isEmpty then ZIO.succeed(c)
-        else emitData(out, id, c, max).as(c)
+        else emitData(out, flow, id, c, max).as(c)
       }
       .runDrain
       .mapError(HttpError.Io(_)) *>
       out.offer(H2Frame.Data(id, Chunk.empty, endStream = true)).unit
   end dataFrames
 
-  private def emitData(out: Queue[H2Frame], id: Int, data: Chunk[Byte], max: Int): UIO[Unit] =
-    if data.length <= max then out.offer(H2Frame.Data(id, data, endStream = false)).unit
+  private def emitData(
+      out: Queue[H2Frame],
+      flow: H2Flow,
+      id: Int,
+      data: Chunk[Byte],
+      max: Int,
+  ): UIO[Unit] =
+    if data.length <= max then
+      flow.takeSend(id, data.length) *> out.offer(H2Frame.Data(id, data, endStream = false)).unit
     else
-      out.offer(H2Frame.Data(id, data.take(max), endStream = false)).unit *>
-        emitData(out, id, data.drop(max), max)
+      val head = data.take(max)
+      flow.takeSend(id, head.length) *>
+        out.offer(H2Frame.Data(id, head, endStream = false)).unit *>
+        emitData(out, flow, id, data.drop(max), max)
 
   private def readFrame(src: ConnBuf, max: Int): IO[HttpError, Option[H2Frame]] =
     src.takeExact(9).flatMap { hdr =>

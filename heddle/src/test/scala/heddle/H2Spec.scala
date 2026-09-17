@@ -1,8 +1,9 @@
 package heddle
 
+import BytesLength.*
 import java.net.Socket
 import java.nio.charset.StandardCharsets
-import heddle.internal.h2.{FrameCodec, H2Frame, Hpack}
+import heddle.internal.h2.{FrameCodec, H2Flow, H2Frame, Hpack}
 import heddle.internal.engine.ConnBuf
 import heddle.ws.{WebSocketFrame, WsCodec}
 import zio.*
@@ -113,13 +114,55 @@ object H2Spec extends ZIOSpecDefault:
         val routes = Routes(
           Method.POST / "echo" -> handler((req: Request) => req.body.collect.orDie.as(Response.ok))
         )
-        val cfg = LiveServer.local.copy(maxBodyBytes = 8)
+        val cfg = LiveServer.local.copy(maxBodyBytes = 8.B)
         LiveServer(routes, cfg) { base =>
           val port = java.net.URI.create(base).getPort
           h2Exchange(port, List(H2Req.post(1, "/echo", "0123456789abcdef")), untilRst = true).map { got =>
             assertTrue(got.rst.get(1).contains(0x7))
           }
         }
+      ,
+      test("DATA past the receive window is FLOW_CONTROL_ERROR"):
+        val routes = Routes(
+          Method.POST / "echo" -> handler((req: Request) => req.body.collect.orDie.as(Response.ok))
+        )
+        val cfg = LiveServer.local.copy(http2Config = Http2Config(initialWindowSize = 16.B))
+        LiveServer(routes, cfg) { base =>
+          val port = java.net.URI.create(base).getPort
+          h2Exchange(port, List(H2Req.post(1, "/echo", "0123456789abcdef0123456789abcdef")), untilRst = true).map {
+            got =>
+              assertTrue(got.rst.get(1).contains(H2Flow.FlowControlError))
+          }
+        }
+      ,
+      test("maxConcurrentStreams refuses the extra stream"):
+        val routes = Routes(
+          Method.GET / "hold" -> handler(ZIO.never),
+          Method.GET / "b"    -> Handler.text("B"),
+        )
+        val cfg = LiveServer.local.copy(http2Config = Http2Config(maxConcurrentStreams = 1))
+        LiveServer(routes, cfg) { base =>
+          val port = java.net.URI.create(base).getPort
+          h2Exchange(port, List(H2Req.get(1, "/hold"), H2Req.get(3, "/b")), untilRst = true).map { got =>
+            assertTrue(got.rst.values.exists(_ == H2Flow.RefusedStream))
+          }
+        }
+      ,
+      test("H2Flow takeRecv rejects past the stream window"):
+        H2Flow.make(16).flatMap { f =>
+          f.open(1) *> f.takeRecv(1, 17).map(ok => assertTrue(!ok))
+        }
+      ,
+      test("H2Flow takeSend waits for WINDOW_UPDATE credit"):
+        for
+          f      <- H2Flow.make(8)
+          _      <- f.open(1)
+          _      <- f.takeSend(1, 8)
+          waiter <- f.takeSend(1, 1).fork
+          early  <- waiter.poll
+          _      <- f.creditSend(1, 1)
+          _      <- waiter.join
+        yield assertTrue(early.isEmpty)
       ,
       test("shutdown does not hang on an open H2 SSE stream"):
         val routes = Routes(
@@ -198,7 +241,7 @@ object H2Spec extends ZIOSpecDefault:
         var dataSeen = 0
         s.setSoTimeout(3000)
         while
-          val waiting = if untilRst then rst.keySet != want else done != want
+          val waiting = if untilRst then rst.isEmpty else done != want
           waiting && (stopAfterData == 0 || dataSeen < stopAfterData)
         do
           val tmp = Array.ofDim[Byte](4096)

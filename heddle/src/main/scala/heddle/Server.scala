@@ -1,5 +1,6 @@
 package heddle
 
+import BytesLength.*
 import heddle.error.{HttpError, ServerError}
 import heddle.http.Response
 import heddle.route.{Middleware, Routes}
@@ -18,9 +19,9 @@ object Server:
   final case class Config(
       host: String = Config.defaultHost,
       port: Int = Config.defaultPort,
-      maxHeaderBytes: Int = Config.defaultMaxHeaderBytes,
-      maxBodyBytes: Long = Config.defaultMaxBodyBytes,
-      chunkSize: Int = Config.defaultChunkSize,
+      maxHeaderBytes: BytesLength = Config.defaultMaxHeaderBytes,
+      maxBodyBytes: BytesLength = Config.defaultMaxBodyBytes,
+      chunkSize: BytesLength = Config.defaultChunkSize,
       gracefulShutdownTimeout: Duration = Config.defaultGracefulShutdownTimeout,
       idleTimeout: Duration = Config.defaultIdleTimeout,
       headerTimeout: Duration = Config.defaultHeaderTimeout,
@@ -41,9 +42,9 @@ object Server:
   object Config:
     val defaultHost: String                      = "0.0.0.0"
     val defaultPort: Int                         = 8080
-    val defaultMaxHeaderBytes: Int               = 64 * 1024
-    val defaultMaxBodyBytes: Long                = 10L * 1024 * 1024
-    val defaultChunkSize: Int                    = 8 * 1024
+    val defaultMaxHeaderBytes: BytesLength       = 64.K
+    val defaultMaxBodyBytes: BytesLength         = 10.M
+    val defaultChunkSize: BytesLength            = 8.K
     val defaultGracefulShutdownTimeout: Duration = 10.seconds
     val defaultIdleTimeout: Duration             = 60.seconds
     val defaultHeaderTimeout: Duration           = 30.seconds
@@ -61,9 +62,9 @@ object Server:
       (
         zio.Config.string("host").withDefault(defaultHost) ++
           zio.Config.int("port").withDefault(defaultPort) ++
-          zio.Config.int("maxHeaderBytes").withDefault(defaultMaxHeaderBytes) ++
-          zio.Config.long("maxBodyBytes").withDefault(defaultMaxBodyBytes) ++
-          zio.Config.int("chunkSize").withDefault(defaultChunkSize) ++
+          zio.Config.long("maxHeaderBytes").map(BytesLength(_)).withDefault(defaultMaxHeaderBytes) ++
+          zio.Config.long("maxBodyBytes").map(BytesLength(_)).withDefault(defaultMaxBodyBytes) ++
+          zio.Config.long("chunkSize").map(BytesLength(_)).withDefault(defaultChunkSize) ++
           zio.Config.duration("gracefulShutdownTimeout").withDefault(defaultGracefulShutdownTimeout) ++
           zio.Config.duration("idleTimeout").withDefault(defaultIdleTimeout) ++
           zio.Config.duration("headerTimeout").withDefault(defaultHeaderTimeout) ++
@@ -73,7 +74,8 @@ object Server:
           zio.Config.boolean("reuseAddress").withDefault(defaultReuseAddress) ++
           zio.Config.boolean("tcpNoDelay").withDefault(defaultTcpNoDelay) ++
           zio.Config.boolean("soKeepAlive").withDefault(defaultSoKeepAlive) ++
-          zio.Config.boolean("http2").withDefault(defaultHttp2)
+          zio.Config.boolean("http2").withDefault(defaultHttp2) ++
+          Http2Config.descriptor
       ).nested("heddle", "server").map {
         (
             host,
@@ -91,6 +93,7 @@ object Server:
             tcpNoDelay,
             soKeepAlive,
             http2,
+            http2Config,
         ) =>
           Config(
             host = host,
@@ -108,6 +111,7 @@ object Server:
             tcpNoDelay = tcpNoDelay,
             soKeepAlive = soKeepAlive,
             http2 = http2,
+            http2Config = http2Config,
           )
       }
 
@@ -284,8 +288,8 @@ object Server:
       busy: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
   ): ZIO[R, HttpError, Unit] =
-    val readBuf  = java.nio.ByteBuffer.allocate(math.max(config.chunkSize, config.maxHeaderBytes))
-    val writeBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize, 4096))
+    val readBuf  = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
+    val writeBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, 4096))
     tls match
       case None =>
         val src  = ConnBuf.channel(readBuf, ch)

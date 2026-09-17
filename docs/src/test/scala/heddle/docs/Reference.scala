@@ -48,7 +48,7 @@ Seed users: `ada` / `ada`. Machine client `machine` / `secret`.
 
 ```scala
 Server.serve(app).provide(Server.Config.defaults)
-Server.serve(app, Server.Config.default.copy(port = 8080, maxBodyBytes = 1_000_000))
+Server.serve(app, Server.Config.default.copy(port = 8080, maxBodyBytes = 1.M))
 Server.serve(app).provide(Server.Config.layer) // heddle.server.host, heddle.server.port, ...
 ```
 
