@@ -113,7 +113,10 @@ object StoryProofs extends ZIOSpecDefault:
     test("landing HTML is the manifesto"):
       ascent.html.Html.renderPage(Landing.document).map { page =>
         assertTrue(
-          page.html.contains("Write the service once."),
+          page.html.contains("One bind. Three runtimes."),
+          page.html.contains("JVM"),
+          page.html.contains("Node"),
+          page.html.contains("Native"),
           !page.html.contains("libraryDependencies"),
           page.html.contains("data-specular-mount=\"landing-poster\""),
           page.html.contains("data-specular-mount=\"desk-app\""),

@@ -9,9 +9,10 @@ object GettingStarted extends DocSpecSuite:
 
   def doc = page("Install")(
     md"""
-MCP, OAuth, and brotli are optional artifacts on the same version. JSON is zio-json on core.
-JVM is JDK 21+. The same `heddle` / `heddle-mcp` modules also compile to Scala.js (Node) and
-Scala Native. `heddle-oauth` is JVM and JS. `HeddleApp` is JVM-only.
+One bind on the JVM, on Node, and on Scala Native. MCP, OAuth, and brotli are optional
+artifacts on the same version. JSON is zio-json on core. JVM is JDK 21+. `heddle` and
+`heddle-mcp` publish for all three runtimes (`%%%`). `heddle-oauth` is JVM and JS.
+`HeddleApp` is JVM-only.
 
 ```scala
 libraryDependencies += "rocks.earlyeffect" %% "heddle" % "${Landing.docsVersion}"

@@ -248,6 +248,14 @@ lazy val docs = project
     MyVersions.coreTest,
     dependencyOverrides += MyVersions.moduleID(MyVersions.zioJson),
     libraryDependencySchemes += "rocks.earlyeffect" %% "heddle" % VersionScheme.Always,
+    // ascent-preview 0.7.1 / specular 0.16.4 still pull published heddle 0.2.0. Docs
+    // preview must run against this tree. Files is back on import heddle.* so the
+    // preview bytecode (exports$package$.Files) links.
+    excludeDependencies ++= Seq(
+      "rocks.earlyeffect" %% "heddle",
+      "rocks.earlyeffect" %% "heddle-mcp",
+      "rocks.earlyeffect" %% "heddle-oauth",
+    ),
     Test / mainClass := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),

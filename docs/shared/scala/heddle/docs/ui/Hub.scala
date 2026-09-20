@@ -814,7 +814,7 @@ create_hold is not promoted. Catalog can still find it."""
       Shell,
       kicker("harness · Grok Build"),
       E.pre(Mono, body),
-      E.p(Hint, "Same bind the tests run. Clone for a JVM process."),
+      E.p(Hint, "Same bind the tests run. JVM, Node, or Native."),
     )
   end harnessWalk
 
