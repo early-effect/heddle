@@ -106,9 +106,9 @@ jobs:
       - name: test
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
-            sbt 'cleanFull; testFull; docs/specularSite'
+            sbt 'cleanFull; testJVM'
           else
-            sbt 'testFull; docs/specularSite'
+            sbt 'testJVM'
           fi
         env:
           ZIPX_VERIFY_CLEAN_FULL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'clean') }}
@@ -208,6 +208,72 @@ jobs:
           fi
         env:
           ZIPX_VERIFY_CLEAN_FULL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'clean') }}
+  test-js:
+    name: test-js
+    runs-on: ubuntu-latest
+    needs:
+      - verify-gate
+    if: "!cancelled() && !startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' && ((needs.verify-gate.result != 'success') || (needs.verify-gate.outputs.run == 'true'))"
+    env:
+      JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: "0"
+          fetch-tags: "true"
+      - name: zipx sbt setup
+        uses: ./.github/actions/zipx-sbt-setup
+        with:
+          java-version: "25"
+          runner-os: ubuntu-latest
+          cache-key-suffix: test-js
+          node-version: ""
+          sbt-disk-cache: "false"
+          local-cache: "true"
+          cache-epoch: ""
+      - name: test-js
+        run: |
+          if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
+            sbt 'cleanFull; testJS'
+          else
+            sbt 'testJS'
+          fi
+        env:
+          ZIPX_VERIFY_CLEAN_FULL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'clean') }}
+  test-native:
+    name: test-native
+    runs-on: ubuntu-latest
+    needs:
+      - verify-gate
+    if: "!cancelled() && !startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' && ((needs.verify-gate.result != 'success') || (needs.verify-gate.outputs.run == 'true'))"
+    env:
+      JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: "0"
+          fetch-tags: "true"
+      - name: zipx sbt setup
+        uses: ./.github/actions/zipx-sbt-setup
+        with:
+          java-version: "25"
+          runner-os: ubuntu-latest
+          cache-key-suffix: test-native
+          node-version: ""
+          sbt-disk-cache: "false"
+          local-cache: "true"
+          cache-epoch: ""
+      - name: Install Scala Native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libstdc++-12-dev libgc-dev libunwind-dev libssl-dev
+      - name: test-native
+        run: |
+          if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
+            sbt 'cleanFull; testNative'
+          else
+            sbt 'testNative'
+          fi
+        env:
+          ZIPX_VERIFY_CLEAN_FULL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'clean') }}
   publish:
     name: publish
     runs-on: ubuntu-latest
@@ -243,7 +309,7 @@ jobs:
         env:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
       - name: publish
-        run: sbt 'heddle/publishSigned; brotli/publishSigned; mcp/publishSigned; oauth/publishSigned; sonaRelease'
+        run: sbt 'heddle/publishSigned; heddleJS/publishSigned; heddleNative/publishSigned; brotli/publishSigned; brotliJS/publishSigned; brotliNative/publishSigned; mcp/publishSigned; mcpJS/publishSigned; mcpNative/publishSigned; oauth/publishSigned; sonaRelease'
   docs:
     name: docs
     if: ((startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch')) && (github.repository == 'early-effect/heddle')

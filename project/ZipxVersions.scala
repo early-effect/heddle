@@ -1,3 +1,6 @@
+import sbt.{Def, Setting}
+import sbt.Keys.{dependencyOverrides, libraryDependencySchemes}
+import sbt.librarymanagement.syntax.*
 import zipx.*
 
 /** Typed catalog. `zipxDepUpdate` rewrites constructors here. sbt-zipx and sbt-pgp are not rows. */
@@ -15,6 +18,9 @@ object MyVersions extends ZipxVersions:
   val nimbusOidc = Lib("com.nimbusds", "oauth2-oidc-sdk", "11.28").java
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
+  val scalaJavaTime     = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
+  val scalaJavaTimeTzdb = scalaJavaTime.mod("scala-java-time-tzdb")
+
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.17.0")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
@@ -24,6 +30,7 @@ object MyVersions extends ZipxVersions:
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val dynver         = Plugin("com.github.sbt", "sbt-dynver", "5.1.1")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
+  val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
   val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.17.0")
 
   def coreLib    = library(zio, zioStreams, zioJson)
@@ -33,4 +40,15 @@ object MyVersions extends ZipxVersions:
   def brotliTest = library(brotliDec)
   def docsTest   = library(specularZioTest, specularTheme, ascentCss)
   def docsJs     = library(specular, ascentJs, ascentCss, zio)
+  def javaTime  = library(scalaJavaTime, scalaJavaTimeTzdb)
+  def jsRuntime = javaTime
+
+  def nativeTestInterface: Seq[Setting[?]] =
+    val testInterface = "org.scala-native" % "test-interface_native0.5_3" % (scalaNative.version: String)
+    Seq(
+      libraryDependencySchemes += "org.scala-native" % "test-interface_native0.5_3" % "early-semver",
+      dependencyOverrides += Def.uncached(testInterface),
+    )
+
+  def nativeJavaTime = javaTime ++ nativeTestInterface
 end MyVersions

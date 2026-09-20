@@ -100,21 +100,30 @@ object FilesSpec extends ZIOSpecDefault:
             JFiles.writeString(secret, "nope")
             JFiles.writeString(pub.resolve("ok.txt"), "ok")
           } *> {
-            val routes = Routes.fromHandler(Handler.text("fallback")) @@ Middleware.serveDirectory("/static", pub)
+            val routes =
+              Routes.fromHandler(Handler.text("fallback")) @@
+                Middleware.serveDirectory("/static", pub.toString, indexHtml = true)
             for
               escaped <- routes(Request.get("/static/../secret.txt"))
-              direct  <- Files.fromDirectory(pub, "/static", Request.get("/static/../secret.txt"))
+              encoded <- routes(Request.get("/static/%2e%2e/secret.txt"))
+              nested  <- routes(Request.get("/static/css/../../secret.txt"))
+              slash   <- routes(Request.get("/static/..\\secret.txt"))
+              direct  <- Files.fromDirectory(pub, "/static", Request.get("/static/../secret.txt"), indexHtml = true)
             yield assertTrue(
               escaped.body.asString == "fallback",
+              encoded.body.asString == "fallback",
+              nested.body.asString == "fallback",
+              slash.body.asString == "fallback",
               direct.isEmpty,
             )
+            end for
           }
         }
       ,
       test("serveDirectory serves a file"):
         withTempDir { dir =>
           ZIO.attemptBlocking(JFiles.writeString(dir.resolve("a.txt"), "hello dir")) *> {
-            val routes = Routes.empty @@ Middleware.serveDirectory("/static", dir)
+            val routes = Routes.empty @@ Middleware.serveDirectory("/static", dir.toString, indexHtml = true)
             routes(Request.get("/static/a.txt")).flatMap { res =>
               res.body.utf8.map(s => assertTrue(res.status == Status.Ok, s == "hello dir"))
             }

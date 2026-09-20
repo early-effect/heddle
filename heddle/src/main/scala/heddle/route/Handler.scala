@@ -2,7 +2,6 @@ package heddle.route
 
 import heddle.http.{Method, Request, Response, Status}
 import heddle.http.header.{HeaderName, Headers}
-import heddle.server.Files
 import zio.*
 
 final case class Handler[-R, +E](run: Request => ZIO[R, E, Response]):
@@ -35,8 +34,11 @@ object Handler:
 
   val notFound: Handler[Any, Nothing] = succeed(Response.notFound())
 
+  def fromFile(path: String): Handler[Any, Throwable] =
+    Handler(_ => heddle.server.Files.fromPath(path))
+
   def fromFile(file: java.io.File): Handler[Any, Throwable] =
-    Handler(_ => Files.fromPath(file.toPath))
+    fromFile(file.getPath)
 
   def websocket[R](run: heddle.ws.WebSocket => ZIO[R, Throwable, Unit]): Handler[R, Nothing] =
     Handler { req =>

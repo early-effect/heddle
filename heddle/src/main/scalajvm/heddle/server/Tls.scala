@@ -10,7 +10,7 @@ import java.security.{KeyFactory, KeyStore}
 import java.security.cert.CertificateFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import javax.net.ssl.{KeyManagerFactory, SSLContext, SSLSocket}
-import heddle.internal.engine.ConnBuf
+import heddle.internal.engine.{ConnBuf, ConnBufPlatform}
 import zio.*
 
 final class Tls private (ctx: SSLContext):
@@ -45,7 +45,7 @@ object Tls:
       Option(socket.getApplicationProtocol).getOrElse("")
 
     def src(buf: ByteBuffer): ConnBuf =
-      ConnBuf.inputStream(buf, socket.getInputStream, socket)
+      ConnBufPlatform.inputStream(buf, socket.getInputStream, socket)
 
     def send: Chunk[Byte] => Task[Unit] =
       Tls.writer(socket.getOutputStream)

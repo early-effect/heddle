@@ -5,9 +5,8 @@ import heddle.endpoint.ApiKeyIn
 import heddle.BytesLength
 import heddle.http.{Body, ContentEncoding, Method, Request, Response, Status}
 import heddle.http.header.{BasicCredentials, HeaderName}
-import heddle.server.{Compressor, Decompressor, Files}
+import heddle.server.{Compressor, Decompressor, Files, SafePath}
 import heddle.Server
-import java.util.UUID
 import zio.*
 import zio.Chunk
 
@@ -133,11 +132,11 @@ object Middleware:
       }
     }
 
-  def serveDirectory(urlPrefix: String, root: java.nio.file.Path, indexHtml: Boolean = true): Middleware[Any] =
+  def serveDirectory(urlPrefix: String, root: String, indexHtml: Boolean): Middleware[Any] =
     wrap[Any] { [E] => (handler: Handler[Any, E]) =>
       Handler { req =>
         if req.method == Method.GET || req.method == Method.HEAD then
-          Files
+          heddle.server.Files
             .fromDirectory(root, urlPrefix, req, indexHtml)
             .foldZIO(
               _ => handler.run(req),
@@ -154,33 +153,30 @@ object Middleware:
     wrap[Any] { [E] => (handler: Handler[Any, E]) =>
       Handler { req =>
         if req.method == Method.GET || req.method == Method.HEAD then
-          val prefix = if urlPrefix.startsWith("/") then urlPrefix else s"/$urlPrefix"
-          val path   = req.path.render
-          val rel    =
-            if path == prefix then ""
-            else if path.startsWith(prefix + "/") then path.substring(prefix.length + 1)
-            else ""
-          val name = List(resourceRoot.stripSuffix("/"), rel).filter(_.nonEmpty).mkString("/")
-          if rel.nonEmpty || path == prefix then
-            Files
-              .fromResource(name, req)
-              .foldZIO(
-                _ => handler.run(req),
-                {
-                  case Some(res) => ZIO.succeed(res)
-                  case None      => handler.run(req)
-                },
-              )
-          else handler.run(req)
-          end if
+          SafePath.remainder(urlPrefix, req.path).flatMap { rest =>
+            SafePath.resolveUnder(resourceRoot, rest)
+          } match
+            case None       => handler.run(req)
+            case Some(name) =>
+              Files
+                .fromResource(name, req)
+                .foldZIO(
+                  _ => handler.run(req),
+                  {
+                    case Some(res) => ZIO.succeed(res)
+                    case None      => handler.run(req)
+                  },
+                )
         else handler.run(req)
       }
     }
 
-  def requestId(headerName: String = "X-Request-Id"): Middleware[Any] =
+  def requestId(): Middleware[Any] = requestId("X-Request-Id")
+
+  def requestId(headerName: String): Middleware[Any] =
     wrap[Any] { [E] => (handler: Handler[Any, E]) =>
       Handler { req =>
-        val id     = req.header(headerName).getOrElse(UUID.randomUUID().toString)
+        val id     = req.header(headerName).getOrElse(newRequestId)
         val tagged = req.withHeader(headerName, id)
         handler.run(tagged).map(_.withHeader(headerName, id))
       }
@@ -232,7 +228,12 @@ object Middleware:
       }
     }
 
-  def cors(config: CorsConfig = CorsConfig()): Middleware[Any] =
+  private def newRequestId: String =
+    java.util.UUID(scala.util.Random.nextLong(), scala.util.Random.nextLong()).toString
+
+  def cors(): Middleware[Any] = cors(CorsConfig())
+
+  def cors(config: CorsConfig): Middleware[Any] =
     wrap[Any] { [E] => (handler: Handler[Any, E]) =>
       Handler { req =>
         val origin = req.header("Origin")
