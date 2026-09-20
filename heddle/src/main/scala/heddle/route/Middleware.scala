@@ -229,7 +229,7 @@ object Middleware:
     }
 
   private def newRequestId: String =
-    java.util.UUID(scala.util.Random.nextLong(), scala.util.Random.nextLong()).toString
+    heddle.internal.Ids.uuid().toString
 
   def cors(): Middleware[Any] = cors(CorsConfig())
 

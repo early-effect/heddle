@@ -19,7 +19,7 @@ object Multipart:
   private val Close: Array[Byte] = Array('-', '-').map(_.toByte)
 
   def boundary(): String =
-    "----heddleFormBoundary" + java.util.UUID.randomUUID().toString.replace("-", "")
+    "----heddleFormBoundary" + heddle.internal.Ids.uuid().toString.replace("-", "")
 
   def parse(bytes: Chunk[Byte], boundary: String): Either[String, Chunk[FormField]] =
     val (fields, _, err) = takeComplete(bytes, boundary, finish = true)
