@@ -21,4 +21,3 @@ private[heddle] object Ids:
     UUID(hi, lo)
   end uuid
 end Ids
-
