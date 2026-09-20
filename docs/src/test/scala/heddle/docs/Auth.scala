@@ -38,7 +38,7 @@ that need a subject. API keys are `Auth.apiKey` / `Middleware.apiKey`.
     ),
     section("OAuth / OIDC")(
       md"""
-`heddle-oauth` signs and verifies JWTs (Nimbus under a Scala API), fetches JWKS, and speaks
+`heddle-oauth` signs and verifies compact JWTs (RS256, our `Jose`), fetches JWKS, and speaks
 authorization-code+PKCE, client credentials, refresh, device, and userinfo.
 
 A loopback OpenID provider is `sbt oauth/run`

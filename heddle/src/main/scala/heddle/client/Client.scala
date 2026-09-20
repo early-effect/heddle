@@ -2,8 +2,10 @@ package heddle.client
 
 import heddle.BytesLength
 import heddle.BytesLength.*
-import heddle.http.{Body, Method, Request, Response}
+import heddle.endpoint.Endpoint
+import heddle.http.{Body, Method, Request, Response, Url}
 import heddle.http.header.Headers
+import heddle.route.Routes
 import heddle.sse.ServerSentEvent
 import zio.*
 import zio.stream.ZStream
@@ -101,4 +103,25 @@ object Client:
 
   def sse(url: String, config: Config = Config.default): ZStream[Any, Throwable, ServerSentEvent] =
     ClientPlatform.sse(url, config)
+
+  def inMemory[R](routes: Routes[R, Response]): URLayer[R, Client] =
+    ZLayer.fromZIO(
+      ZIO.environmentWith[R] { env =>
+        new Client:
+          def batched(req: Request): Task[Response] =
+            routes(req).provideEnvironment(env).merge
+      }
+    )
+
+  def call[In, Err, Out](ep: Endpoint[In, Err, Out]): CallPartiallyApplied[In, Err, Out] =
+    CallPartiallyApplied(ep)
+
+  final class CallPartiallyApplied[In, Err, Out](ep: Endpoint[In, Err, Out]):
+    def apply(in: In): ZIO[Client, Err, Out] =
+      at(Url.root, in)
+
+    def at(base: Url, in: In): ZIO[Client, Err, Out] =
+      ZIO.fromEither(ep.toRequest(in, base)).mapError(IllegalArgumentException(_)).orDie.flatMap { req =>
+        Client.batched(req).orDie.flatMap(ep.fromResponse)
+      }
 end Client

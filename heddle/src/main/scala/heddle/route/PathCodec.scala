@@ -18,6 +18,15 @@ object Combine:
       case (aVal, ())   => aVal.asInstanceOf[Combine[A, B]]
       case (aVal, bVal) => (aVal, bVal).asInstanceOf[Combine[A, B]]
 
+  inline def unapply[A, B](c: Combine[A, B]): (A, B) =
+    inline scala.compiletime.erasedValue[A] match
+      case _: Unit => (().asInstanceOf[A], c.asInstanceOf[B])
+      case _       =>
+        inline scala.compiletime.erasedValue[B] match
+          case _: Unit => (c.asInstanceOf[A], ().asInstanceOf[B])
+          case _       => c.asInstanceOf[(A, B)]
+end Combine
+
 enum PathKind:
   case Int32, Int64, Str, Uuid
 
@@ -64,6 +73,9 @@ final class PathCodec[A](
 
   def matches(path: Path): Option[A] =
     extractFn(path.segments)
+
+  def encode(value: A): Path =
+    PathCodec.encodePath(segments, value)
 
   def /(lit: String): PathCodec[A] =
     PathLits.register(lit)
@@ -151,6 +163,46 @@ object PathCodec:
     if !hasRest && si != segs.length then None
     else Some(acc.asInstanceOf[A])
   end extract
+
+  private[heddle] def encodePath[A](segments: Chunk[Seg], value: A): Path =
+    val steps = segments.toArray
+    val out   = Array.newBuilder[String]
+    var vals  = flatten(value)
+    var i     = 0
+    while i < steps.length do
+      steps(i) match
+        case Seg.Lit(v)    => out += v
+        case Seg.Var(_, _) =>
+          vals match
+            case h :: t =>
+              out += renderVal(h)
+              vals = t
+            case Nil => ()
+        case Seg.Rest =>
+          vals match
+            case (p: Path) :: t =>
+              p.segments.foreach(s => out += s)
+              vals = t
+            case h :: t =>
+              out += renderVal(h)
+              vals = t
+            case Nil => ()
+      end match
+      i += 1
+    end while
+    Path(Chunk.fromIterable(out.result()))
+  end encodePath
+
+  private def flatten(a: Any): List[Any] =
+    a match
+      case ()              => Nil
+      case t: Tuple2[?, ?] => flatten(t._1) ++ flatten(t._2)
+      case other           => other :: Nil
+
+  private def renderVal(v: Any): String =
+    v match
+      case u: UUID => u.toString
+      case other   => other.toString
 end PathCodec
 
 inline def int(inline name: String): PathCodec[Int]       = PathCodec.int(name)

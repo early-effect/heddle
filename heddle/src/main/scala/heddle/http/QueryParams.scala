@@ -9,6 +9,10 @@ final case class QueryParams(toMap: Map[String, Chunk[String]]):
 
   def isEmpty: Boolean = toMap.isEmpty || toMap.values.forall(_.isEmpty)
 
+  def add(name: String, values: Chunk[String]): QueryParams =
+    if values.isEmpty then this
+    else copy(toMap = toMap.updated(name, toMap.getOrElse(name, Chunk.empty) ++ values))
+
   def render: String =
     toMap.toList
       .sortBy(_._1)

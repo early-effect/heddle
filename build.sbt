@@ -115,7 +115,6 @@ lazy val oauth = (projectMatrix in file("oauth"))
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
-  .settings(MyVersions.oauthLib)
   .settings(
     name                 := "heddle-oauth",
     description          := "OAuth2 / OIDC client, resource server, and provider for heddle",

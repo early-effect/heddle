@@ -1,10 +1,9 @@
 package heddle.oauth.rs
 
-import com.nimbusds.jose.jwk.JWKSet
 import heddle.client.Client
 import heddle.http.Request
 import heddle.oauth.OAuthError
-import heddle.oauth.jose.Jose
+import heddle.oauth.jose.{Jose, Jwks}
 import zio.{IO, Ref, Schedule, ZIO, ZLayer, durationInt}
 
 trait JwtVerifier:
@@ -23,7 +22,7 @@ object JwtVerifier:
     ZLayer.scoped {
       for
         client <- ZIO.service[Client]
-        cache  <- Ref.make(Option.empty[JWKSet])
+        cache  <- Ref.make(Option.empty[Jwks])
         _      <- refresh(client, jwksUri, cache)
           .mapError(e => RuntimeException(e.message))
           .retry(Schedule.spaced(1.second).upTo(10.seconds))
@@ -42,7 +41,7 @@ object JwtVerifier:
         client <- ZIO.service[Client]
         disc   <- fetchDiscovery(client, issuer).mapError(e => RuntimeException(e.message)).orDie
         jwksUri = disc
-        cache <- Ref.make(Option.empty[JWKSet])
+        cache <- Ref.make(Option.empty[Jwks])
         _     <- refresh(client, jwksUri, cache).mapError(e => RuntimeException(e.message)).orDie
       yield Remote(client, jwksUri, issuer, audience, cache)
     }
@@ -66,7 +65,7 @@ object JwtVerifier:
       }
   end fetchDiscovery
 
-  private def refresh(client: Client, jwksUri: String, cache: Ref[Option[JWKSet]]): IO[OAuthError, Unit] =
+  private def refresh(client: Client, jwksUri: String, cache: Ref[Option[Jwks]]): IO[OAuthError, Unit] =
     client
       .batched(Request.get(jwksUri))
       .mapError(OAuthError.Transport.apply)
@@ -78,7 +77,7 @@ object JwtVerifier:
         }
       }
 
-  private final class Static(jwks: JWKSet, issuer: String, audience: String) extends JwtVerifier:
+  private final class Static(jwks: Jwks, issuer: String, audience: String) extends JwtVerifier:
     def verify(token: String): IO[OAuthError, JwtClaim] =
       ZIO.fromEither(Jose.verify(token, jwks, issuer, audience)).mapError(OAuthError.InvalidToken.apply)
 
@@ -87,7 +86,7 @@ object JwtVerifier:
       jwksUri: String,
       issuer: String,
       audience: String,
-      cache: Ref[Option[JWKSet]],
+      cache: Ref[Option[Jwks]],
   ) extends JwtVerifier:
     def verify(token: String): IO[OAuthError, JwtClaim] =
       cache.get.flatMap {
