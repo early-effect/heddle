@@ -1,6 +1,9 @@
 import org.scalajs.linker.interface.ModuleKind
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
 
+lazy val nativeThreads: Seq[sbt.Setting[?]] =
+  Seq(nativeConfig ~= (_.withMultithreading(true)))
+
 lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
   val brew = java.io.File("/opt/homebrew/opt/openssl@3")
   val (cflags, libs) =
@@ -100,7 +103,7 @@ lazy val heddle = (projectMatrix in file("heddle"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val brotli = (projectMatrix in file("brotli"))
   .dependsOn(heddle % "compile->compile;test->test")
@@ -121,7 +124,7 @@ lazy val brotli = (projectMatrix in file("brotli"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val oauth = (projectMatrix in file("oauth"))
   .dependsOn(heddle % "compile->compile;test->test")
@@ -162,7 +165,7 @@ lazy val mcp = (projectMatrix in file("mcp"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val example = project
   .in(file("example"))
