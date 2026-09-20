@@ -59,11 +59,13 @@ Why that split exists is on [What stays open](what-stays-open.html).
     ),
     section("Server")(
       md"""
-`Server.install` / `Server.serve` shift onto ZIO's Loom executor. Accept and connections are
-ordinary ZIO fibers. TLS is a compose-time layer, not a protocol flag:
-`Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
-ALPN offers `h2` and `http/1.1` on that bind. Idle, header, and connection caps live on
-`Server.Config`. See [What stays open](what-stays-open.html).
+`Server.install` / `Server.serve` are ordinary ZIO fibers on every platform. JVM accept
+defaults to Loom (`JvmScheduler.Loom`); `JvmScheduler.Default` still binds. JS is Node
+`net` / `tls`. Native is POSIX sockets plus OpenSSL. TLS is a compose-time layer, not a
+protocol flag: `Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
+HTTP/2 (ALPN `h2`) is the JVM bind. JS and Native serve HTTP/1.1 on that same `Routes`
+value. Idle, header, and connection caps live on `Server.Config`. See
+[What stays open](what-stays-open.html).
 """,
       exampleZIO {
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -84,9 +86,10 @@ ALPN offers `h2` and `http/1.1` on that bind. Idle, header, and connection caps 
     ),
     section("Client, files, compression")(
       md"""
-`Client.get` / `Client.batched` are the HTTP/1.1 client. One-shot helpers take
+`Client.get` / `Client.batched` are the HTTP/1.1 client. JVM pools sockets. JS uses
+`fetch`. Native opens a POSIX (or TLS) socket per call. One-shot helpers take
 `Client.Config` (default named values, including connect and read timeouts).
-A caller-given file is `Files.fromPath`.
+A caller-given file is `Files.fromPath` (jailed under `SafePath` for directory roots).
 Compression is `@@ Middleware.compress` (gzip in core). Add `heddle-brotli` and pass
 `Brotli.compressor` when you want `br`. Incoming `Content-Encoding` is
 `@@ Middleware.decompress(maxBytes = ...)`.

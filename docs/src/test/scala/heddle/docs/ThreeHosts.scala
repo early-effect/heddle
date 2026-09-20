@@ -36,7 +36,8 @@ HTTP both run.
     section("HTTP")(
       md"""
 `api.routes` is `Routes`. A GET is an ordinary `Request`. Humans hit this from a browser or
-Swagger. Systems hit it from `Client`.
+Swagger. Systems hit it from `Client`. The same `Server.install` runs that `Routes` on JVM,
+Node, and Native. Do not grow a second Scala.js `Api`.
 """
     ),
     section("MCP Streamable HTTP")(

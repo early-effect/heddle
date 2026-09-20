@@ -10,7 +10,8 @@ also answer the 2025-11-25 `initialize` handshake), a web UI as just another HTT
 a later interpreter of the same AST. Do not grow a second tool DSL.
 
 Handlers are `Request => ZIO[R, E, Response]`. The bind is `In => ZIO[R, E, Out]`. Routing is
-data. Middleware is `@@`. Loom runs accept/read/write as ordinary ZIO.
+data. Middleware is `@@`. `Server.install` is ordinary ZIO on JVM (Loom by default), Node, and
+Native.
 
 Docs (tests-as-docs, live Ascent examples): [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
 
@@ -69,9 +70,10 @@ url = "http://localhost:8080/mcp"
 
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
+| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM, JS, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 
-JDK 21+. Full guide: [earlyeffect.rocks/heddle](https://www.earlyeffect.rocks/heddle/).
+JVM is JDK 21+. JS is Node. Native is POSIX plus OpenSSL. `HeddleApp` is JVM-only.
+Full guide: [earlyeffect.rocks/heddle](https://www.earlyeffect.rocks/heddle/).
