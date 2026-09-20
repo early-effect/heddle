@@ -30,6 +30,19 @@ object NativeAcceptSpec extends ZIOSpecDefault:
             bytes    <- res.body.collect
             _        <- server.join
           yield assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ok")
+        }
+      ,
+      test("accept loop then Client GET"):
+        ZIO.scoped {
+          for
+            listener <- ZIO.acquireRelease(NativeListener.bind(local))(_.close)
+            port     <- listener.localPort
+            loop = listener.accept.flatMap(c => serveConn(c).forkDaemon.as(())).forever
+            server <- loop.fork
+            res    <- Client.get(s"http://127.0.0.1:$port/health")
+            bytes  <- res.body.collect
+            _      <- server.interrupt
+          yield assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ok")
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(8.seconds) @@ TestAspect.withLiveClock
 

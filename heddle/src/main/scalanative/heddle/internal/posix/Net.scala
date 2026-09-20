@@ -6,6 +6,8 @@ import scala.scalanative.posix.errno.errno
 import scala.scalanative.posix.netinet.in.*
 import scala.scalanative.posix.netinet.inOps.*
 import scala.scalanative.posix.netinet.tcp.*
+import scala.scalanative.posix.poll
+import scala.scalanative.posix.pollOps.*
 import scala.scalanative.posix.string.strerror
 import scala.scalanative.posix.sys.socket
 import scala.scalanative.posix.sys.time.*
@@ -62,6 +64,21 @@ private[heddle] object Net:
       val fd = socket.accept(listenFd, addr.asInstanceOf[Ptr[socket.sockaddr]], addrlen)
       if fd < 0 then throw io("accept")
       fd
+    }
+
+  /** True when `fd` is readable. Timeout returns false so the caller can yield. */
+  @blocking
+  def pollIn(fd: Int, timeoutMs: Int): Boolean =
+    Zone {
+      val pfd = alloc[poll.struct_pollfd]()
+      pfd.fd = fd
+      pfd.events = poll.POLLIN.toShort
+      pfd.revents = 0.toShort
+      val n = poll.poll(pfd, 1.toUInt, timeoutMs)
+      if n < 0 then
+        if errno == scala.scalanative.posix.errno.EINTR then pollIn(fd, timeoutMs)
+        else throw io("poll")
+      else n > 0
     }
 
   def localPort(fd: Int): Int =

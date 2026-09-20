@@ -11,20 +11,27 @@ private[heddle] final class NativeListener(listenFd: Int, tcpNoDelay: Boolean, s
   def localPort: UIO[Int] = ZIO.succeed(Net.localPort(listenFd))
 
   def acceptFd: Task[Int] =
-    ZIO.attemptBlockingInterrupt {
-      if closed then throw java.io.IOException("listener closed")
-      val fd =
-        try Net.accept(listenFd)
-        catch
-          case e: Throwable =>
-            if closed then throw java.io.IOException("listener closed")
-            else throw e
-      try
-        Net.setTcpNoDelay(fd, tcpNoDelay)
-        Net.setKeepAlive(fd, soKeepAlive)
-      catch case _: Throwable => ()
-      fd
-    }
+    def loop: Task[Int] =
+      ZIO
+        .attemptBlockingInterrupt {
+          if closed then throw java.io.IOException("listener closed")
+          Net.pollIn(listenFd, 25)
+        }
+        .flatMap { ready =>
+          if !ready then ZIO.yieldNow *> loop
+          else
+            ZIO.attemptBlockingInterrupt {
+              if closed then throw java.io.IOException("listener closed")
+              val fd = Net.accept(listenFd)
+              try
+                Net.setTcpNoDelay(fd, tcpNoDelay)
+                Net.setKeepAlive(fd, soKeepAlive)
+              catch case _: Throwable => ()
+              fd
+            }
+        }
+    loop
+  end acceptFd
 
   def accept: Task[ByteConn] =
     acceptFd.map(NativeConn.of)

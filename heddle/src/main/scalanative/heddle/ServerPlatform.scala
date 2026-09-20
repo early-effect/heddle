@@ -141,6 +141,7 @@ private[heddle] object ServerPlatform:
               )
               .forkDaemon
             _ <- ZIO.succeed { fiberRef.set(fiber); () }
+            _ <- ZIO.yieldNow
           yield ()
           started,
     )
