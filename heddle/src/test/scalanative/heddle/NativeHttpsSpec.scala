@@ -45,6 +45,23 @@ object NativeHttpsSpec extends ZIOSpecDefault:
             bytes  <- res.body.collect
             _      <- server.interrupt
           yield assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ok")
+        }
+      ,
+      test("Server.install plus Client GET over TLS"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        ZIO.scoped {
+          Server
+            .install(routes, local)
+            .provideSomeLayer[Scope](Tls.pem(NativeTls.certPem, NativeTls.keyPem))
+            .flatMap { server =>
+              server.port.flatMap { port =>
+                Client.get(s"https://127.0.0.1:$port/health").flatMap { res =>
+                  res.body.collect.map { bytes =>
+                    assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ok")
+                  }
+                }
+              }
+            }
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds) @@ TestAspect.withLiveClock
 
