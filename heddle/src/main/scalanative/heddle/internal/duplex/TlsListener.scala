@@ -3,7 +3,7 @@ package heddle.internal.duplex
 import heddle.Server
 import heddle.error.ServerError
 import heddle.internal.openssl.Ssl
-import heddle.internal.posix.Net
+import heddle.internal.posix.{Net, SslIo}
 import zio.*
 
 private[heddle] final class TlsListener(plain: NativeListener, ctx: Ssl.Ctx) extends Listener:
@@ -12,8 +12,10 @@ private[heddle] final class TlsListener(plain: NativeListener, ctx: Ssl.Ctx) ext
   def accept: Task[ByteConn] =
     plain.acceptFd.flatMap { fd =>
       ZIO
-        .attemptBlockingInterrupt(Ssl.accept(ctx, fd))
-        .map(ssl => NativeConn.tls(fd, ssl))
+        .attempt(Ssl.accept(ctx, fd))
+        .flatMap { session =>
+          SslIo.handshake(session, accept = true, fd).as(NativeConn.tls(fd, session))
+        }
         .tapError(_ => ZIO.succeed(Net.close(fd)))
     }
 

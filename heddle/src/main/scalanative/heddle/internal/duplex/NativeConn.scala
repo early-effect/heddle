@@ -2,40 +2,59 @@ package heddle.internal.duplex
 
 import heddle.error.HttpError
 import heddle.internal.openssl.Ssl
-import heddle.internal.posix.Net
+import heddle.internal.posix.{AsyncFd, Net}
 import java.nio.ByteBuffer
 import zio.*
 
 private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) extends ByteConn:
   @volatile private var closed                  = false
   def read(dst: ByteBuffer): IO[HttpError, Int] =
-    ZIO
-      .attemptBlockingInterrupt {
-        val n   = dst.remaining()
-        val tmp = new Array[Byte](n)
-        val got =
-          ssl match
-            case Some(s) => s.read(tmp, 0, n)
-            case None    => Net.read(fd, tmp, 0, n)
-        if got > 0 then dst.put(tmp, 0, got)
-        if got == 0 then -1 else got
+    def attempt: IO[HttpError, Option[Int]] =
+      ZIO
+        .attempt {
+          val n   = dst.remaining()
+          val tmp = new Array[Byte](n)
+          val got =
+            ssl match
+              case Some(s) => s.read(tmp, 0, n)
+              case None    => Net.read(fd, tmp, 0, n)
+          if got == -2 || got == -3 then None
+          else
+            if got > 0 then dst.put(tmp, 0, got)
+            Some(if got == 0 then -1 else got)
+        }
+        .mapError(HttpError.Io(_))
+    def loop: IO[HttpError, Int] =
+      attempt.flatMap {
+        case Some(n) => ZIO.succeed(n)
+        case None    => parkRead *> loop
       }
-      .mapError(HttpError.Io(_))
+    loop
+  end read
 
   def write(chunk: Chunk[Byte]): Task[Unit] =
     if chunk.isEmpty then ZIO.unit
     else
-      ZIO.attemptBlockingInterrupt {
-        val arr = chunk.toArray
-        var off = 0
-        while off < arr.length do
-          val n =
-            ssl match
-              case Some(s) => s.write(arr, off, arr.length - off)
-              case None    => Net.write(fd, arr, off, arr.length - off)
-          if n <= 0 then throw java.io.IOException("write returned 0")
-          off += n
-      }
+      val arr                        = chunk.toArray
+      def loop(off: Int): Task[Unit] =
+        if off >= arr.length then ZIO.unit
+        else
+          ZIO
+            .attempt {
+              ssl match
+                case Some(s) => s.write(arr, off, arr.length - off)
+                case None    => Net.write(fd, arr, off, arr.length - off)
+            }
+            .flatMap { n =>
+              if n == -2 then AsyncFd.readable(fd) *> loop(off)
+              else if n == -3 then AsyncFd.writable(fd) *> loop(off)
+              else if n <= 0 then ZIO.fail(java.io.IOException("write returned 0"))
+              else loop(off + n)
+            }
+      loop(0)
+
+  private def parkRead: IO[HttpError, Unit] =
+    AsyncFd.readable(fd).mapError(HttpError.Io(_))
 
   def close: UIO[Unit] =
     ZIO.succeed {

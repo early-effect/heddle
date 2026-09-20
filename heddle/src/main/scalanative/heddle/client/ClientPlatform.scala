@@ -7,7 +7,7 @@ import heddle.internal.Ascii
 import heddle.internal.duplex.{ByteConn, NativeConn}
 import heddle.internal.engine.ConnBuf
 import heddle.internal.openssl.Ssl
-import heddle.internal.posix.Net
+import heddle.internal.posix.{AsyncFd, Net, SslIo}
 import heddle.sse.{ServerSentEvent, SseCodec}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -90,22 +90,28 @@ private[heddle] object ClientPlatform:
   private def open(cfg: Client.Config, target: Target): ZIO[Scope, Throwable, ByteConn] =
     val _ = cfg
     ZIO.acquireRelease {
-      ZIO.attemptBlockingInterrupt {
-        val fd = Net.connect(target.host, target.port)
-        Net.setTcpNoDelay(fd, true)
-        if !target.tls then NativeConn.of(fd)
-        else
-          val ctx = Ssl.clientCtx()
-          try
-            val sni = if target.host.exists(c => c >= 'A' && c <= 'z') then target.host else "localhost"
-            NativeConn.tls(fd, Ssl.connect(ctx, fd, sni))
-          catch
-            case e: Throwable =>
-              ctx.close()
-              Net.close(fd)
-              throw e
-        end if
-      }
+      for
+        fd   <- ZIO.attempt(Net.connect(target.host, target.port))
+        _    <- AsyncFd.writable(fd)
+        err  <- ZIO.attempt(Net.socketError(fd))
+        _    <- ZIO.fail(java.io.IOException(s"connect ${target.host}:${target.port}")).when(err != 0)
+        _    <- ZIO.attempt(Net.setTcpNoDelay(fd, true))
+        conn <-
+          if !target.tls then ZIO.succeed(NativeConn.of(fd))
+          else
+            ZIO
+              .attempt {
+                val ctx = Ssl.clientCtx()
+                val sni = if target.host.exists(c => c >= 'A' && c <= 'z') then target.host else "localhost"
+                (ctx, Ssl.connect(ctx, fd, sni))
+              }
+              .flatMap { (ctx, session) =>
+                SslIo
+                  .handshake(session, accept = false, fd)
+                  .as(NativeConn.tls(fd, session))
+                  .tapError(_ => ZIO.succeed { ctx.close(); Net.close(fd) })
+              }
+      yield conn
     }(_.close)
   end open
 

@@ -78,10 +78,7 @@ private[heddle] object Ssl:
       if len <= 0 || ptr == null then 0
       else
         val n = ssl.SSL_read(ptr, scratch.at(0), math.min(len, scratch.length))
-        if n <= 0 then
-          val err = ssl.SSL_get_error(ptr, n)
-          if err == ErrorZeroReturn then 0
-          else throw fail(s"SSL_read $err")
+        if n <= 0 then wantOrEof(n, "SSL_read")
         else
           System.arraycopy(scratch, 0, dst, off, n)
           n
@@ -92,7 +89,19 @@ private[heddle] object Ssl:
         val n = math.min(len, scratch.length)
         System.arraycopy(src, off, scratch, 0, n)
         val wrote = ssl.SSL_write(ptr, scratch.at(0), n)
-        if wrote <= 0 then throw fail("SSL_write") else wrote
+        if wrote <= 0 then wantOrEof(wrote, "SSL_write") else wrote
+
+    def handshake(accept: Boolean): Int =
+      if ptr == null then throw fail("SSL handshake on closed session")
+      val n = if accept then ssl.SSL_accept(ptr) else ssl.SSL_connect(ptr)
+      if n == 1 then 1 else wantOrEof(n, if accept then "SSL_accept" else "SSL_connect")
+
+    private def wantOrEof(n: Int, op: String): Int =
+      val err = ssl.SSL_get_error(ptr, n)
+      if err == ErrorZeroReturn then 0
+      else if err == ErrorWantRead then -2
+      else if err == ErrorWantWrite then -3
+      else throw fail(s"$op $err")
   end Session
 
   def serverCtx(certPem: String, keyPem: String): Ctx =
@@ -115,36 +124,29 @@ private[heddle] object Ssl:
     ssl.SSL_CTX_set_verify(ctx, 0, null)
     Ctx(ctx, Array.empty)
 
-  def accept(ctx: Ctx, fd: Int): Session =
-    val s = ssl.SSL_new(ctx.ptr)
-    if s == null then throw fail("SSL_new")
-    try
-      if ssl.SSL_set_fd(s, fd) != 1 then throw fail("SSL_set_fd")
-      if ssl.SSL_accept(s) != 1 then throw fail("SSL_accept")
-      Session(s, ctx)
-    catch
-      case e: Throwable =>
-        ssl.SSL_free(s)
-        throw e
-  end accept
+  def accept(ctx: Ctx, fd: Int): Session = attach(ctx, fd, host = None)
 
-  def connect(ctx: Ctx, fd: Int, host: String): Session =
+  def connect(ctx: Ctx, fd: Int, host: String): Session = attach(ctx, fd, Some(host))
+
+  def handshake(session: Session, accept: Boolean): Int = session.handshake(accept)
+
+  private def attach(ctx: Ctx, fd: Int, host: Option[String]): Session =
     val s = ssl.SSL_new(ctx.ptr)
     if s == null then throw fail("SSL_new")
     try
       if ssl.SSL_set_fd(s, fd) != 1 then throw fail("SSL_set_fd")
-      if host.exists(c => c >= 'A' && c <= 'z') then
+      host.filter(_.exists(c => c >= 'A' && c <= 'z')).foreach { name =>
         Zone {
-          val _ = ssl.SSL_ctrl(s, CtrlSetTlsextHostname, 0, toCString(host).asInstanceOf[Ptr[Byte]])
+          val _ = ssl.SSL_ctrl(s, CtrlSetTlsextHostname, 0, toCString(name).asInstanceOf[Ptr[Byte]])
         }
-      if ssl.SSL_connect(s) != 1 then throw fail("SSL_connect")
+      }
       Session(s, ctx)
     catch
       case e: Throwable =>
         ssl.SSL_free(s)
         throw e
     end try
-  end connect
+  end attach
 
   private val EvpPkeyRsa = 6
 
@@ -298,6 +300,8 @@ private[heddle] object Ssl:
     def SSL_ctrl(ssl: Ptr[Byte], cmd: CInt, larg: CLong, parg: Ptr[Byte]): CLong = extern
   end ssl
 
+  private val ErrorWantRead         = 2
+  private val ErrorWantWrite        = 3
   private val ErrorZeroReturn       = 6
   private val CtrlSetTlsextHostname = 55
 

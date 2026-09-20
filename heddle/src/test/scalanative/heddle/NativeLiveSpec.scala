@@ -17,25 +17,37 @@ object NativeLiveSpec extends ZIOSpecDefault:
             listener <- NativeListener.bind(local)
             port     <- listener.localPort
             serverHs <- listener.acceptFd.flatMap { fd =>
-              ZIO.attemptBlockingInterrupt {
-                val ctx = Ssl.serverCtx(NativeTls.certPem, NativeTls.keyPem)
-                Ssl.accept(ctx, fd)
-              }
+              ZIO
+                .attempt {
+                  val ctx = Ssl.serverCtx(NativeTls.certPem, NativeTls.keyPem)
+                  Ssl.accept(ctx, fd)
+                }
+                .flatMap(s => heddle.internal.posix.SslIo.handshake(s, accept = true, fd).as((fd, s)))
             }.fork
-            clientHs <- ZIO.attemptBlockingInterrupt {
-              val fd  = Net.connect("127.0.0.1", port)
-              val ctx = Ssl.clientCtx()
-              Ssl.connect(ctx, fd, "localhost")
+            clientHs <- ZIO.attempt(Net.connect("127.0.0.1", port)).flatMap { fd =>
+              heddle.internal.posix.AsyncFd.writable(fd) *>
+                ZIO
+                  .attempt {
+                    val ctx = Ssl.clientCtx()
+                    Ssl.connect(ctx, fd, "localhost")
+                  }
+                  .flatMap(s => heddle.internal.posix.SslIo.handshake(s, accept = false, fd).as((fd, s)))
             }
-            serverS <- serverHs.join
-            ping = Array[Byte]('p', 'i', 'n', 'g')
-            n <- ZIO.attempt(clientHs.write(ping, 0, 4))
-            buf = new Array[Byte](4)
-            m <- ZIO.attempt(serverS.read(buf, 0, 4))
+            (serverFd, serverS) <- serverHs.join
+            (clientFd, clientS) = clientHs
+            ping                = Chunk.fromArray(Array[Byte]('p', 'i', 'n', 'g'))
+            client              = heddle.internal.duplex.NativeConn.tls(clientFd, clientS)
+            server              = heddle.internal.duplex.NativeConn.tls(serverFd, serverS)
+            _ <- client.write(ping)
+            buf = java.nio.ByteBuffer.allocate(4)
+            m <- server.read(buf).mapError(e => java.io.IOException(e.message))
           yield
-            clientHs.close()
+            clientS.close()
             serverS.close()
-            assertTrue(port > 0, n == 4, m == 4, buf.toSeq == ping.toSeq)
+            buf.flip()
+            val got = Array.ofDim[Byte](m)
+            buf.get(got)
+            assertTrue(port > 0, m == 4, got.toSeq == ping.toArray.toSeq)
         }
       ,
       test("Server.install plus Client GET"):

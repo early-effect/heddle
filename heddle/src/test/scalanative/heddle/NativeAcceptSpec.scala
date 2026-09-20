@@ -20,13 +20,20 @@ object NativeAcceptSpec extends ZIOSpecDefault:
           assertTrue(d.toMillis < 150)
         }
       ,
-      test("Queue.take completes after a blocking producer offers"):
-        for
-          q        <- Queue.unbounded[Int]
-          producer <- ZIO.attemptBlockingInterrupt(Thread.sleep(30)).as(7).flatMap(q.offer).forever.fork
-          n        <- q.take
-          _        <- producer.interrupt
-        yield assertTrue(n == 7)
+      test("async accept completes after a client connects"):
+        ZIO.scoped {
+          for
+            listener <- NativeListener.bind(local)
+            port     <- listener.localPort
+            parked   <- listener.accept.fork
+            _        <- ZIO.attempt(heddle.internal.posix.Net.connect("127.0.0.1", port)).flatMap { fd =>
+              heddle.internal.posix.AsyncFd.writable(fd) *>
+                ZIO.succeed(heddle.internal.posix.Net.close(fd))
+            }
+            conn <- parked.join
+            _    <- conn.close
+          yield assertTrue(port > 0)
+        }
       ,
       test("scope close unblocks a listening accept"):
         val opened =

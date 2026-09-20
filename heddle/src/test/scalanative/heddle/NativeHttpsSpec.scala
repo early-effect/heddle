@@ -78,17 +78,29 @@ object NativeHttpsSpec extends ZIOSpecDefault:
     }
 
   private def rawTlsGet(port: Int, path: String): Task[String] =
-    ZIO.attemptBlockingInterrupt {
-      val fd  = Net.connect("127.0.0.1", port)
-      val ctx = Ssl.clientCtx()
-      val s   = Ssl.connect(ctx, fd, "localhost")
-      try
-        val req = s"GET $path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-          .getBytes(StandardCharsets.US_ASCII)
-        val _   = s.write(req, 0, req.length)
-        val buf = new Array[Byte](4096)
-        val n   = s.read(buf, 0, buf.length)
-        String(buf, 0, math.max(0, n), StandardCharsets.US_ASCII)
-      finally s.close()
+    ZIO.attempt(Net.connect("127.0.0.1", port)).flatMap { fd =>
+      heddle.internal.posix.AsyncFd.writable(fd) *>
+        ZIO
+          .attempt {
+            val ctx = Ssl.clientCtx()
+            Ssl.connect(ctx, fd, "localhost")
+          }
+          .flatMap { s =>
+            heddle.internal.posix.SslIo.handshake(s, accept = false, fd) *> {
+              val conn = heddle.internal.duplex.NativeConn.tls(fd, s)
+              val req  = Chunk.fromArray(
+                s"GET $path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII)
+              )
+              val buf = java.nio.ByteBuffer.allocate(4096)
+              (conn.write(req) *>
+                conn.read(buf).mapError(e => java.io.IOException(e.message)).map { n =>
+                  buf.flip()
+                  val arr = Array.ofDim[Byte](math.max(0, n))
+                  buf.get(arr)
+                  String(arr, StandardCharsets.US_ASCII)
+                }).ensuring(conn.close)
+            }
+          }
     }
 end NativeHttpsSpec

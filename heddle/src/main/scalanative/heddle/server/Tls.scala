@@ -3,6 +3,7 @@ package heddle.server
 import heddle.error.HttpError
 import heddle.internal.duplex.{ByteConn, NativeConn}
 import heddle.internal.openssl.Ssl
+import heddle.internal.posix.SslIo
 import zio.*
 
 final class Tls private (ctx: Ssl.Ctx):
@@ -21,9 +22,9 @@ final class Tls private (ctx: Ssl.Ctx):
     conn match
       case n: NativeConn =>
         ZIO
-          .attemptBlockingInterrupt {
-            val session = Ssl.accept(ctx, n.fd)
-            Tls.Session(NativeConn.tls(n.fd, session), "")
+          .attempt(Ssl.accept(ctx, n.fd))
+          .flatMap { session =>
+            SslIo.handshake(session, accept = true, n.fd).as(Tls.Session(NativeConn.tls(n.fd, session), ""))
           }
           .mapError(HttpError.Io(_))
       case _ =>

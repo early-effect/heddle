@@ -2,7 +2,7 @@ package heddle.internal.duplex
 
 import heddle.Server
 import heddle.error.ServerError
-import heddle.internal.posix.Net
+import heddle.internal.posix.{AsyncFd, Net}
 import zio.*
 
 private[heddle] final class NativeListener(
@@ -36,30 +36,29 @@ private[heddle] final class NativeListener(
       ZIO.suspendSucceed {
         if closed then ZIO.unit
         else
-          ZIO.attempt(Net.pollIn(listenFd, 0)).orElseSucceed(false).flatMap { ready =>
-            if !ready then Clock.sleep(5.millis) *> loop
-            else
-              ZIO
-                .attemptBlockingInterrupt {
-                  if closed then throw java.io.IOException("listener closed")
-                  val fd = Net.accept(listenFd)
-                  try
-                    Net.setTcpNoDelay(fd, tcpNoDelay)
-                    Net.setKeepAlive(fd, soKeepAlive)
-                  catch case _: Throwable => ()
-                  fd
-                }
-                .foldZIO(
-                  e =>
-                    val err =
-                      if closed || Option(e.getMessage).contains("listener closed") then
-                        java.io.IOException("listener closed")
-                      else e
-                    inbound.offer(Left(err)).unit
-                  ,
-                  fd => inbound.offer(Right(fd)) *> loop,
-                )
-          }
+          AsyncFd
+            .readable(listenFd)
+            .foldZIO(
+              e =>
+                val err =
+                  if closed || Option(e.getMessage).contains("listener closed") then
+                    java.io.IOException("listener closed")
+                  else e
+                inbound.offer(Left(err)).unit
+              ,
+              _ =>
+                if closed then ZIO.unit
+                else
+                  ZIO.attempt(Net.accept(listenFd)).orElseSucceed(-1).flatMap { fd =>
+                    if fd < 0 then loop
+                    else
+                      try
+                        Net.setTcpNoDelay(fd, tcpNoDelay)
+                        Net.setKeepAlive(fd, soKeepAlive)
+                      catch case _: Throwable => ()
+                      inbound.offer(Right(fd)) *> loop
+                  },
+            )
       }
     loop
   end produce
