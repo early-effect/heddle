@@ -9,11 +9,11 @@ import zio.stream.ZStream
 private[heddle] final class ConnBuf(
     buf: ByteBuffer,
     read: ByteBuffer => IO[HttpError, Int],
-    applyTimeout: Duration => Unit = _ => (),
+    applyTimeout: Duration => UIO[Unit] = _ => ZIO.unit,
 ):
   private var eof = false
 
-  def setReadTimeout(d: Duration): UIO[Unit] = ZIO.succeed(applyTimeout(d))
+  def setReadTimeout(d: Duration): UIO[Unit] = applyTimeout(d)
 
   def unread(extra: Chunk[Byte]): Unit =
     if extra.isEmpty then ()
@@ -252,10 +252,14 @@ private[heddle] final class ConnBuf(
 end ConnBuf
 
 private[heddle] object ConnBuf:
+  def fromConn(buf: ByteBuffer, conn: heddle.internal.duplex.ByteConn): ConnBuf =
+    buf.limit(0)
+    ConnBuf(buf, conn.read, conn.setReadTimeout)
+
   def fromPull(
       buf: ByteBuffer,
       pull: IO[HttpError, Option[Chunk[Byte]]],
-      applyTimeout: Duration => Unit = _ => (),
+      applyTimeout: Duration => UIO[Unit] = _ => ZIO.unit,
   ): ConnBuf =
     buf.limit(0)
     var extra: Chunk[Byte]                         = Chunk.empty

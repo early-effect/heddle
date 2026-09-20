@@ -135,5 +135,15 @@ object Server:
     ZIO.serviceWithZIO[Config](config => install(routes, config))
 
   def install[R](routes: Routes[R, Response], config: Config): ZIO[R & Scope, ServerError, Server] =
-    ServerPlatform.install(routes, config)
+    install(routes, config, JvmScheduler.Loom)
+
+  def install[R](
+      routes: Routes[R, Response],
+      config: Config,
+      scheduler: JvmScheduler,
+  ): ZIO[R & Scope, ServerError, Server] =
+    ServerPlatform.install(routes, config, scheduler)
+
+  def run[R](routes: Routes[R, Response])(req: heddle.http.Request): ZIO[R, Nothing, Response] =
+    routes(req).merge
 end Server

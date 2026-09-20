@@ -8,7 +8,8 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import heddle.internal.Ascii
-import heddle.internal.engine.{ConnBuf, ConnBufPlatform, Nio}
+import heddle.internal.duplex.{ByteConn, ChannelConn, SslConn}
+import heddle.internal.engine.ConnBuf
 import heddle.sse.{ServerSentEvent, SseCodec}
 import javax.net.ssl.SSLContext
 import zio.*
@@ -203,21 +204,22 @@ private[heddle] object ClientPlatform:
         if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
         else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
       ch.socket.connect(InetSocketAddress(target.host, target.port), ms)
-      if !target.tls then Plain(ch)
-      else
-        val sock    = ch.socket()
-        val sockSsl = ctx.getSocketFactory
-          .createSocket(sock, target.host, target.port, true)
-          .asInstanceOf[javax.net.ssl.SSLSocket]
-        sockSsl.setUseClientMode(true)
-        val params = sockSsl.getSSLParameters
-        params.setEndpointIdentificationAlgorithm("HTTPS")
-        try params.setServerNames(java.util.List.of(javax.net.ssl.SNIHostName(target.host)))
-        catch case _: IllegalArgumentException => ()
-        sockSsl.setSSLParameters(params)
-        sockSsl.startHandshake()
-        TlsConn(sockSsl, ch)
-      end if
+      val conn: ByteConn =
+        if !target.tls then ChannelConn(ch)
+        else
+          val sock    = ch.socket()
+          val sockSsl = ctx.getSocketFactory
+            .createSocket(sock, target.host, target.port, true)
+            .asInstanceOf[javax.net.ssl.SSLSocket]
+          sockSsl.setUseClientMode(true)
+          val params = sockSsl.getSSLParameters
+          params.setEndpointIdentificationAlgorithm("HTTPS")
+          try params.setServerNames(java.util.List.of(javax.net.ssl.SNIHostName(target.host)))
+          catch case _: IllegalArgumentException => ()
+          sockSsl.setSSLParameters(params)
+          sockSsl.startHandshake()
+          SslConn(sockSsl)
+      ConnTransport(conn)
     }
 
   private sealed trait Transport:
@@ -225,20 +227,14 @@ private[heddle] object ClientPlatform:
     def send: Chunk[Byte] => Task[Unit]
     def close(): Unit
 
-  private final case class Plain(ch: SocketChannel) extends Transport:
-    def src: ConnBuf                    = ConnBufPlatform.channel(ByteBuffer.allocate(64 * 1024), ch)
-    def send: Chunk[Byte] => Task[Unit] =
-      val scratch = ByteBuffer.allocate(8192)
-      Nio.writer(ch, scratch)
-    def close(): Unit = closeQuietly(ch)
-
-  private final case class TlsConn(ssl: javax.net.ssl.SSLSocket, ch: SocketChannel) extends Transport:
-    def src: ConnBuf = ConnBufPlatform.inputStream(ByteBuffer.allocate(64 * 1024), ssl.getInputStream, ssl)
-    def send: Chunk[Byte] => Task[Unit] = heddle.server.Tls.writer(ssl.getOutputStream)
+  private final class ConnTransport(conn: ByteConn) extends Transport:
+    def src: ConnBuf                    = ConnBuf.fromConn(ByteBuffer.allocate(64 * 1024), conn)
+    def send: Chunk[Byte] => Task[Unit] = conn.write
     def close(): Unit                   =
-      try ssl.close()
-      catch case _: Throwable => ()
-      closeQuietly(ch)
+      conn match
+        case c: ChannelConn => c.closeNow()
+        case s: SslConn     => s.closeNow()
+        case _              => ()
 
   private final case class PoolKey(scheme: String, host: String, port: Int)
 
@@ -259,10 +255,6 @@ private[heddle] object ClientPlatform:
         _ <- ZIO.fail(java.io.IOException(s"SSE GET $url → $status")).unless(status.code == 200)
       yield decodeSse(bodyStream(src, headers))
     }
-
-  private def closeQuietly(ch: SocketChannel): Unit =
-    try ch.close()
-    catch case _: Throwable => ()
 
   private def writeRequest(
       t: Transport,
