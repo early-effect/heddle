@@ -35,6 +35,7 @@ private[heddle] object Net:
       end try
     }
 
+  @blocking
   def connect(host: String, port: Int): Int =
     Zone {
       val fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
@@ -52,6 +53,7 @@ private[heddle] object Net:
       end try
     }
 
+  @blocking
   def accept(listenFd: Int): Int =
     Zone {
       val addr    = alloc[sockaddr_in]()
@@ -75,6 +77,7 @@ private[heddle] object Net:
     if fd >= 0 then
       val _ = unistd.close(fd)
 
+  @blocking
   def read(fd: Int, dst: Array[Byte], off: Int, len: Int): Int =
     if len <= 0 then 0
     else
@@ -84,6 +87,7 @@ private[heddle] object Net:
         else throw io("read")
       else n.toInt
 
+  @blocking
   def write(fd: Int, src: Array[Byte], off: Int, len: Int): Int =
     if len <= 0 then 0
     else

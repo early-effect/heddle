@@ -18,7 +18,9 @@ private[heddle] final class TlsListener(plain: NativeListener, ctx: Ssl.Ctx) ext
     }
 
   def close: UIO[Unit] =
-    plain.close *> ZIO.succeed(ctx.close())
+    // Leave ctx alive until process exit. SSL_CTX_free while any SSL* from
+    // this ctx is still live is an OpenSSL abort.
+    plain.close
 end TlsListener
 
 object TlsListener:

@@ -7,6 +7,7 @@ import java.nio.ByteBuffer
 import zio.*
 
 private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) extends ByteConn:
+  @volatile private var closed                  = false
   def read(dst: ByteBuffer): IO[HttpError, Int] =
     ZIO
       .attemptBlockingInterrupt {
@@ -38,16 +39,27 @@ private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) ex
 
   def close: UIO[Unit] =
     ZIO.succeed {
-      ssl.foreach(_.close())
-      Net.close(fd)
+      if !closed then
+        closed = true
+        ssl match
+          case Some(s) =>
+            // SSL_set_fd transfers the fd to the BIO; SSL_free closes it.
+            s.close()
+          case None =>
+            Net.close(fd)
     }
 
   def setReadTimeout(d: Duration): UIO[Unit] =
     ZIO.succeed {
-      val ms =
-        if d == Duration.Infinity || d.toNanos <= 0L then 0
-        else math.max(1L, d.toMillis).min(Int.MaxValue.toLong).toInt
-      Net.setRecvTimeout(fd, ms)
+      ssl match
+        case Some(_) =>
+          // SSL_set_fd owns the socket. SO_RCVTIMEO after that stalls SSL_read on Native.
+          ()
+        case None =>
+          val ms =
+            if d == Duration.Infinity || d.toNanos <= 0L then 0
+            else math.max(1L, d.toMillis).min(Int.MaxValue.toLong).toInt
+          Net.setRecvTimeout(fd, ms)
     }
 end NativeConn
 

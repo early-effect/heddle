@@ -91,6 +91,10 @@ private[heddle] object ClientPlatform:
     val _ = cfg
     ZIO.attemptBlockingInterrupt {
       val fd = Net.connect(target.host, target.port)
+      val ms =
+        if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
+        else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
+      if ms > 0 then Net.setRecvTimeout(fd, ms)
       if !target.tls then NativeConn.of(fd)
       else
         val ctx = Ssl.clientCtx()

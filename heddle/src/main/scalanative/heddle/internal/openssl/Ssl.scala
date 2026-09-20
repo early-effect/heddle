@@ -1,6 +1,7 @@
 package heddle.internal.openssl
 
 import java.io.IOException
+import scala.annotation.unused
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
@@ -54,28 +55,44 @@ private[heddle] object Ssl:
     try digestVerify(pkey, payload, sig)
     finally crypto.EVP_PKEY_free(pkey)
 
-  final class Ctx private[openssl] (private[openssl] val ptr: Ptr[Byte]):
+  final class Ctx private[openssl] (
+      private[openssl] val ptr: Ptr[Byte],
+      @unused private val pinned: Array[Array[Byte]],
+  ):
     def close(): Unit = if ptr != null then ssl.SSL_CTX_free(ptr)
 
-  final class Session private[openssl] (private[openssl] val ptr: Ptr[Byte]):
+  final class Session private[openssl] (
+      private var ptr: Ptr[Byte],
+      @unused private val ctx: Ctx,
+  ):
+    private val scratch = new Array[Byte](16384)
+
     def close(): Unit =
-      if ptr != null then ssl.SSL_free(ptr)
+      this.synchronized {
+        if ptr != null then
+          ssl.SSL_free(ptr)
+          ptr = null
+      }
 
     def read(dst: Array[Byte], off: Int, len: Int): Int =
-      if len <= 0 then 0
+      if len <= 0 || ptr == null then 0
       else
-        val n = ssl.SSL_read(ptr, dst.at(off), len)
+        val n = ssl.SSL_read(ptr, scratch.at(0), math.min(len, scratch.length))
         if n <= 0 then
           val err = ssl.SSL_get_error(ptr, n)
           if err == ErrorZeroReturn then 0
           else throw fail(s"SSL_read $err")
-        else n
+        else
+          System.arraycopy(scratch, 0, dst, off, n)
+          n
 
     def write(src: Array[Byte], off: Int, len: Int): Int =
-      if len <= 0 then 0
+      if len <= 0 || ptr == null then 0
       else
-        val n = ssl.SSL_write(ptr, src.at(off), len)
-        if n <= 0 then throw fail("SSL_write") else n
+        val n = math.min(len, scratch.length)
+        System.arraycopy(src, off, scratch, 0, n)
+        val wrote = ssl.SSL_write(ptr, scratch.at(0), n)
+        if wrote <= 0 then throw fail("SSL_write") else wrote
   end Session
 
   def serverCtx(certPem: String, keyPem: String): Ctx =
@@ -83,8 +100,8 @@ private[heddle] object Ssl:
     val ctx = ssl.SSL_CTX_new(ssl.TLS_server_method())
     if ctx == null then throw fail("SSL_CTX_new")
     try
-      loadPem(ctx, certPem, keyPem)
-      Ctx(ctx)
+      val pinned = loadPem(ctx, certPem, keyPem)
+      Ctx(ctx, pinned)
     catch
       case e: Throwable =>
         ssl.SSL_CTX_free(ctx)
@@ -96,7 +113,7 @@ private[heddle] object Ssl:
     val ctx = ssl.SSL_CTX_new(ssl.TLS_client_method())
     if ctx == null then throw fail("SSL_CTX_new")
     ssl.SSL_CTX_set_verify(ctx, 0, null)
-    Ctx(ctx)
+    Ctx(ctx, Array.empty)
 
   def accept(ctx: Ctx, fd: Int): Session =
     val s = ssl.SSL_new(ctx.ptr)
@@ -104,7 +121,7 @@ private[heddle] object Ssl:
     try
       if ssl.SSL_set_fd(s, fd) != 1 then throw fail("SSL_set_fd")
       if ssl.SSL_accept(s) != 1 then throw fail("SSL_accept")
-      Session(s)
+      Session(s, ctx)
     catch
       case e: Throwable =>
         ssl.SSL_free(s)
@@ -121,7 +138,7 @@ private[heddle] object Ssl:
           val _ = ssl.SSL_ctrl(s, CtrlSetTlsextHostname, 0, toCString(host).asInstanceOf[Ptr[Byte]])
         }
       if ssl.SSL_connect(s) != 1 then throw fail("SSL_connect")
-      Session(s)
+      Session(s, ctx)
     catch
       case e: Throwable =>
         ssl.SSL_free(s)
@@ -142,12 +159,11 @@ private[heddle] object Ssl:
       i += 1
     a
 
-  private def loadPem(ctx: Ptr[Byte], certPem: String, keyPem: String): Unit =
+  private def loadPem(ctx: Ptr[Byte], certPem: String, keyPem: String): Array[Array[Byte]] =
     val certBytes = ascii(certPem)
     val keyBytes  = ascii(keyPem)
-    val certBio   = crypto.BIO_new_mem_buf(certBytes.at(0), certBytes.length)
-    val keyBio    = crypto.BIO_new_mem_buf(keyBytes.at(0), keyBytes.length)
-    if certBio == null || keyBio == null then throw fail("BIO_new_mem_buf")
+    val certBio   = memBio(certBytes)
+    val keyBio    = memBio(keyBytes)
     try
       val cert = crypto.PEM_read_bio_X509(certBio, null, null, null)
       val key  = crypto.PEM_read_bio_PrivateKey(keyBio, null, null, null)
@@ -156,6 +172,7 @@ private[heddle] object Ssl:
       try
         if ssl.SSL_CTX_use_certificate(ctx, cert) != 1 then throw fail("SSL_CTX_use_certificate")
         if ssl.SSL_CTX_use_PrivateKey(ctx, key) != 1 then throw fail("SSL_CTX_use_PrivateKey")
+        if ssl.SSL_CTX_check_private_key(ctx) != 1 then throw fail("SSL_CTX_check_private_key")
       finally
         crypto.X509_free(cert)
         crypto.EVP_PKEY_free(key)
@@ -163,7 +180,18 @@ private[heddle] object Ssl:
       val _ = crypto.BIO_free(certBio)
       val _ = crypto.BIO_free(keyBio)
     end try
+    Array(certBytes, keyBytes)
   end loadPem
+
+  /** Copy `bytes` into an OpenSSL memory BIO. `BIO_new_mem_buf` does not copy. */
+  private def memBio(bytes: Array[Byte]): Ptr[Byte] =
+    val bio = crypto.BIO_new(crypto.BIO_s_mem())
+    if bio == null then throw fail("BIO_new")
+    val n = crypto.BIO_write(bio, bytes.at(0), bytes.length)
+    if n != bytes.length then
+      val _ = crypto.BIO_free(bio)
+      throw fail("BIO_write")
+    bio
 
   private def fromRsa(n: Array[Byte], e: Array[Byte], d: Option[Array[Byte]]): Ptr[Byte] =
     val rsa = crypto.RSA_new()
@@ -258,13 +286,14 @@ private[heddle] object Ssl:
     def SSL_CTX_use_certificate(ctx: Ptr[Byte], x: Ptr[Byte]): CInt              = extern
     def SSL_CTX_use_PrivateKey(ctx: Ptr[Byte], pkey: Ptr[Byte]): CInt            = extern
     def SSL_CTX_set_verify(ctx: Ptr[Byte], mode: CInt, cb: Ptr[Byte]): Unit      = extern
+    def SSL_CTX_check_private_key(ctx: Ptr[Byte]): CInt                          = extern
     def SSL_new(ctx: Ptr[Byte]): Ptr[Byte]                                       = extern
     def SSL_free(ssl: Ptr[Byte]): Unit                                           = extern
     def SSL_set_fd(ssl: Ptr[Byte], fd: CInt): CInt                               = extern
-    def SSL_accept(ssl: Ptr[Byte]): CInt                                         = extern
-    def SSL_connect(ssl: Ptr[Byte]): CInt                                        = extern
-    def SSL_read(ssl: Ptr[Byte], buf: Ptr[Byte], num: CInt): CInt                = extern
-    def SSL_write(ssl: Ptr[Byte], buf: Ptr[Byte], num: CInt): CInt               = extern
+    @blocking def SSL_accept(ssl: Ptr[Byte]): CInt                               = extern
+    @blocking def SSL_connect(ssl: Ptr[Byte]): CInt                              = extern
+    @blocking def SSL_read(ssl: Ptr[Byte], buf: Ptr[Byte], num: CInt): CInt      = extern
+    @blocking def SSL_write(ssl: Ptr[Byte], buf: Ptr[Byte], num: CInt): CInt     = extern
     def SSL_get_error(ssl: Ptr[Byte], ret: CInt): CInt                           = extern
     def SSL_ctrl(ssl: Ptr[Byte], cmd: CInt, larg: CLong, parg: Ptr[Byte]): CLong = extern
   end ssl
@@ -322,7 +351,9 @@ private[heddle] object Ssl:
     def BN_bn2bin(a: Ptr[Byte], to: Ptr[CUnsignedChar]): CInt                                             = extern
     def BN_num_bits(a: Ptr[Byte]): CInt                                                                   = extern
     def BN_free(a: Ptr[Byte]): Unit                                                                       = extern
-    def BIO_new_mem_buf(buf: Ptr[Byte], len: CInt): Ptr[Byte]                                             = extern
+    def BIO_s_mem(): Ptr[Byte]                                                                            = extern
+    def BIO_new(method: Ptr[Byte]): Ptr[Byte]                                                             = extern
+    def BIO_write(b: Ptr[Byte], data: Ptr[Byte], len: CInt): CInt                                         = extern
     def BIO_free(a: Ptr[Byte]): CInt                                                                      = extern
     def PEM_read_bio_X509(bp: Ptr[Byte], x: Ptr[Ptr[Byte]], cb: Ptr[Byte], u: Ptr[Byte]): Ptr[Byte]       = extern
     def PEM_read_bio_PrivateKey(bp: Ptr[Byte], x: Ptr[Ptr[Byte]], cb: Ptr[Byte], u: Ptr[Byte]): Ptr[Byte] =

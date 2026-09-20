@@ -26,18 +26,14 @@ private[heddle] object ServerPlatform:
       takingWork <- ZIO.succeed(java.util.concurrent.atomic.AtomicBoolean(true))
       live       <- ZIO.succeed(java.util.HashSet[Conn]())
       inflight   <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))
-      listener   <- ZIO.acquireRelease(bind(config, tls))(_.close)
+      listener   <- ZIO.acquireRelease(NativeListener.bind(config))(_.close)
+      port       <- listener.localPort
       halt0 = halt(listener, live, takingWork, config.gracefulShutdownTimeout).withClock(clock)
-      _ <- acceptLoop(routes, listener, config, live, inflight, takingWork, tls.isDefined).forkScoped
+      _ <- acceptLoop(routes, listener, config, live, inflight, takingWork, tls).forkScoped
       _ <- ZIO.addFinalizer(halt0)
-    yield Server(listener.localPort, halt0)
+    yield Server(ZIO.succeed(port), halt0)
     end for
   end install
-
-  private def bind(config: Server.Config, tls: Option[Tls]): IO[ServerError, Listener] =
-    tls match
-      case None    => NativeListener.bind(config)
-      case Some(t) => t.listener(config)
 
   private final class Conn(
       val conn: ByteConn,
@@ -108,9 +104,9 @@ private[heddle] object ServerPlatform:
       live: java.util.Set[Conn],
       inflight: java.util.concurrent.atomic.AtomicInteger,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean,
+      tls: Option[Tls],
   ): ZIO[R, Nothing, Nothing] =
-    acceptOne(routes, listener, config, live, inflight, takingWork, secure).forever
+    acceptOne(routes, listener, config, live, inflight, takingWork, tls).forever
 
   private def acceptOne[R](
       routes: Routes[R, Response],
@@ -119,7 +115,7 @@ private[heddle] object ServerPlatform:
       live: java.util.Set[Conn],
       inflight: java.util.concurrent.atomic.AtomicInteger,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean,
+      tls: Option[Tls],
   ): ZIO[R, Nothing, Unit] =
     listener.accept.foldZIO(
       e =>
@@ -135,7 +131,7 @@ private[heddle] object ServerPlatform:
           val conn     = Conn(byteConn, busy, fiberRef)
           val started  = for
             _     <- ZIO.succeed { live.add(conn); () }
-            fiber <- runConnection(routes, byteConn, config, takingWork, busy, secure)
+            fiber <- runConnection(routes, byteConn, config, takingWork, busy, tls)
               .ensuring(
                 ZIO.succeed {
                   live.remove(conn)
@@ -155,11 +151,22 @@ private[heddle] object ServerPlatform:
       config: Server.Config,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean,
+      tls: Option[Tls],
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
-    val src     = ConnBuf.fromConn(readBuf, conn)
-    val send    = conn.write
-    Http1.serveConnection(routes, src, send, config, takingWork, busy, secure)
+    tls match
+      case None =>
+        val src  = ConnBuf.fromConn(readBuf, conn)
+        val send = conn.write
+        Http1.serveConnection(routes, src, send, config, takingWork, busy, secure = false)
+      case Some(t) =>
+        t.server(conn, Chunk.empty).flatMap { session =>
+          val src  = ConnBuf.fromConn(readBuf, session.conn)
+          val send = session.conn.write
+          Http1
+            .serveConnection(routes, src, send, config, takingWork, busy, secure = true)
+            .ensuring(session.conn.close)
+        }
+    end match
   end runConnection
 end ServerPlatform

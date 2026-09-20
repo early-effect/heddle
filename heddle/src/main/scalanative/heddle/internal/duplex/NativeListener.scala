@@ -31,8 +31,9 @@ private[heddle] final class NativeListener(listenFd: Int, tcpNoDelay: Boolean, s
 
   def close: UIO[Unit] =
     ZIO.succeed {
-      closed = true
-      Net.close(listenFd)
+      if !closed then
+        closed = true
+        Net.close(listenFd)
     }
 end NativeListener
 
