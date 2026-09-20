@@ -16,6 +16,7 @@ export heddle.http.{
   Form,
   FormField,
   Multipart,
+  UrlEncoding,
 }
 export heddle.http.header.{
   Header,
@@ -82,8 +83,9 @@ export heddle.endpoint.{
   OpArgs,
 }
 export heddle.auth.Auth
+export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}
 export BytesLength.*
-export heddle.server.{HeddleApp, Tls, Files, Compressor, Decompressor, Http2Config}
+export heddle.server.{Compressor, Decompressor, Files, Http2Config, Tls}
 export heddle.client.Client
 export heddle.error.{HeddleError, HttpError, ServerError}
 export heddle.route.QueryCodec.given

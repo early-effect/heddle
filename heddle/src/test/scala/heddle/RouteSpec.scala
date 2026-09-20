@@ -15,6 +15,12 @@ object RouteSpec extends ZIOSpecDefault:
           nested <- routes.runZIO(Request.get(Url.root / "assets" / "theme.css"))
         yield assertTrue(root.body.asString == "/", nested.body.asString == "/assets/theme.css")
       ,
+      test("Server.run merges a matching GET into a response"):
+        val routes = Routes(Method.GET / "x" -> Handler.text("ok"))
+        Server.run(routes)(Request.get("/x")).map { res =>
+          assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+        }
+      ,
       test("literal route wins over trailing"):
         val routes = Routes(
           Method.GET / "sse"    -> Handler.text("sse"),

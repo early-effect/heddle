@@ -16,11 +16,13 @@ object ThreeHosts extends DocSpecSuite:
           Hub.Lead,
           "The directory API is a handful of ",
           E.code("Endpoint"),
-          "s bound once.",
+          "s bound once. JVM, Node, and Native run that bind.",
         ),
         E.p(
           Hub.Copy,
-          "HTTP, OpenAPI, MCP Streamable HTTP, and stdio are hosts of that bind. They are not three implementations. CLI is the same ",
+          "HTTP, OpenAPI, MCP Streamable HTTP, and stdio are hosts of that bind. JVM, Node, and Native run the same ",
+          E.code("Server.install"),
+          ". They are not three implementations. CLI is the same ",
           E.code("OpArgs"),
           " shape, not shipped yet.",
         ),
@@ -36,7 +38,8 @@ HTTP both run.
     section("HTTP")(
       md"""
 `api.routes` is `Routes`. A GET is an ordinary `Request`. Humans hit this from a browser or
-Swagger. Systems hit it from `Client`.
+Swagger. Systems hit it from `Client`. The same `Server.install` runs that `Routes` on JVM,
+Node, and Native. Do not grow a second Scala.js `Api`.
 """
     ),
     section("MCP Streamable HTTP")(

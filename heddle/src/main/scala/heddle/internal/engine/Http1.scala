@@ -94,8 +94,8 @@ private[heddle] object Http1:
           .timeout(idle)
           .map(_.exists(_ > 0))
           .catchSome {
-            case HttpError.Io(_: java.nio.channels.ClosedByInterruptException) => ZIO.succeed(false)
-            case HttpError.Io(_: java.net.SocketTimeoutException)              => ZIO.succeed(false)
+            case HttpError.Io(e) if isClosedByInterrupt(e) => ZIO.succeed(false)
+            case HttpError.Io(e) if isSocketTimeout(e)     => ZIO.succeed(false)
           }
 
   private def dispatch[R](routes: Routes[R, Response], request: Request): URIO[R, Response] =
@@ -128,8 +128,8 @@ private[heddle] object Http1:
       Server
         .awaitWithin(config.headerTimeout)(src.takeHeaders(config.maxHeaderBytes.toInt))
         .catchSome {
-          case HttpError.Io(_: java.nio.channels.ClosedByInterruptException) => ZIO.succeed(None)
-          case HttpError.Io(_: java.net.SocketTimeoutException)              => ZIO.fail(HttpError.Timeout)
+          case HttpError.Io(e) if isClosedByInterrupt(e) => ZIO.succeed(None)
+          case HttpError.Io(e) if isSocketTimeout(e)     => ZIO.fail(HttpError.Timeout)
         }
         .flatMap {
           case None      => ZIO.fail(HttpError.Timeout)
@@ -399,4 +399,10 @@ private[heddle] object Http1:
       end if
     end if
   end parseHead
+
+  private def isClosedByInterrupt(e: Throwable): Boolean =
+    e.getClass.getName.endsWith("ClosedByInterruptException")
+
+  private def isSocketTimeout(e: Throwable): Boolean =
+    e.getClass.getName.endsWith("SocketTimeoutException")
 end Http1

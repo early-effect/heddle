@@ -17,7 +17,7 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
       md"""
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
+| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM Loom, Node, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
@@ -25,6 +25,23 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
 `import heddle.*` is a curated facade over `heddle.http`, `heddle.route`, `heddle.endpoint`,
 `heddle.server`, `heddle.client`, and `heddle.error`. SSE, WebSocket, and Datastar stay in their
 packages. Datastar `readSignals` is an extension on `Request`.
+"""
+    ),
+    section("Platforms")(
+      md"""
+| Surface | JVM | JS (Node) | Native |
+| --- | --- | --- | --- |
+| `Server.install` HTTP/1.1 | yes (Loom default) | yes (`node:net`) | yes (POSIX) |
+| TLS | `javax.net.ssl` | `node:tls` | OpenSSL |
+| HTTP/2 | yes | no | no |
+| `Client` | pooled sockets | `fetch` | one-shot socket |
+| `Files` | nio | `node:fs` + `SafePath` | nio + `SafePath` |
+| Digest / RS256 | `java.security` | `node:crypto` | OpenSSL |
+| MCP HTTP + stdio | yes | yes | yes |
+| `heddle-oauth` | yes | yes | no |
+| `HeddleApp` | yes | no | no |
+
+docs-js mounts Hub widgets. It does not import `BoundOp` or `Mcp.handle`.
 """
     ),
     section("Example hub")(
@@ -77,8 +94,9 @@ Server.serve(app).provide(Server.Config.layer)
 
 Gzip is not a field. Wrap the `Routes`: `app @@ Middleware.compress()`.
 
-JDK 21+ (Loom). `HeddleApp` is the `ZIOAppDefault` that serves `routes` and exits 0 on Ctrl-C
-under sbt 2.
+JVM is JDK 21+ (Loom is the default scheduler, not a bind requirement). JS is Node. Native
+is POSIX plus OpenSSL. `HeddleApp` is the JVM `ZIOAppDefault` that serves `routes` and
+exits 0 on Ctrl-C under sbt 2.
 """,
       exampleValue {
         (

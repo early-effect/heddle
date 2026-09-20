@@ -1,5 +1,6 @@
 package heddle.oauth.provider
 
+import heddle.crypto.{Base64Url, DigestPlatform}
 import heddle.http.{Form, Method, Request, Response, Status}
 import heddle.http.header.{Authorization, AuthScheme, BasicCredentials, SetCookie}
 import heddle.http.header.Authorization.given
@@ -7,10 +8,8 @@ import heddle.oauth.jose.{Jose, SigningKey}
 import heddle.route.{Handler, Routes}
 import heddle.route.PathDsl.*
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import java.time.Instant
-import java.util.Base64
-import zio.{durationInt, Clock, UIO, ZIO}
+import zio.{Chunk, durationInt, Clock, UIO, ZIO}
 
 final case class ProviderConfig(
     issuer: String,
@@ -64,7 +63,7 @@ object Provider:
           case Some(_) if method.exists(_ != "S256") && challenge.isDefined =>
             ZIO.succeed(Response.badRequest("code_challenge_method must be S256"))
           case Some(_) =>
-            val code = java.util.UUID.randomUUID().toString.replace("-", "")
+            val code = heddle.internal.Ids.uuid().toString.replace("-", "")
             Clock.instant.flatMap { now =>
               stores.codes
                 .put(
@@ -111,7 +110,7 @@ object Provider:
       stores.users.authenticate(user, pass).flatMap {
         case None    => ZIO.succeed(Response.text("invalid credentials", Status.Unauthorized))
         case Some(u) =>
-          val sid = java.util.UUID.randomUUID().toString
+          val sid = heddle.internal.Ids.uuid().toString
           Clock.instant.flatMap { now =>
             stores.sessions
               .put(SessionRec(sid, u.id, now.plusMillis(config.sessionTtl.toMillis)))
@@ -222,7 +221,7 @@ object Provider:
       else None
     val refresh =
       if scopes.contains("offline_access") || scopes.contains("openid") then
-        Some(java.util.UUID.randomUUID().toString.replace("-", ""))
+        Some(heddle.internal.Ids.uuid().toString.replace("-", ""))
       else None
     val put =
       refresh match
@@ -243,7 +242,7 @@ object Provider:
     bearer(req) match
       case None      => ZIO.succeed(Response.unauthorized())
       case Some(tok) =>
-        Jose.verify(tok, key.jwkSet, config.issuer.stripSuffix("/"), "") match
+        Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
           case Left(_)  => ZIO.succeed(Response.unauthorized())
           case Right(c) =>
             stores.users.byId(c.subject).map {
@@ -256,7 +255,7 @@ object Provider:
   private def introspect(config: ProviderConfig, key: SigningKey, req: Request): UIO[Response] =
     req.body.asForm.orDie.map { form =>
       val tok = form.get("token").getOrElse("")
-      Jose.verify(tok, key.jwkSet, config.issuer.stripSuffix("/"), "") match
+      Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
         case Left(_)  => Response.json("""{"active":false}""")
         case Right(c) =>
           Response.json(s"""{"active":true,"sub":"${c.subject}","scope":"${c.scopes.mkString(" ")}"}""")
@@ -298,8 +297,8 @@ object Provider:
         }
 
   private def pkceOk(verifier: String, challenge: String): Boolean =
-    val digest = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII))
-    Base64.getUrlEncoder.withoutPadding.encodeToString(digest) == challenge
+    val digest = DigestPlatform.sha256Sync(Chunk.fromArray(verifier.getBytes(StandardCharsets.US_ASCII)))
+    Base64Url.encode(digest) == challenge
 
   private def bearer(req: Request): Option[String] =
     req.headers.get[Authorization] match

@@ -1,5 +1,6 @@
 package heddle
 
+import heddle.client.ClientPlatform
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.security.KeyStore
@@ -50,7 +51,7 @@ object TlsSpec extends ZIOSpecDefault:
         LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
           Client
             .batched(Request.get(s"$base/health"))
-            .provide(ZLayer.succeed(Client.Config(ssl = TlsFixture.ssl)) >>> Client.layer)
+            .provide(ZLayer.succeed(Client.Config.default) >>> ClientPlatform.withSsl(TlsFixture.ssl))
             .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
         }
       ,

@@ -1,6 +1,7 @@
 package heddle.server
 
 import heddle.error.HttpError
+import heddle.internal.duplex.{ByteConn, ChannelConn, SslConn}
 import java.io.{ByteArrayInputStream, InputStream, OutputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
@@ -10,10 +11,16 @@ import java.security.{KeyFactory, KeyStore}
 import java.security.cert.CertificateFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import javax.net.ssl.{KeyManagerFactory, SSLContext, SSLSocket}
-import heddle.internal.engine.ConnBuf
+import heddle.internal.engine.{ConnBuf, ConnBufPlatform}
 import zio.*
 
 final class Tls private (ctx: SSLContext):
+  private[heddle] def server(conn: ByteConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
+    conn match
+      case c: ChannelConn => wrap(c.ch, alpn)
+      case _              =>
+        ZIO.fail(HttpError.Io(IllegalArgumentException("TLS server needs a channel connection")))
+
   private[heddle] def wrap(ch: SocketChannel, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
     ZIO
       .attempt {
@@ -41,14 +48,17 @@ end Tls
 
 object Tls:
   private[heddle] final class Session(val socket: SSLSocket):
+    val conn: ByteConn = SslConn(socket)
+
     def applicationProtocol: String =
       Option(socket.getApplicationProtocol).getOrElse("")
 
     def src(buf: ByteBuffer): ConnBuf =
-      ConnBuf.inputStream(buf, socket.getInputStream, socket)
+      ConnBufPlatform.inputStream(buf, socket.getInputStream, socket)
 
     def send: Chunk[Byte] => Task[Unit] =
       Tls.writer(socket.getOutputStream)
+  end Session
 
   def layer(cert: Path, key: Path): ZLayer[Any, HttpError, Tls] =
     ZLayer.fromZIO(

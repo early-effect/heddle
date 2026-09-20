@@ -1,16 +1,17 @@
 # Heddle
 
-![Write the service once](docs/landing.png)
+![One bind. Three runtimes.](docs/landing.png)
 
-A capability compiler for human-centric AI service hubs.
+A capability compiler for human-centric AI service hubs. One `BoundOp` on the JVM, on Node, and
+on Scala Native.
 
-Write a service once (`Endpoint` / `BoundOp` / `Api`) and host it for every reader that shows
+Write the service once (`Endpoint` / `BoundOp` / `Api`) and host it for every reader that shows
 up: HTTP + OpenAPI / Swagger for humans and systems, MCP 2026-07-28 for agents (HTTP and stdio
 also answer the 2025-11-25 `initialize` handshake), a web UI as just another HTTP client. CLI is
 a later interpreter of the same AST. Do not grow a second tool DSL.
 
 Handlers are `Request => ZIO[R, E, Response]`. The bind is `In => ZIO[R, E, Out]`. Routing is
-data. Middleware is `@@`. Loom runs accept/read/write as ordinary ZIO.
+data. Middleware is `@@`. `Server.install` is that bind on all three runtimes.
 
 Docs (tests-as-docs, live Ascent examples): [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
 
@@ -27,6 +28,9 @@ libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.2.0"
 ```
 
 Optional artifacts, same version: `heddle-mcp`, `heddle-oauth`, `heddle-brotli`.
+
+Cross-build: `%%` is JVM. Use `%%%` for Scala.js and Scala Native. `heddle` and `heddle-mcp`
+publish on all three. `heddle-oauth` is JVM and JS. `HeddleApp` is JVM-only.
 
 ## Routes
 
@@ -69,9 +73,10 @@ url = "http://localhost:8080/mcp"
 
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, Loom server, Schema, Endpoint, OpenAPI |
+| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM, JS, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp` | heddle | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 
-JDK 21+. Full guide: [earlyeffect.rocks/heddle](https://www.earlyeffect.rocks/heddle/).
+JVM is JDK 21+. JS is Node. Native is POSIX plus OpenSSL. `HeddleApp` is JVM-only.
+Full guide: [earlyeffect.rocks/heddle](https://www.earlyeffect.rocks/heddle/).

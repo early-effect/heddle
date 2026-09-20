@@ -1,7 +1,5 @@
 package heddle.http
 
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 import zio.Chunk
 
 final case class QueryParams(toMap: Map[String, Chunk[String]]):
@@ -10,6 +8,10 @@ final case class QueryParams(toMap: Map[String, Chunk[String]]):
   def getAll(name: String): Chunk[String] = toMap.getOrElse(name, Chunk.empty)
 
   def isEmpty: Boolean = toMap.isEmpty || toMap.values.forall(_.isEmpty)
+
+  def add(name: String, values: Chunk[String]): QueryParams =
+    if values.isEmpty then this
+    else copy(toMap = toMap.updated(name, toMap.getOrElse(name, Chunk.empty) ++ values))
 
   def render: String =
     toMap.toList
@@ -41,6 +43,5 @@ object QueryParams:
       }
       of(pairs*)
 
-  private def decodeComponent(s: String): String =
-    URLDecoder.decode(s, StandardCharsets.UTF_8)
+  private def decodeComponent(s: String): String = UrlEncoding.decodeForm(s)
 end QueryParams

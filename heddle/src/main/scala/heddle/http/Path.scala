@@ -1,6 +1,5 @@
 package heddle.http
 
-import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import heddle.internal.Ascii
 import heddle.route.PathLits
@@ -62,12 +61,7 @@ object Path:
         i += 1
       Some(if enc then percentDecode(Ascii.string(raw, from, until)) else PathLits.intern(raw, from, until))
 
-  def percentDecode(s: String): String =
-    URLDecoder.decode(s.replace("+", "%2B"), StandardCharsets.UTF_8)
+  def percentDecode(s: String): String = UrlEncoding.decode(s)
 
-  def percentEncode(s: String): String =
-    s.flatMap { c =>
-      if c.isLetterOrDigit || "-._~".contains(c) then c.toString
-      else f"%%${c.toInt}%02X"
-    }
+  def percentEncode(s: String): String = UrlEncoding.encode(s)
 end Path

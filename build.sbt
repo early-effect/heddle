@@ -1,4 +1,32 @@
+import org.scalajs.linker.interface.ModuleKind
+import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
+
+lazy val nativeThreads: Seq[sbt.Setting[?]] =
+  Seq(nativeConfig ~= (_.withMultithreading(true)))
+
+lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
+  val brew = java.io.File("/opt/homebrew/opt/openssl@3")
+  val (cflags, libs) =
+    if brew.isDirectory then
+      (Seq(s"-I${brew.getPath}/include"), Seq(s"-L${brew.getPath}/lib", "-lssl", "-lcrypto"))
+    else (Seq.empty[String], Seq("-lssl", "-lcrypto"))
+  Seq(
+    nativeConfig ~= { c =>
+      c.withCompileOptions(c.compileOptions ++ cflags)
+        .withLinkingOptions(c.linkingOptions ++ libs)
+    }
+  )
+
 MyVersions.settings
+HeddleZipx.settings
+
+val scala3Version: String = MyVersions.scala
+val scalaVersions         = Seq(scala3Version)
+
+Global / concurrentRestrictions ++= Seq(
+  Tags.limit(NativeTags.Link, 1),
+  Tags.limit(Tags.Compile, 4),
+)
 
 organization         := "rocks.earlyeffect"
 organizationName     := "Early Effect"
@@ -35,25 +63,6 @@ pomIncludeRepository := { _ => false }
 // compile/test but makes signing fail loudly if anyone tries to publish off-CI.
 usePgpKeyHex(sys.env.getOrElse("PGP_KEY_HEX", "MISSING_KEY_HEX"))
 
-zipxJavaVersion      := JdkVersion("25")
-zipxWorkflowDispatch := true
-zipxEnv              := Map(
-  "JAVA_OPTS" -> EnvValue.plain(
-    "-Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-  )
-)
-zipxCapabilities ++= {
-  val upstream = JobCondition.repositoryIs("early-effect/heddle")
-  Seq(
-    Capability.once(
-      name = Capability.TestName,
-      command = zipxTasks.session(testFull, LocalProject("docs") / specularSite),
-    ),
-    ZipxCentral.release.withCondition(upstream),
-    ZipxDocs.pages().andCondition(upstream),
-  )
-}
-
 lazy val exampleMcpStdioCp = taskKey[Unit]("write classpath for example MCP stdio subprocess")
 
 lazy val commonSettings = Seq(
@@ -67,15 +76,17 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(heddle, brotli, oauth, mcp, example, bench, docs, docsJS)
+  .aggregate(
+    (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcp.projectRefs ++
+      Seq[sbt.ProjectReference](example, bench, docs, docsJS))*
+  )
   .settings(
     name           := "heddle-root",
     publish / skip := true,
     test / skip    := true,
   )
 
-lazy val heddle = project
-  .in(file("heddle"))
+lazy val heddle = (projectMatrix in file("heddle"))
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -85,9 +96,16 @@ lazy val heddle = project
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
   )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
-lazy val brotli = project
-  .in(file("brotli"))
+lazy val brotli = (projectMatrix in file("brotli"))
   .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -99,14 +117,20 @@ lazy val brotli = project
     pomIncludeRepository := { _ => false },
   )
   .settings(MyVersions.brotliTest)
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
-lazy val oauth = project
-  .in(file("oauth"))
+lazy val oauth = (projectMatrix in file("oauth"))
   .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
-  .settings(MyVersions.oauthLib)
   .settings(
     name                 := "heddle-oauth",
     description          := "OAuth2 / OIDC client, resource server, and provider for heddle",
@@ -115,9 +139,15 @@ lazy val oauth = project
     Compile / run / fork := true,
     Compile / mainClass  := Some("heddle.oauth.provider.ProviderApp"),
   )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
 
-lazy val mcp = project
-  .in(file("mcp"))
+lazy val mcp = (projectMatrix in file("mcp"))
   .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -128,10 +158,18 @@ lazy val mcp = project
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
   )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val example = project
   .in(file("example"))
-  .dependsOn(oauth, mcp)
+  .dependsOn(oauth.jvm(scala3Version), mcp.jvm(scala3Version))
   .settings(commonSettings)
   .settings(MyVersions.coreTest)
   .settings(
@@ -157,7 +195,7 @@ lazy val example = project
 
 lazy val bench = project
   .in(file("bench"))
-  .dependsOn(heddle)
+  .dependsOn(heddle.jvm(scala3Version))
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.benchLib)
@@ -170,7 +208,7 @@ lazy val bench = project
 
 lazy val perfTests = project
   .in(file("perfTests"))
-  .dependsOn(heddle % "compile->compile;test->test")
+  .dependsOn(heddle.jvm(scala3Version) % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -196,7 +234,7 @@ lazy val docsJS = project
 
 lazy val docs = project
   .in(file("docs"))
-  .dependsOn(heddle, brotli, oauth, mcp)
+  .dependsOn(heddle.jvm(scala3Version), brotli.jvm(scala3Version), oauth.jvm(scala3Version), mcp.jvm(scala3Version))
   .enablePlugins(SpecularPlugin)
   .settings(commonSettings)
   .settings(
@@ -210,6 +248,14 @@ lazy val docs = project
     MyVersions.coreTest,
     dependencyOverrides += MyVersions.moduleID(MyVersions.zioJson),
     libraryDependencySchemes += "rocks.earlyeffect" %% "heddle" % VersionScheme.Always,
+    // ascent-preview 0.7.1 / specular 0.16.4 still pull published heddle 0.2.0. Docs
+    // preview must run against this tree. Files is back on import heddle.* so the
+    // preview bytecode (exports$package$.Files) links.
+    excludeDependencies ++= Seq(
+      "rocks.earlyeffect" %% "heddle",
+      "rocks.earlyeffect" %% "heddle-mcp",
+      "rocks.earlyeffect" %% "heddle-oauth",
+    ),
     Test / mainClass := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),
@@ -242,3 +288,9 @@ lazy val docs = project
   )
 
 addCommandAlias("docsPreview", "~docs/specularPreview")
+addCommandAlias(
+  "testJVM",
+  "heddle/testFull; brotli/testFull; oauth/testFull; mcp/testFull; example/testFull; docs/testFull; docs/specularSite",
+)
+addCommandAlias("testJS", "heddleJS/testFull; brotliJS/testFull; mcpJS/testFull; oauthJS/testFull")
+addCommandAlias("testNative", "heddleNative/testFull; brotliNative/testFull; mcpNative/testFull")

@@ -96,6 +96,57 @@ object EndpointSpec extends ZIOSpecDefault:
         assertTrue(
           path.specialized,
           path.matches(Path.decode("/users/3/posts/9")).contains((3, 9)),
-        ),
+          path.encode((3, 9)).render == "/users/3/posts/9",
+        )
+      ,
+      test("toRequest encodes path query header and json body"):
+        val ep =
+          Endpoint.post("echo" / int("n")).query[String]("name").header[String]("X-User").inJson[String].out[String]
+        ep.toRequest((((4, "ada"), "russ"), "hi"), Url.root) match
+          case Left(err)  => assertTrue(err == "")
+          case Right(req) =>
+            assertTrue(
+              req.method == Method.POST,
+              req.path.render == "/echo/4",
+              req.query.get("name").contains("ada"),
+              req.header("X-User").contains("russ"),
+              req.body.asString == "\"hi\"",
+            )
+        end match
+      ,
+      test("inMemory Client.call roundtrips an endpoint"):
+        val ep     = Endpoint.get("echo" / int("n")).query[String]("name").outText()
+        val routes = ep.implement { case (n, name) => ZIO.succeed(s"$name:$n") }
+        Client
+          .call(ep)((2, "ada"))
+          .provideLayer(Client.inMemory(routes))
+          .map(out => assertTrue(out == "ada:2"))
+      ,
+      test("fromResponse decodes JSON success and typed errors"):
+        val ep = Endpoint.get("x").out[String].outError[String](Status.BadRequest)
+        val ok = ep.encodeOut("hi")
+        val no = ep.encodeErr("nope")
+        for
+          a <- ep.fromResponse(ok)
+          b <- ep.fromResponse(no).either
+        yield assertTrue(a == "hi", b == Left("nope"))
+      ,
+      test("mapIn is not invertible"):
+        val ep = Endpoint.get("echo" / int("n")).mapIn(_.toString).outText()
+        assertTrue(ep.toRequest("4", Url.root).isLeft)
+      ,
+      test("optional query is omitted when empty"):
+        val ep = Endpoint.get("echo").query[Option[String]]("name").outText()
+        ep.toRequest(None, Url.root) match
+          case Left(_)    => assertTrue(false)
+          case Right(req) => assertTrue(req.query.get("name").isEmpty, req.path.render == "/echo")
+      ,
+      test("inMemory Client.call roundtrips JSON in and out"):
+        val ep     = Endpoint.post("echo").inJson[String].out[String]
+        val routes = ep.implement(body => ZIO.succeed(body))
+        Client
+          .call(ep)("ping")
+          .provideLayer(Client.inMemory(routes))
+          .map(out => assertTrue(out == "ping")),
     ) @@ TestAspect.timeout(5.seconds)
 end EndpointSpec

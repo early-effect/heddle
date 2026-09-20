@@ -20,7 +20,7 @@ The AST is the contract. `ZIO[R, E, A]` is the body.
 
 `Handler` is `Request => ZIO[R, E, Response]` when you are still on raw routes. `Api.bind` is
 `In => ZIO[R, E, Out]` once the endpoint exists. Both are ordinary ZIO. There is no event-loop
-rule. Loom runs accept, read, and write.
+rule. Accept, read, and write run on the JVM, on Node, and on Native.
 """,
     illustrationIO(Hub.Lives.effectTrace).live.withMountKey(InteractiveRegistry.EffectWalk),
     section("Walk a request")(

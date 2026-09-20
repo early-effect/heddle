@@ -12,7 +12,7 @@ object WhatStaysOpen extends DocSpecSuite:
     md"""
 A running server is a process that holds files. Every accepted TCP client spends a file
 descriptor. So does every idle socket in a client pool, every open file you are serving,
-and every log the JVM still has. When the table is full, the next `accept`, the next
+and every log the process still has. When the table is full, the next `accept`, the next
 outbound call, and the next log line all fail the same way.
 
 This page is the clocks and caps that keep that table from growing without bound.

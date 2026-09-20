@@ -8,6 +8,9 @@ import zio.*
 import zio.stream.ZStream
 
 object Files:
+  def fromPath(path: String): Task[Response] =
+    fromPath(Path.of(path))
+
   def fromPath(path: Path): Task[Response] =
     serveFile(path, None)
 
@@ -15,18 +18,24 @@ object Files:
     serveFile(path, Some(request))
 
   def fromDirectory(
+      root: String,
+      urlPrefix: String,
+      request: Request,
+      indexHtml: Boolean,
+  ): Task[Option[Response]] =
+    fromDirectory(Path.of(root), urlPrefix, request, indexHtml)
+
+  def fromDirectory(
       root: Path,
       urlPrefix: String,
       request: Request,
-      indexHtml: Boolean = true,
+      indexHtml: Boolean,
   ): Task[Option[Response]] =
     ZIO
       .attemptBlocking {
-        val prefix = normalizePrefix(urlPrefix)
-        val rel    = stripPrefix(request.path.render, prefix)
-        rel.map { rest =>
+        SafePath.remainder(urlPrefix, request.path).map { rest =>
           val base = root.toAbsolutePath.normalize()
-          val raw  = if rest.isEmpty || rest == "/" then base else base.resolve(rest.stripPrefix("/")).normalize()
+          val raw  = rest.foldLeft(base)((p, s) => p.resolve(s)).normalize()
           if !raw.startsWith(base) then None
           else if JFiles.isDirectory(raw) then
             if indexHtml then
@@ -46,9 +55,11 @@ object Files:
   def fromResource(name: String, request: Request): Task[Option[Response]] =
     ZIO
       .attemptBlocking {
-        val cleaned = name.stripPrefix("/").replace('\\', '/')
-        if cleaned.contains("..") then None
-        else Option(Thread.currentThread().getContextClassLoader.getResource(cleaned))
+        SafePath.resolveUnder("", name.stripPrefix("/")) match
+          case None        => None
+          case Some(clean) =>
+            if clean.contains('\u0000') then None
+            else Option(Thread.currentThread().getContextClassLoader.getResource(clean))
       }
       .flatMap {
         case None      => ZIO.succeed(None)
@@ -148,15 +159,6 @@ object Files:
         )
         .map(in => ZStream.fromInputStream(in, 8192).take(len))
     }
-
-  private def normalizePrefix(prefix: String): String =
-    val p = if prefix.startsWith("/") then prefix else s"/$prefix"
-    if p.endsWith("/") then p.dropRight(1) else p
-
-  private def stripPrefix(path: String, prefix: String): Option[String] =
-    if path == prefix then Some("")
-    else if path.startsWith(prefix + "/") then Some(path.substring(prefix.length))
-    else None
 
   private def extension(path: Path): String =
     val name = path.getFileName.toString

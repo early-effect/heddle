@@ -94,7 +94,7 @@ object BuildSite extends DocsSite:
              |  <meta charset="utf-8"/>
              |  <meta name="viewport" content="width=device-width, initial-scale=1"/>
              |  <title>heddle</title>
-             |  <meta name="description" content="Write the service once. HTTP, OpenAPI, and MCP are hosts of the same BoundOp."/>
+             |  <meta name="description" content="One bind on JVM, Node, and Native. HTTP, OpenAPI, and MCP are hosts of the same BoundOp."/>
              |  <link rel="icon" href="images/logo.png"/>
              |  <link rel="stylesheet" href="assets/theme.css"/>
              |  <link rel="stylesheet" href="assets/index.css"/>

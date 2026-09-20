@@ -53,6 +53,18 @@ object ServerSpec extends ZIOSpecDefault:
           }
         }
       ,
+      test("JvmScheduler.Default still binds"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        ZIO.scoped {
+          Server.install(routes, LiveServer.local, JvmScheduler.Default).flatMap { server =>
+            server.port.flatMap { p =>
+              Client.get(s"http://127.0.0.1:$p/health").map { res =>
+                assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+              }
+            }
+          }
+        }
+      ,
       test("unknown paths are 404 on the wire"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>
@@ -204,9 +216,8 @@ object ServerSpec extends ZIOSpecDefault:
       ,
       test("install fails with BindFailed when the port is out of range"):
         val config = LiveServer.local.copy(port = -1)
-        ZIO.scoped(Server.install(Routes.empty, config)).flip.map {
-          case ServerError.BindFailed(host, port, _) => assertTrue(host == config.host, port == -1)
-          case _: ServerError.LoomUnavailable        => assertTrue(false)
+        ZIO.scoped(Server.install(Routes.empty, config)).flip.map { case ServerError.BindFailed(host, port, _) =>
+          assertTrue(host == config.host, port == -1)
         }
       ,
       test("install fails with BindFailed when the address is in use"):
@@ -218,7 +229,6 @@ object ServerSpec extends ZIOSpecDefault:
             err    <- Server.install(Routes.empty, config.copy(port = port)).flip
           yield err match
             case ServerError.BindFailed(host, bound, _) => assertTrue(host == config.host, bound == port)
-            case _: ServerError.LoomUnavailable         => assertTrue(false)
         }
       ,
       test("closing the scope unbinds the port"):

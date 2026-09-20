@@ -1,14 +1,13 @@
 package heddle.oauth.client
 
 import heddle.client.Client
+import heddle.crypto.{Base64Url, DigestPlatform}
 import heddle.http.{Body, Form, Method, Request}
 import heddle.http.header.{Authorization, HeaderName}
 import heddle.http.header.Authorization.given
 import heddle.oauth.OAuthError
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import java.util.Base64
-import zio.{IO, UIO, ZIO}
+import zio.{Chunk, IO, UIO, ZIO}
 
 final case class TokenSet(
     accessToken: String,
@@ -41,10 +40,11 @@ trait OAuthClient:
 
 object OAuthClient:
   def pkce(): Pkce =
-    val verifier  = Base64.getUrlEncoder.withoutPadding.encodeToString(java.util.UUID.randomUUID().toString.getBytes)
-    val digest    = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII))
-    val challenge = Base64.getUrlEncoder.withoutPadding.encodeToString(digest)
-    Pkce(verifier, challenge)
+    val verifier = Base64Url.encode(
+      Chunk.fromArray(heddle.internal.Ids.uuid().toString.getBytes(StandardCharsets.US_ASCII))
+    )
+    val digest = DigestPlatform.sha256Sync(Chunk.fromArray(verifier.getBytes(StandardCharsets.US_ASCII)))
+    Pkce(verifier, Base64Url.encode(digest))
 
   def apply(
       client: Client,
@@ -53,8 +53,29 @@ object OAuthClient:
       clientSecret: Option[String],
       authorizationEndpoint: String,
       tokenEndpoint: String,
-      userInfoEndpoint: Option[String] = None,
-      deviceAuthorizationEndpoint: Option[String] = None,
+  ): OAuthClient =
+    apply(client, issuer, clientId, clientSecret, authorizationEndpoint, tokenEndpoint, None, None)
+
+  def apply(
+      client: Client,
+      issuer: String,
+      clientId: String,
+      clientSecret: Option[String],
+      authorizationEndpoint: String,
+      tokenEndpoint: String,
+      userInfoEndpoint: Option[String],
+  ): OAuthClient =
+    apply(client, issuer, clientId, clientSecret, authorizationEndpoint, tokenEndpoint, userInfoEndpoint, None)
+
+  def apply(
+      client: Client,
+      issuer: String,
+      clientId: String,
+      clientSecret: Option[String],
+      authorizationEndpoint: String,
+      tokenEndpoint: String,
+      userInfoEndpoint: Option[String],
+      deviceAuthorizationEndpoint: Option[String],
   ): OAuthClient =
     Live(
       client,

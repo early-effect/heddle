@@ -6,15 +6,13 @@ import heddle.mcp.protocol.JsonRpc.*
 import zio.json.ast.Json
 import zio.ZIO
 
-import java.util.UUID
-
 object LegacyHttp:
   def post[R](engine: Engine[R], req: Request, msg: Json.Obj): ZIO[R, Nothing, Response] =
     methodOf(msg) match
       case Some("initialize") =>
         val body =
           Legacy.initializeResult(parseId(msg), engine.serverName, engine.serverVersion, engine.instructions)
-        val sid = UUID.randomUUID().toString
+        val sid = heddle.internal.Ids.uuid().toString
         ZIO.succeed(Http.rpcResponse(Status.Ok, body).withHeader(Legacy.SessionHeader, sid))
       case Some(method) if method.startsWith("notifications/") =>
         ZIO.succeed(echoSession(req, Response.empty(Status.Accepted)))

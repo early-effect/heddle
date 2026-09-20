@@ -21,7 +21,9 @@ object Landing:
         Hub.Hint,
         "Same bind the tests run. Replay of the AST, not a hosted server. Clone and ",
         E.code("sbt example/run"),
-        " if you want the JVM process.",
+        " for the JVM process. The same ",
+        E.code("Routes"),
+        " also bind on Node and Native.",
       ),
       doors,
       footer,
@@ -41,13 +43,15 @@ object Landing:
   private def hero: UI[Any] =
     E.div(
       Hub.Stack,
-      Hub.kicker("capability compiler"),
-      E.h1(Hub.Headline, "Write the service once."),
+      Hub.kicker("capability compiler · JVM · Node · Native"),
+      E.h1(Hub.Headline, "One bind. Three runtimes."),
       E.p(
         Hub.Lead,
-        "HTTP, OpenAPI, and MCP are hosts of the same ",
+        "Write the service once. HTTP, OpenAPI, and MCP are hosts of the same ",
         E.code("BoundOp"),
-        ". CLI is a later interpreter. Not a second product.",
+        ". ",
+        E.code("Server.install"),
+        " is that bind on the JVM, on Node, and on Scala Native. CLI is a later interpreter. Not a second product.",
       ),
     )
 

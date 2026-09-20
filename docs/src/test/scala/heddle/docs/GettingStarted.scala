@@ -9,7 +9,10 @@ object GettingStarted extends DocSpecSuite:
 
   def doc = page("Install")(
     md"""
-MCP, OAuth, and brotli are optional artifacts on the same version. JSON is zio-json on core. JDK 21+.
+One bind on the JVM, on Node, and on Scala Native. MCP, OAuth, and brotli are optional
+artifacts on the same version. JSON is zio-json on core. JVM is JDK 21+. `heddle` and
+`heddle-mcp` publish for all three runtimes (`%%%`). `heddle-oauth` is JVM and JS.
+`HeddleApp` is JVM-only.
 
 ```scala
 libraryDependencies += "rocks.earlyeffect" %% "heddle" % "${Landing.docsVersion}"
@@ -41,8 +44,9 @@ object Hello extends HeddleApp:
   def routes = app
 ```
 
-`HeddleApp` serves `routes` and exits 0 on Ctrl-C under sbt 2.
-`Server.serve(app).provide(Server.Config.defaults)` is the same thing without the trait.
+`HeddleApp` serves `routes` and exits 0 on Ctrl-C under sbt 2 (JVM).
+`Server.serve(app).provide(Server.Config.defaults)` is the same bind without the trait, and
+that is what JS and Native use.
 """,
     ),
     section("Run the example hub")(
