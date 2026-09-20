@@ -63,7 +63,7 @@ object Path:
       Some(if enc then percentDecode(Ascii.string(raw, from, until)) else PathLits.intern(raw, from, until))
 
   def percentDecode(s: String): String =
-    URLDecoder.decode(s.replace("+", "%2B"), StandardCharsets.UTF_8)
+    URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
 
   def percentEncode(s: String): String =
     s.flatMap { c =>
