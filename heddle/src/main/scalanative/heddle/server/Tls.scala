@@ -8,7 +8,7 @@ import zio.*
 final class Tls private (ctx: Ssl.Ctx):
   private[heddle] def listener(
       config: heddle.Server.Config
-  ): IO[heddle.error.ServerError, heddle.internal.duplex.Listener] =
+  ): ZIO[Scope, heddle.error.ServerError, heddle.internal.duplex.Listener] =
     heddle.internal.duplex.NativeListener.bind(config).map { plain =>
       new heddle.internal.duplex.Listener:
         def localPort = plain.localPort

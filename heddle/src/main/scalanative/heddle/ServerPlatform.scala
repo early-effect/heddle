@@ -26,7 +26,7 @@ private[heddle] object ServerPlatform:
       takingWork <- ZIO.succeed(java.util.concurrent.atomic.AtomicBoolean(true))
       live       <- ZIO.succeed(java.util.HashSet[Conn]())
       inflight   <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))
-      listener   <- ZIO.acquireRelease(NativeListener.bind(config))(_.close)
+      listener   <- NativeListener.bind(config)
       port       <- listener.localPort
       halt0 = halt(listener, live, takingWork, config.gracefulShutdownTimeout).withClock(clock)
       _ <- acceptLoop(routes, listener, config, live, inflight, takingWork, tls).forkScoped
@@ -141,7 +141,6 @@ private[heddle] object ServerPlatform:
               )
               .forkDaemon
             _ <- ZIO.succeed { fiberRef.set(fiber); () }
-            _ <- ZIO.yieldNow
           yield ()
           started,
     )

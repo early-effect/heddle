@@ -40,7 +40,7 @@ private[heddle] object ClientPlatform:
     ZStream.unwrapScoped {
       for
         target <- ZIO.attempt(Target.parse(url))
-        conn   <- ZIO.acquireRelease(open(config, target))(_.close)
+        conn   <- open(config, target)
         t = Transport(conn)
         _ <- writeRequest(t, Method.GET, target, prepare(config, Headers.empty), Body.empty)
         src = t.src
@@ -79,7 +79,7 @@ private[heddle] object ClientPlatform:
     ZIO.scoped {
       for
         target <- ZIO.attempt(Target.parse(url))
-        conn   <- ZIO.acquireRelease(open(cfg, target))(_.close)
+        conn   <- open(cfg, target)
         t = Transport(conn)
         _   <- writeRequest(t, method, target, prepared, body)
         res <- readResponse(cfg, t)
@@ -87,24 +87,26 @@ private[heddle] object ClientPlatform:
     }
   end oneShot
 
-  private def open(cfg: Client.Config, target: Target): Task[ByteConn] =
+  private def open(cfg: Client.Config, target: Target): ZIO[Scope, Throwable, ByteConn] =
     val _ = cfg
-    ZIO.attemptBlockingInterrupt {
-      val fd = Net.connect(target.host, target.port)
-      Net.setTcpNoDelay(fd, true)
-      if !target.tls then NativeConn.of(fd)
-      else
-        val ctx = Ssl.clientCtx()
-        try
-          val sni = if target.host.exists(c => c >= 'A' && c <= 'z') then target.host else "localhost"
-          NativeConn.tls(fd, Ssl.connect(ctx, fd, sni))
-        catch
-          case e: Throwable =>
-            ctx.close()
-            Net.close(fd)
-            throw e
-      end if
-    }
+    ZIO.acquireRelease {
+      ZIO.attemptBlockingInterrupt {
+        val fd = Net.connect(target.host, target.port)
+        Net.setTcpNoDelay(fd, true)
+        if !target.tls then NativeConn.of(fd)
+        else
+          val ctx = Ssl.clientCtx()
+          try
+            val sni = if target.host.exists(c => c >= 'A' && c <= 'z') then target.host else "localhost"
+            NativeConn.tls(fd, Ssl.connect(ctx, fd, sni))
+          catch
+            case e: Throwable =>
+              ctx.close()
+              Net.close(fd)
+              throw e
+        end if
+      }
+    }(_.close)
   end open
 
   private final class Transport(conn: ByteConn):

@@ -20,10 +20,27 @@ object NativeAcceptSpec extends ZIOSpecDefault:
           assertTrue(d.toMillis < 150)
         }
       ,
+      test("Queue.take completes after a blocking producer offers"):
+        for
+          q        <- Queue.unbounded[Int]
+          producer <- ZIO.attemptBlockingInterrupt(Thread.sleep(30)).as(7).flatMap(q.offer).forever.fork
+          n        <- q.take
+          _        <- producer.interrupt
+        yield assertTrue(n == 7)
+      ,
+      test("scope close unblocks a listening accept"):
+        val opened =
+          ZIO.scoped {
+            NativeListener.bind(local).flatMap { listener =>
+              listener.localPort.delay(20.millis)
+            }
+          }
+        opened.map(port => assertTrue(port > 0))
+      ,
       test("one accept then Client GET"):
         ZIO.scoped {
           for
-            listener <- ZIO.acquireRelease(NativeListener.bind(local))(_.close)
+            listener <- NativeListener.bind(local)
             port     <- listener.localPort
             server   <- serveOnce(listener).fork
             res      <- Client.get(s"http://127.0.0.1:$port/health")
@@ -35,7 +52,7 @@ object NativeAcceptSpec extends ZIOSpecDefault:
       test("accept loop then Client GET"):
         ZIO.scoped {
           for
-            listener <- ZIO.acquireRelease(NativeListener.bind(local))(_.close)
+            listener <- NativeListener.bind(local)
             port     <- listener.localPort
             loop = listener.accept.flatMap(c => serveConn(c).forkDaemon.as(())).forever
             server <- loop.fork

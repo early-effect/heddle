@@ -23,27 +23,23 @@ object NativeHttpsSpec extends ZIOSpecDefault:
       test("TlsListener plus raw TLS GET"):
         ZIO.scoped {
           for
-            listener <- ZIO.acquireRelease(
-              TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
-            )(_.close)
-            port   <- listener.localPort
-            server <- serveOne(listener).fork
-            body   <- rawTlsGet(port, "/health")
-            _      <- server.interrupt
+            listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+            port     <- listener.localPort
+            server   <- serveOne(listener).fork
+            body     <- rawTlsGet(port, "/health")
+            _        <- server.interrupt
           yield assertTrue(body.contains("200"), body.contains("ok"))
         }
       ,
       test("TlsListener plus Client GET over TLS"):
         ZIO.scoped {
           for
-            listener <- ZIO.acquireRelease(
-              TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
-            )(_.close)
-            port   <- listener.localPort
-            server <- serveOne(listener).fork
-            res    <- Client.get(s"https://127.0.0.1:$port/health")
-            bytes  <- res.body.collect
-            _      <- server.interrupt
+            listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+            port     <- listener.localPort
+            server   <- serveOne(listener).fork
+            res      <- Client.get(s"https://127.0.0.1:$port/health")
+            bytes    <- res.body.collect
+            _        <- server.interrupt
           yield assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ok")
         }
       ,

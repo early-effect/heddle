@@ -24,7 +24,7 @@ private[heddle] final class TlsListener(plain: NativeListener, ctx: Ssl.Ctx) ext
 end TlsListener
 
 object TlsListener:
-  def bind(config: Server.Config, certPem: String, keyPem: String): IO[ServerError, Listener] =
+  def bind(config: Server.Config, certPem: String, keyPem: String): ZIO[Scope, ServerError, Listener] =
     NativeListener.bind(config).flatMap { plain =>
       ZIO
         .attempt(Ssl.serverCtx(certPem, keyPem))

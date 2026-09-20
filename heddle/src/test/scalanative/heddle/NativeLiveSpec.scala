@@ -14,7 +14,7 @@ object NativeLiveSpec extends ZIOSpecDefault:
         import heddle.internal.posix.Net
         ZIO.scoped {
           for
-            listener <- ZIO.acquireRelease(NativeListener.bind(local))(_.close)
+            listener <- NativeListener.bind(local)
             port     <- listener.localPort
             serverHs <- listener.acceptFd.flatMap { fd =>
               ZIO.attemptBlockingInterrupt {
