@@ -1,5 +1,18 @@
 import org.scalajs.linker.interface.ModuleKind
-import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.NativeTags
+import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
+
+lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
+  val brew = java.io.File("/opt/homebrew/opt/openssl@3")
+  val (cflags, libs) =
+    if brew.isDirectory then
+      (Seq(s"-I${brew.getPath}/include"), Seq(s"-L${brew.getPath}/lib", "-lssl", "-lcrypto"))
+    else (Seq.empty[String], Seq("-lssl", "-lcrypto"))
+  Seq(
+    nativeConfig ~= { c =>
+      c.withCompileOptions(c.compileOptions ++ cflags)
+        .withLinkingOptions(c.linkingOptions ++ libs)
+    }
+  )
 
 MyVersions.settings
 HeddleZipx.settings
@@ -87,7 +100,7 @@ lazy val heddle = (projectMatrix in file("heddle"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
 
 lazy val brotli = (projectMatrix in file("brotli"))
   .dependsOn(heddle % "compile->compile;test->test")
@@ -108,7 +121,7 @@ lazy val brotli = (projectMatrix in file("brotli"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
 
 lazy val oauth = (projectMatrix in file("oauth"))
   .dependsOn(heddle % "compile->compile;test->test")
@@ -149,7 +162,7 @@ lazy val mcp = (projectMatrix in file("mcp"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeOpenssl)
 
 lazy val example = project
   .in(file("example"))
