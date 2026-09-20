@@ -22,7 +22,7 @@ private[heddle] object ServerPlatform:
     val _ = scheduler
     for
       clock      <- ZIO.clock
-      tls        <- ZIO.environmentWith[R & Scope](_.getDynamic[Tls])
+      tls        <- ZIO.environmentWith[Any](_.getDynamic[Tls])
       takingWork <- ZIO.succeed(java.util.concurrent.atomic.AtomicBoolean(true))
       live       <- ZIO.succeed(java.util.HashSet[Conn]())
       inflight   <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))

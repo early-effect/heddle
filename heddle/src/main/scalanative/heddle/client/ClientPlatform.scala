@@ -91,10 +91,7 @@ private[heddle] object ClientPlatform:
     val _ = cfg
     ZIO.attemptBlockingInterrupt {
       val fd = Net.connect(target.host, target.port)
-      val ms =
-        if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
-        else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
-      if ms > 0 then Net.setRecvTimeout(fd, ms)
+      Net.setTcpNoDelay(fd, true)
       if !target.tls then NativeConn.of(fd)
       else
         val ctx = Ssl.clientCtx()
@@ -144,14 +141,15 @@ private[heddle] object ClientPlatform:
     body.mediaType.foreach(mt =>
       if !hdrs.has(HeaderName.ContentType) then hdrs = hdrs.add(HeaderName.ContentType, mt.render)
     )
-    val head =
-      s"${method.render} ${target.path} HTTP/1.1\r\n" +
-        hdrs.toChunk.map(h => s"${h.name.render}: ${h.value}\r\n").mkString + "\r\n"
-    send(Chunk.fromArray(head.getBytes(StandardCharsets.US_ASCII))) *>
-      (body match
-        case Body.Empty           => ZIO.unit
-        case Body.Bytes(bytes, _) => send(bytes)
-        case Body.Stream(s, _, _) => s.runForeachChunk(send))
+    val head = Chunk.fromArray(
+      (s"${method.render} ${target.path} HTTP/1.1\r\n" +
+        hdrs.toChunk.map(h => s"${h.name.render}: ${h.value}\r\n").mkString + "\r\n")
+        .getBytes(StandardCharsets.US_ASCII)
+    )
+    body match
+      case Body.Empty           => send(head)
+      case Body.Bytes(bytes, _) => send(head ++ bytes)
+      case Body.Stream(s, _, _) => send(head) *> s.runForeachChunk(send)
   end writeRequest
 
   private def readResponse(cfg: Client.Config, t: Transport): Task[Response] =

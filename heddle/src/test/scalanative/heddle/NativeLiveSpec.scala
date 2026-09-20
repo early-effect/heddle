@@ -61,7 +61,11 @@ object NativeLiveSpec extends ZIOSpecDefault:
             server.port.flatMap { port =>
               Client
                 .request(Method.POST, s"http://127.0.0.1:$port/echo", body = Body.text("ping"))
-                .map(res => assertTrue(res.body.asString == "ping"))
+                .flatMap { res =>
+                  res.body.collect.map { bytes =>
+                    assertTrue(res.status == Status.Ok, String(bytes.toArray, "UTF-8") == "ping")
+                  }
+                }
             }
           }
         }
