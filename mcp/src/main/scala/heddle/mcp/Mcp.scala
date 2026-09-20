@@ -1,5 +1,6 @@
 package heddle.mcp
 
+import heddle.LinePipe
 import heddle.endpoint.{Api, BoundOp, OpArgs, Schema, SchemaJson}
 import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
@@ -54,8 +55,14 @@ final class Mcp[-R] private (
   ): Routes[Any, Nothing] =
     ProtectedResource.routes(resource, authorizationServers, scopes)
 
-  def stdio(in: InputStream = System.in, out: OutputStream = System.out): ZIO[R, Throwable, Unit] =
-    Stdio.run(engine, in, out)
+  def stdio(): ZIO[R, Throwable, Unit] =
+    Stdio.run(engine, LinePipe.standard)
+
+  def stdio(pipe: LinePipe): ZIO[R, Throwable, Unit] =
+    Stdio.run(engine, pipe)
+
+  def stdio(in: InputStream, out: OutputStream): ZIO[R, Throwable, Unit] =
+    Stdio.run(engine, LinePipe.streams(in, out))
 
   def handle(json: Json, headers: Headers = Headers.empty): ZIO[R, Nothing, Option[Json]] =
     engine.handle(json, headers).map(_.map(o => o: Json))

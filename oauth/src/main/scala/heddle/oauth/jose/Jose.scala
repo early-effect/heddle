@@ -41,7 +41,7 @@ final case class SigningKey(kid: String, key: RsaKey):
 end SigningKey
 
 object SigningKey:
-  def generateRsa: SigningKey = generateRsa(java.util.UUID.randomUUID().toString)
+  def generateRsa: SigningKey = generateRsa(heddle.internal.Ids.uuid().toString)
 
   def generateRsa(kid: String): SigningKey =
     SigningKey(kid, RsaPlatform.generateSync(2048))
@@ -79,7 +79,7 @@ object Jose:
         "aud"   -> Json.Str(audience),
         "iat"   -> Json.Num(now.getEpochSecond),
         "exp"   -> Json.Num(now.getEpochSecond + ttl.toSeconds),
-        "jti"   -> Json.Str(java.util.UUID.randomUUID().toString),
+        "jti"   -> Json.Str(heddle.internal.Ids.uuid().toString),
         "scope" -> Json.Str(scopes.mkString(" ")),
       ) ++ Chunk.fromIterable(extra.toList.map((k, v) => k -> Json.Str(v)))
     val payload = Json.Obj(claims)

@@ -63,7 +63,7 @@ object Provider:
           case Some(_) if method.exists(_ != "S256") && challenge.isDefined =>
             ZIO.succeed(Response.badRequest("code_challenge_method must be S256"))
           case Some(_) =>
-            val code = java.util.UUID.randomUUID().toString.replace("-", "")
+            val code = heddle.internal.Ids.uuid().toString.replace("-", "")
             Clock.instant.flatMap { now =>
               stores.codes
                 .put(
@@ -110,7 +110,7 @@ object Provider:
       stores.users.authenticate(user, pass).flatMap {
         case None    => ZIO.succeed(Response.text("invalid credentials", Status.Unauthorized))
         case Some(u) =>
-          val sid = java.util.UUID.randomUUID().toString
+          val sid = heddle.internal.Ids.uuid().toString
           Clock.instant.flatMap { now =>
             stores.sessions
               .put(SessionRec(sid, u.id, now.plusMillis(config.sessionTtl.toMillis)))
@@ -221,7 +221,7 @@ object Provider:
       else None
     val refresh =
       if scopes.contains("offline_access") || scopes.contains("openid") then
-        Some(java.util.UUID.randomUUID().toString.replace("-", ""))
+        Some(heddle.internal.Ids.uuid().toString.replace("-", ""))
       else None
     val put =
       refresh match

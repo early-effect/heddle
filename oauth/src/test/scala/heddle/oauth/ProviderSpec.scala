@@ -30,7 +30,7 @@ object ProviderSpec extends ZIOSpecDefault:
           val http = new Client:
             def batched(req: Request) = Client.request(req.method, abs(base, req), req.headers, req.body)
           val oc   = OAuthClient(http, base, "web", None, s"$base/authorize", s"$base/token", Some(s"$base/userinfo"))
-          val auth = AuthzRequest(s"$base/cb", Set("openid", "profile"), "st")
+          val auth = AuthzRequest("http://127.0.0.1/cb", Set("openid", "profile"), "st")
           for
             authz <- oc.authorizationUrl(auth, pkce)
             login <- Client.request(
@@ -47,8 +47,10 @@ object ProviderSpec extends ZIOSpecDefault:
             )
             loc  = step3.header("Location").getOrElse("")
             code = queryParam(loc, "code").getOrElse("")
-            tokens <- oc.exchange(code, s"$base/cb", pkce)
-            claim  <- JwtVerifier.static(key.publicJwksJson, base, "web").flatMap(_.verify(tokens.accessToken))
+            tokens <- oc.exchange(code, "http://127.0.0.1/cb", pkce)
+            claim  <- JwtVerifier
+              .static(key.publicJwksJson, "http://127.0.0.1", "web")
+              .flatMap(_.verify(tokens.accessToken))
           yield assertTrue(
             login.status == Status.Found,
             code.nonEmpty,
@@ -66,7 +68,9 @@ object ProviderSpec extends ZIOSpecDefault:
           val oc = OAuthClient(http, base, "machine", Some("secret"), s"$base/authorize", s"$base/token")
           for
             tokens <- oc.clientCredentials(Set("api"))
-            claim  <- JwtVerifier.static(key.publicJwksJson, base, "machine").flatMap(_.verify(tokens.accessToken))
+            claim  <- JwtVerifier
+              .static(key.publicJwksJson, "http://127.0.0.1", "machine")
+              .flatMap(_.verify(tokens.accessToken))
           yield assertTrue(tokens.tokenType == "Bearer", claim.subject == "machine")
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
@@ -89,32 +93,21 @@ object ProviderSpec extends ZIOSpecDefault:
 
   private def withOp[E, A](f: (String, SigningKey, ProviderStores) => IO[E, A]): ZIO[Any, Any, A] =
     ZIO.scoped {
+      val key     = SigningKey.generateRsa("op")
+      val issuer  = "http://127.0.0.1"
+      val users   = List(UserRecord("u1", "ada", Passwords.hash("ada")))
+      val clients = List(
+        ClientRecord("web", None, List("http://127.0.0.1/cb"), Set("authorization_code")),
+        ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
+      )
       for
-        _ <- MemoryStores.seed(
-          List(UserRecord("u1", "ada", Passwords.hash("ada"))),
-          List(
-            ClientRecord("web", None, List("http://127.0.0.1/cb", "http://127.0.0.1:0/cb"), Set("authorization_code")),
-            ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
-          ),
+        stores <- MemoryStores.seed(users, clients)
+        server <- Server.install(
+          Provider.routes(ProviderConfig(issuer), stores, key),
+          Server.Config.default.copy(host = "127.0.0.1", port = 0),
         )
-        key = SigningKey.generateRsa("op")
-        port <- ZIO.attemptBlocking {
-          val s = new java.net.ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))
-          val p = s.getLocalPort
-          s.close()
-          p
-        }
-        base   = s"http://127.0.0.1:$port"
-        seeded = List(
-          ClientRecord("web", None, List(s"$base/cb"), Set("authorization_code")),
-          ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
-        )
-        stores2 <- MemoryStores.seed(List(UserRecord("u1", "ada", Passwords.hash("ada"))), seeded)
-        _       <- Server.install(
-          Provider.routes(ProviderConfig(base), stores2, key),
-          Server.Config.default.copy(host = "127.0.0.1", port = port),
-        )
-        a <- f(base, key, stores2)
+        port <- server.port
+        a    <- f(s"$issuer:$port", key, stores)
       yield a
     }
 end ProviderSpec

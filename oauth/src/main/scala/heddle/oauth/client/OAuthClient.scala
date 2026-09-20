@@ -41,7 +41,7 @@ trait OAuthClient:
 object OAuthClient:
   def pkce(): Pkce =
     val verifier = Base64Url.encode(
-      Chunk.fromArray(java.util.UUID.randomUUID().toString.getBytes(StandardCharsets.US_ASCII))
+      Chunk.fromArray(heddle.internal.Ids.uuid().toString.getBytes(StandardCharsets.US_ASCII))
     )
     val digest = DigestPlatform.sha256Sync(Chunk.fromArray(verifier.getBytes(StandardCharsets.US_ASCII)))
     Pkce(verifier, Base64Url.encode(digest))

@@ -124,6 +124,12 @@ lazy val oauth = (projectMatrix in file("oauth"))
     Compile / mainClass  := Some("heddle.oauth.provider.ProviderApp"),
   )
   .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
 
 lazy val mcp = (projectMatrix in file("mcp"))
   .dependsOn(heddle % "compile->compile;test->test")
@@ -262,5 +268,5 @@ addCommandAlias(
   "testJVM",
   "heddle/testFull; brotli/testFull; oauth/testFull; mcp/testFull; example/testFull; docs/testFull; docs/specularSite",
 )
-addCommandAlias("testJS", "heddleJS/testFull; brotliJS/testFull; mcpJS/testFull")
+addCommandAlias("testJS", "heddleJS/testFull; brotliJS/testFull; mcpJS/testFull; oauthJS/testFull")
 addCommandAlias("testNative", "heddleNative/testFull; brotliNative/testFull; mcpNative/testFull")
