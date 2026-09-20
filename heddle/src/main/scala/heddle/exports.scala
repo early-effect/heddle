@@ -16,6 +16,7 @@ export heddle.http.{
   Form,
   FormField,
   Multipart,
+  UrlEncoding,
 }
 export heddle.http.header.{
   Header,

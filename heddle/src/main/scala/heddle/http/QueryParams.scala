@@ -1,6 +1,5 @@
 package heddle.http
 
-import java.net.URLDecoder
 import zio.Chunk
 
 final case class QueryParams(toMap: Map[String, Chunk[String]]):
@@ -40,6 +39,5 @@ object QueryParams:
       }
       of(pairs*)
 
-  private def decodeComponent(s: String): String =
-    URLDecoder.decode(s, "UTF-8")
+  private def decodeComponent(s: String): String = UrlEncoding.decodeForm(s)
 end QueryParams

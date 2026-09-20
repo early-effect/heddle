@@ -1,6 +1,5 @@
 package heddle.http
 
-import java.net.{URLDecoder, URLEncoder}
 import zio.Chunk
 
 final case class Form(fields: Chunk[(String, String)]):
@@ -46,9 +45,7 @@ object Form:
         )
       )
 
-  private def enc(s: String): String =
-    URLEncoder.encode(s, "UTF-8")
+  private def enc(s: String): String = UrlEncoding.encodeForm(s)
 
-  private def dec(s: String): String =
-    URLDecoder.decode(s, "UTF-8")
+  private def dec(s: String): String = UrlEncoding.decodeForm(s)
 end Form
