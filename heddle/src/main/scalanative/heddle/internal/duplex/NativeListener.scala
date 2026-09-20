@@ -13,12 +13,12 @@ private[heddle] final class NativeListener(listenFd: Int, tcpNoDelay: Boolean, s
   def acceptFd: Task[Int] =
     def loop: Task[Int] =
       ZIO
-        .attemptBlockingInterrupt {
+        .attempt {
           if closed then throw java.io.IOException("listener closed")
-          Net.pollIn(listenFd, 25)
+          Net.pollIn(listenFd, 0)
         }
         .flatMap { ready =>
-          if !ready then ZIO.yieldNow *> loop
+          if !ready then Clock.sleep(5.millis) *> loop
           else
             ZIO.attemptBlockingInterrupt {
               if closed then throw java.io.IOException("listener closed")

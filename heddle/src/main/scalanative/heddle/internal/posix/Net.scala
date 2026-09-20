@@ -66,8 +66,7 @@ private[heddle] object Net:
       fd
     }
 
-  /** True when `fd` is readable. Timeout returns false so the caller can yield. */
-  @blocking
+  /** True when `fd` is readable. `timeoutMs = 0` is a non-blocking check. */
   def pollIn(fd: Int, timeoutMs: Int): Boolean =
     Zone {
       val pfd = alloc[poll.struct_pollfd]()

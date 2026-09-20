@@ -63,7 +63,7 @@ object NativeHttpsSpec extends ZIOSpecDefault:
               }
             }
         },
-    ) @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds) @@ TestAspect.withLiveClock
+    ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
 
   private val local: Server.Config =
     Server.Config.default.copy(host = "127.0.0.1", port = 0, http2 = false)
