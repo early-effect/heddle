@@ -51,6 +51,7 @@ object OpArgs:
     schema match
       case SchemaDoc.Object(Some(title), _, _) => title
       case SchemaDoc.OneOf(Some(title), _)     => title
+      case SchemaDoc.Enum(Some(title), _)      => title
       case _                                   => "body"
 
   private def requestObj(doc: EndpointDoc, args: Json.Obj, headers: Headers): Either[String, Request] =

@@ -66,6 +66,9 @@ private[heddle] object OpenApiJson:
         val rewritten = SchemaDoc.OneOf(Some(title), variants.map(register(_, components)))
         components.getOrElseUpdate(title, rewritten)
         SchemaDoc.Ref(title)
+      case e @ SchemaDoc.Enum(Some(title), _) =>
+        components.getOrElseUpdate(title, e)
+        SchemaDoc.Ref(title)
       case SchemaDoc.OneOf(None, variants) =>
         SchemaDoc.OneOf(None, variants.map(register(_, components)))
       case SchemaDoc.Object(None, fields, required) =>
