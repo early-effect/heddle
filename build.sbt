@@ -1,8 +1,13 @@
 import org.scalajs.linker.interface.ModuleKind
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
 
+// Debug-mode Native frames are large enough that ZIO's run loop overflows Native's 1 MB thread stack
+// default on macOS. 8 MB matches the Linux default, so local and CI runs behave the same.
 lazy val nativeThreads: Seq[sbt.Setting[?]] =
-  Seq(nativeConfig ~= (_.withMultithreading(true)))
+  Seq(
+    nativeConfig ~= (_.withMultithreading(true)),
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8m",
+  )
 
 lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
   val brew = java.io.File("/opt/homebrew/opt/openssl@3")
