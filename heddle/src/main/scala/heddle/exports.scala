@@ -63,6 +63,7 @@ export heddle.route.{
 export heddle.route.PathDsl.*
 export heddle.endpoint.{
   Endpoint,
+  ErrorCase,
   EndpointDoc,
   ParamDoc,
   MediaDoc,

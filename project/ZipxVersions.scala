@@ -12,9 +12,9 @@ object MyVersions extends ZipxVersions:
   val zioStreams = zio.mod("zio-streams")
   val zioTest    = zio.mod("zio-test").test
   val zioTestSbt = zio.mod("zio-test-sbt").test
-  val zioJson   = Lib("dev.zio", "zio-json", "1.1.0")
-  val zioHttp   = Lib("dev.zio", "zio-http", "3.11.6")
-  val brotliDec = Lib("org.brotli", "dec", "0.1.2").java.test
+  val zioJson    = Lib("dev.zio", "zio-json", "1.1.0")
+  val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
+  val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
   val scalaJavaTime     = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
   val scalaJavaTimeTzdb = scalaJavaTime.mod("scala-java-time-tzdb")
@@ -37,8 +37,8 @@ object MyVersions extends ZipxVersions:
   def brotliTest = library(brotliDec)
   def docsTest   = library(specularZioTest, specularTheme, ascentCss)
   def docsJs     = library(specular, ascentJs, ascentCss, zio)
-  def javaTime  = library(scalaJavaTime, scalaJavaTimeTzdb)
-  def jsRuntime = javaTime
+  def javaTime   = library(scalaJavaTime, scalaJavaTimeTzdb)
+  def jsRuntime  = javaTime
 
   def nativeTestInterface: Seq[Setting[?]] =
     val testInterface = "org.scala-native" % "test-interface_native0.5_3" % (scalaNative.version: String)

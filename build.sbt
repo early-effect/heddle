@@ -1,13 +1,18 @@
 import org.scalajs.linker.interface.ModuleKind
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
 
+// Debug-mode Native frames are large enough that ZIO's run loop overflows Native's 1 MB thread stack
+// default on macOS. 8 MB matches the Linux default, so local and CI runs behave the same.
 lazy val nativeThreads: Seq[sbt.Setting[?]] =
-  Seq(nativeConfig ~= (_.withMultithreading(true)))
+  Seq(
+    nativeConfig ~= (_.withMultithreading(true)),
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8m",
+  )
 
-lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
-  val brew = java.io.File("/opt/homebrew/opt/openssl@3")
+lazy val nativeOpenssl: Seq[sbt.Setting[?]] = {
+  val brew           = new java.io.File("/opt/homebrew/opt/openssl@3")
   val (cflags, libs) =
-    if brew.isDirectory then
+    if (brew.isDirectory)
       (Seq(s"-I${brew.getPath}/include"), Seq(s"-L${brew.getPath}/lib", "-lssl", "-lcrypto"))
     else (Seq.empty[String], Seq("-lssl", "-lcrypto"))
   Seq(
@@ -16,6 +21,7 @@ lazy val nativeOpenssl: Seq[sbt.Setting[?]] =
         .withLinkingOptions(c.linkingOptions ++ libs)
     }
   )
+}
 
 MyVersions.settings
 HeddleZipx.settings
@@ -177,7 +183,7 @@ lazy val example = project
     publish / skip       := true,
     Compile / run / fork := true,
     Test / fork          := true,
-    exampleMcpStdioCp := Def.uncached {
+    exampleMcpStdioCp    := Def.uncached {
       val conv = fileConverter.value
       val cp   = (Test / fullClasspath).value
         .map(a => conv.toPath(a.data).toAbsolutePath.toString)
@@ -256,18 +262,19 @@ lazy val docs = project
       "rocks.earlyeffect" %% "heddle-mcp",
       "rocks.earlyeffect" %% "heddle-oauth",
     ),
-    Test / mainClass := None,
+    Test / mainClass       := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),
     specularArtifactKind   := "library",
     specularSiteDirectory  := (ThisBuild / baseDirectory).value / "target" / "site",
     specularDisplayVersion := {
       val fallback = previousStableVersion.value.getOrElse("0.2.0")
-      (v: String) =>
+      (v: String) => {
         val stripped = stripCi(v)
-        if stripped != v then stripped
-        else if v.contains('+') then fallback
+        if (stripped != v) stripped
+        else if (v.contains('+')) fallback
         else v
+      }
     },
     specularJsLink := Def.uncached {
       (docsJS / Compile / fastLinkJS).value

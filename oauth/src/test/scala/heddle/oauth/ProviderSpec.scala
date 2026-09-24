@@ -73,7 +73,8 @@ object ProviderSpec extends ZIOSpecDefault:
               .flatMap(_.verify(tokens.accessToken))
           yield assertTrue(tokens.tokenType == "Bearer", claim.subject == "machine")
         },
-    ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
+    ).provideShared(TestKeys.signing("op")) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@
+      TestAspect.withLiveClock
 
   private def abs(base: String, req: Request): String =
     val p = req.url.render
@@ -91,16 +92,16 @@ object ProviderSpec extends ZIOSpecDefault:
         .collectFirst { case Array(`name`, v) => java.net.URLDecoder.decode(v, "UTF-8") }
   end queryParam
 
-  private def withOp[E, A](f: (String, SigningKey, ProviderStores) => IO[E, A]): ZIO[Any, Any, A] =
+  private def withOp[E, A](f: (String, SigningKey, ProviderStores) => IO[E, A]): ZIO[SigningKey, Any, A] =
+    val issuer  = "http://127.0.0.1"
+    val users   = List(UserRecord("u1", "ada", Passwords.hash("ada")))
+    val clients = List(
+      ClientRecord("web", None, List("http://127.0.0.1/cb"), Set("authorization_code")),
+      ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
+    )
     ZIO.scoped {
-      val key     = SigningKey.generateRsa("op")
-      val issuer  = "http://127.0.0.1"
-      val users   = List(UserRecord("u1", "ada", Passwords.hash("ada")))
-      val clients = List(
-        ClientRecord("web", None, List("http://127.0.0.1/cb"), Set("authorization_code")),
-        ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
-      )
       for
+        key    <- ZIO.service[SigningKey]
         stores <- MemoryStores.seed(users, clients)
         server <- Server.install(
           Provider.routes(ProviderConfig(issuer), stores, key),
@@ -110,4 +111,5 @@ object ProviderSpec extends ZIOSpecDefault:
         a    <- f(s"$issuer:$port", key, stores)
       yield a
     }
+  end withOp
 end ProviderSpec

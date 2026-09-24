@@ -9,19 +9,21 @@ object JwtVerifierSpec extends ZIOSpecDefault:
   def spec =
     suite("JwtVerifier")(
       test("static verifier accepts a signed access token"):
-        val key    = SigningKey.generateRsa("k1")
-        val issuer = "http://iss"
-        val aud    = "api"
-        val token  = Jose.sign(key, "ada", issuer, aud, Set("openid", "profile"), 5.minutes)
-        JwtVerifier.static(key.publicJwksJson, issuer, aud).flatMap(_.verify(token)).map { claim =>
-          assertTrue(claim.subject == "ada", claim.scopes.contains("openid"), claim.audience.contains(aud))
+        ZIO.serviceWithZIO[SigningKey] { key =>
+          val issuer = "http://iss"
+          val aud    = "api"
+          val token  = Jose.sign(key, "ada", issuer, aud, Set("openid", "profile"), 5.minutes)
+          JwtVerifier.static(key.publicJwksJson, issuer, aud).flatMap(_.verify(token)).map { claim =>
+            assertTrue(claim.subject == "ada", claim.scopes.contains("openid"), claim.audience.contains(aud))
+          }
         }
       ,
       test("static verifier rejects a bad issuer"):
-        val key   = SigningKey.generateRsa("k1")
-        val token = Jose.sign(key, "ada", "http://iss", "api", Set.empty, 5.minutes)
-        JwtVerifier.static(key.publicJwksJson, "http://other", "api").flatMap { v =>
-          v.verify(token).either.map(e => assertTrue(e.isLeft))
+        ZIO.serviceWithZIO[SigningKey] { key =>
+          val token = Jose.sign(key, "ada", "http://iss", "api", Set.empty, 5.minutes)
+          JwtVerifier.static(key.publicJwksJson, "http://other", "api").flatMap { v =>
+            v.verify(token).either.map(e => assertTrue(e.isLeft))
+          }
         }
       ,
       test("authorizationUrl includes PKCE S256"):
@@ -41,5 +43,5 @@ object JwtVerifierSpec extends ZIOSpecDefault:
             pkce.challenge.nonEmpty,
           )
         },
-    ) @@ TestAspect.timeout(10.seconds)
+    ).provideShared(TestKeys.signing("k1")) @@ TestAspect.timeout(10.seconds)
 end JwtVerifierSpec

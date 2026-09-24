@@ -40,6 +40,9 @@ object SchemaJson:
       case SchemaDoc.OneOf(title, variants) =>
         val oneOf = List("oneOf" -> Json.Arr(Chunk.fromIterable(variants.map(render(_, components, embedNamed)))))
         Json.Obj(title.map(t => "title" -> Json.Str(t)).toList ++ oneOf*)
+      case SchemaDoc.Enum(title, values) =>
+        val fields = List("type" -> Json.Str("string"), "enum" -> Json.Arr(Chunk.fromIterable(values.map(Json.Str(_)))))
+        Json.Obj(title.map(t => "title" -> Json.Str(t)).toList ++ fields*)
       case SchemaDoc.Optional(inner) =>
         render(inner, components, embedNamed)
       case SchemaDoc.Ref(name) =>

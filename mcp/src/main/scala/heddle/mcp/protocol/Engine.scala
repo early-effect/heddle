@@ -201,7 +201,7 @@ object Engine:
             in =>
               op.run(in)
                 .fold(
-                  err => CallResult.Failed(encodeErr(op, err)),
+                  err => CallResult.Failed(op.endpoint.errors.json(err)),
                   out =>
                     val json = encodeOut(op, out)
                     val text = json match
@@ -217,11 +217,6 @@ object Engine:
         val raw = c.encoder.encodeJson(out).toString
         raw.fromJson[Json].getOrElse(Json.Str(raw))
       case None => Json.Str(out.toString)
-
-  private def encodeErr[R, In, Err, Out](op: BoundOp[R, In, Err, Out], err: Err): String =
-    op.endpoint.errorCodec match
-      case Some(c) => c.encoder.encodeJson(err).toString
-      case None    => err.toString
 
   private def successSchema(doc: EndpointDoc): Option[heddle.endpoint.SchemaDoc] =
     doc.responses.find(r => r.status.code >= 200 && r.status.code < 300).flatMap(_.schema)
