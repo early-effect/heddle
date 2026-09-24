@@ -13,6 +13,10 @@ final case class Item(id: Int, name: String) derives Schema, zio.json.JsonCodec
 final case class NewItem(name: String) derives Schema, zio.json.JsonCodec
 final case class Query(q: String) derives Schema, zio.json.JsonCodec
 
+enum ShopError derives Schema, zio.json.JsonCodec:
+  case Missing(id: Int)
+  case Closed
+
 object McpSpec extends ZIOSpecDefault:
   private val getItem =
     Endpoint.get("items" / int("id")).out[Item].summary("Get item").mcp.hints(Hint.ReadOnly)
@@ -308,6 +312,26 @@ object McpSpec extends ZIOSpecDefault:
           .map { out =>
             val json = out.get.toJson
             assertTrue(json.contains("\"isError\":true"), json.contains("gone"), !json.contains("\"error\""))
+          }
+      ,
+      test("outErrors payload is the error ADT's JSON body"):
+        val lookup = Endpoint
+          .get("items" / int("id"))
+          .out[Item]
+          .outErrors[ShopError](
+            ErrorCase[ShopError.Missing](Status.NotFound),
+            ErrorCase[ShopError.Closed.type](Status.ServiceUnavailable),
+          )
+          .mcp
+        val api = Api("Shop", "1.0.0").bind(lookup)(id => ZIO.fail(ShopError.Missing(id)))
+        Mcp
+          .from(api)
+          .toOption
+          .get
+          .handle(req("tools/call", obj("name" -> Json.Str("get_items_id"), "arguments" -> obj("id" -> Json.Num(9)))))
+          .map { out =>
+            val json = out.get.toJson
+            assertTrue(json.contains("\"isError\":true"), json.contains("""{\"Missing\":{\"id\":9}}"""))
           }
       ,
       test("missing bearer on protected MCP is 401 with resource_metadata"):

@@ -14,8 +14,8 @@ object Effects extends DocSpecSuite:
 The AST is the contract. `ZIO[R, E, A]` is the body.
 
 - `R` is the environment. The example's writes need `JwtClaim`. Reads need `Any`.
-- `E` is the domain error. `.outError[NotFound](Status.NotFound)` maps it for HTTP. MCP sees
-  `isError`. Do not leak SQL or JWT library types into `E`.
+- `E` is the domain error, ideally a sealed trait or enum. `.outErrors[SeatingError](...)` gives
+  each case its own HTTP status. MCP sees `isError`. Do not leak SQL or JWT library types into `E`.
 - `A` is the success value `Schema` already described.
 
 `Handler` is `Request => ZIO[R, E, Response]` when you are still on raw routes. `Api.bind` is

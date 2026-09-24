@@ -651,7 +651,7 @@ content-type: application/json
     OpField("path", "path", "/shows/{id}", "HTTP route, OpenAPI path, OpArgs path fill"),
     OpField("in", "in", "id: Int", "decodeIn, MCP argument, future CLI flag"),
     OpField("out", "out", "Show @ 200", "encodeOut, OpenAPI response, tool result"),
-    OpField("err", "error", "NotFound @ 404", "encodeErr, OpenAPI, MCP isError"),
+    OpField("err", "error", "NotFound @ 404", "errors: status and body, OpenAPI, client decode, MCP isError"),
     OpField("mcp", ".mcp", "promoted get_show", "Mcp.from tools/list"),
     OpField("hint", "hints", "ReadOnly", "MCP tool annotations"),
   )

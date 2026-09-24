@@ -131,6 +131,15 @@ object EndpointSpec extends ZIOSpecDefault:
           b <- ep.fromResponse(no).either
         yield assertTrue(a == "hi", b == Left("nope"))
       ,
+      test("chaining outError keeps only the last status"):
+        val ep = Endpoint.get("x").out[String].outError[String](Status.BadRequest).outError[String](Status.Conflict)
+        assertTrue(
+          ep.encodeErr("nope").status == Status.Conflict,
+          !ep.doc.responses.exists(_.status == Status.BadRequest),
+          ep.doc.responses.count(_.status == Status.Conflict) == 1,
+        )
+      ,
+      outErrorsSuite,
       test("mapIn is not invertible"):
         val ep = Endpoint.get("echo" / int("n")).mapIn(_.toString).outText()
         assertTrue(ep.toRequest("4", Url.root).isLeft)
@@ -149,4 +158,92 @@ object EndpointSpec extends ZIOSpecDefault:
           .provideLayer(Client.inMemory(routes))
           .map(out => assertTrue(out == "ping")),
     ) @@ TestAspect.timeout(5.seconds)
+
+  private val orderApi =
+    Api("orders", "1").bind(ErrorFixtures.order) { id =>
+      id match
+        case 1 => ZIO.fail(OrderError.NotFound(id))
+        case 2 => ZIO.fail(OrderError.Conflict("busy"))
+        case 3 => ZIO.fail(OrderError.Unavailable)
+        case _ => ZIO.succeed(s"order $id")
+    }
+
+  private def post(id: Int) =
+    orderApi.routes(Request.post(s"/orders/$id", Body.empty)).flatMap(res => res.body.utf8.map(res.status -> _))
+
+  val outErrorsSuite =
+    suite("outErrors")(
+      test("each case answers with its own status and the ADT's JSON body"):
+        for
+          notFound    <- post(1)
+          conflict    <- post(2)
+          unavailable <- post(3)
+          ok          <- post(4)
+        yield assertTrue(
+          notFound == (Status.NotFound, """{"NotFound":{"id":1}}"""),
+          conflict == (Status.Conflict, """{"Conflict":{"reason":"busy"}}"""),
+          unavailable == (Status.ServiceUnavailable, """{"Unavailable":{}}"""),
+          ok == (Status.Ok, "\"order 4\""),
+        )
+      ,
+      test("fromResponse decodes every case back from its own response"):
+        val ep = ErrorFixtures.order
+        check(Gen.fromIterable(OrderError.all)) { e =>
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+        }
+      ,
+      test("cases may share a status and still decode to the right case"):
+        val ep = ErrorFixtures.seating
+        check(Gen.fromIterable(List(Seating.SoldOut(1), Seating.NoBlock(1, 2), Seating.Closed))) { e =>
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+        } && assertTrue(
+          ep.encodeErr(Seating.SoldOut(1)).status == Status.Conflict,
+          ep.encodeErr(Seating.NoBlock(1, 2)).status == Status.Conflict,
+          ep.encodeErr(Seating.Closed).status == Status.Gone,
+        )
+      ,
+      test("an all-singleton enum answers with a plain string body"):
+        val ep  = ErrorFixtures.light
+        val res = ep.encodeErr(Light.Red)
+        ep.fromResponse(res).flip.map { back =>
+          assertTrue(res.status == Status.Forbidden, res.body.asString == "\"Red\"", back == Light.Red)
+        }
+      ,
+      test("a body whose case answers with another status dies"):
+        val res = Response(Status.Conflict).withBody(Body.json("""{"NotFound":{"id":1}}"""))
+        ErrorFixtures.order.fromResponse(res).exit.map { exit =>
+          assertTrue(exit.causeOption.flatMap(_.dieOption).exists(_.getMessage.contains("answers with 404")))
+        }
+      ,
+      test("a status outside the error set and success dies"):
+        ErrorFixtures.order.fromResponse(Response(Status.BadGateway)).exit.map { exit =>
+          assertTrue(exit.causeOption.exists(_.isDie))
+        }
+      ,
+      test("Client.call surfaces the typed case"):
+        Client
+          .call(ErrorFixtures.order)(2)
+          .either
+          .provideLayer(Client.inMemory(orderApi.routes))
+          .map(out => assertTrue(out == Left(OrderError.Conflict("busy"))))
+      ,
+      test("a nested sealed trait is one case covering all its leaves"):
+        val ep = ErrorFixtures.lookup
+        check(Gen.fromIterable(List(Lookup.NoUser(1), Lookup.NoOrg(2), Lookup.Throttled))) { e =>
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+        } && assertTrue(
+          ep.encodeErr(Lookup.NoUser(1)).status == Status.NotFound,
+          ep.encodeErr(Lookup.NoOrg(2)).status == Status.NotFound,
+          ep.encodeErr(Lookup.Throttled).status == Status.TooManyRequests,
+          ep.encodeErr(Lookup.NoOrg(2)).body.asString == """{"NoOrg":{"id":2}}""",
+        )
+      ,
+      test("outErrors replaces an earlier outError"):
+        val ep = Endpoint
+          .get("x")
+          .out[String]
+          .outError[String](Status.BadRequest)
+          .outErrors[Light](ErrorCase[Light.Red.type](Status.Forbidden), ErrorCase[Light.Green.type](Status.Gone))
+        assertTrue(ep.doc.responses.map(_.status.code).sorted == List(200, 403, 410)),
+    )
 end EndpointSpec

@@ -61,7 +61,10 @@ object Endpoints:
       .post("holds")
       .inJson[NewHold]
       .out[Hold](Status.Created)
-      .outError[SeatingError](Status.Conflict)
+      .outErrors[SeatingError](
+        ErrorCase[SeatingError.SoldOut](Status.Conflict),
+        ErrorCase[SeatingError.NoBlock](Status.UnprocessableContent),
+      )
       .name("create_hold")
       .summary("Reserve a contiguous block")
       .tag("orders")
@@ -83,7 +86,10 @@ object Endpoints:
       .post("parties")
       .inJson[Party]
       .out[PartySeated](Status.Created)
-      .outError[SeatingError](Status.Conflict)
+      .outErrors[SeatingError](
+        ErrorCase[SeatingError.SoldOut](Status.Conflict),
+        ErrorCase[SeatingError.NoBlock](Status.UnprocessableContent),
+      )
       .name("seat_the_party")
       .summary("Hold a contiguous block, price it, return a pickup code")
       .tag("orders")
