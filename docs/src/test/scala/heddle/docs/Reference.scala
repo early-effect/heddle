@@ -126,6 +126,49 @@ is the check itself.
           case _                                   => false)
       },
     ),
+    section("Errors")(
+      md"""
+Every parser in heddle is total and says why it refused. A `from(raw)` or `decode(raw)`
+returns `Either[SomeError, A]`, never `Either[String, A]`, never an exception. Each error is a
+Scala 3 enum whose cases carry the offending piece (the character and its index, the scheme, the
+declared and actual status), and every one has a `message` for people. Match on the case, show
+the message.
+
+| Parser | Error |
+| --- | --- |
+| `Url.decode` | `UrlError`: `Empty`, `BadCharacter(char, at)`, `UnknownScheme`, `BadAuthority` |
+| `QueryCodec`, `HeaderCodec`, `TypedHeader` | `ParamError`: `Missing`, `Malformed(raw, expected)` |
+| `Endpoint#fromResponse` | `CallFailure.Undecodable(status, BodyError)` |
+| `OpArgs.arguments`, `OpArgs.request` | `OpArgsError`: which parameter, where, and what was wrong |
+| `Multipart.parse`, `Body#asMultipart` | `MultipartError`: `Undeclared`, `NoBoundary`, `Truncated` |
+| `SseField.from` | `SseFieldError.LineBreak(at)` |
+| the HTTP/1.1 and HTTP/2 wire | `HttpError.Malformed(WireError)`: request line, chunk size, frame size, padding |
+| `ToolName.from`, `ExtensionId.from` | `ToolNameError`, `ExtensionIdError` |
+| `UiUri.from`, `Origin.from` | `UiUriError`, `OriginError` |
+| `Jose.verify`, `Jose.parseJwks` | `JoseError`, carried by `OAuthError.InvalidToken` |
+
+A literal checks the same rules at compile time: `ToolName("no spaces")` does not compile, and
+the compiler prints the message the runtime `from` would have returned.
+""",
+      exampleValue {
+        (
+          Url.decode("http://exam ple.com/"),
+          Url.decode("gopher://example.com/"),
+          QueryCodec[Int].decode(Chunk("seven")),
+        )
+      }.assert { case (space, scheme, count) =>
+        assertTrue(
+          space == Left(UrlError.BadCharacter(' ', 11)),
+          scheme == Left(UrlError.UnknownScheme("gopher")),
+          count == Left(ParamError.Malformed("seven", "an int")),
+        )
+      },
+      md"""
+A wire error answers the peer and closes the connection. The server reads `Content-Length` as
+RFC 9110's `1*DIGIT` and a chunk size as `1*HEXDIG`, ASCII only, so `+5`, `0x5`, and `٣` are
+a 400, never a length another hop might read differently.
+""",
+    ),
     section("Client config")(
       md"""
 `zio.Config` keys nest under `heddle.client`. `Client.get` / `Client.request` / `Client.sse`

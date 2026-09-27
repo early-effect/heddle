@@ -3,6 +3,7 @@ package heddle.endpoint
 import java.nio.charset.StandardCharsets
 import scala.deriving.Mirror
 import heddle.client.CallFailure
+import heddle.error.ParamError
 import heddle.http.{Body, Form, MediaType, Method, Path, QueryParams, Request, Response, Status, Url}
 import heddle.http.header.Headers
 import heddle.http.header.TypedHeader
@@ -20,7 +21,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def encodeOut: Out => Response
 
   /** Reads a success body back into `Out`. Set by the builder that chose the output, so no content type is guessed. */
-  def decodeOut: Response => IO[String, Out]
+  def decodeOut: Response => IO[BodyError, Out]
   def errors: ErrorCodec[Err]
   def outputCodec: Option[JsonCodec[Out]]
   def doc: EndpointDoc
@@ -32,14 +33,14 @@ sealed abstract class Endpoint[In, Err, Out]:
 
   def query[Q](name: String)(using codec: QueryCodec[Q], c: Combiner[In, Q]): Endpoint[c.Out, Err, Out] =
     adding(c)(
-      req => ZIO.fromEither(codec.decode(req.query.getAll(name))).mapError(Response.badRequest),
+      req => ZIO.fromEither(codec.decode(req.query.getAll(name))).mapError(Endpoint.refused(s"query parameter $name")),
       doc.copy(queries = doc.queries :+ ParamDoc(name, ParamLocation.Query, codec.required, codec.schema)),
       (q, acc) => acc.copy(query = acc.query.add(name, codec.encode(q))),
     )
 
   def header[H](name: String)(using codec: HeaderCodec[H], c: Combiner[In, H]): Endpoint[c.Out, Err, Out] =
     adding(c)(
-      req => ZIO.fromEither(codec.decode(req.header(name))).mapError(Response.badRequest),
+      req => ZIO.fromEither(codec.decode(req.header(name))).mapError(Endpoint.refused(s"header $name")),
       doc.copy(headers = doc.headers :+ ParamDoc(name, ParamLocation.Header, codec.required, codec.schema)),
       (h, acc) => codec.encode(h).fold(acc)(v => acc.copy(headers = acc.headers.add(name, v))),
     )
@@ -48,9 +49,8 @@ sealed abstract class Endpoint[In, Err, Out]:
     adding(c)(
       req =>
         ZIO
-          .fromOption(req.header(t.name))
-          .orElseFail(Response.badRequest("missing header"))
-          .flatMap(raw => ZIO.fromEither(t.decode(raw)).mapError(Response.badRequest)),
+          .fromEither(req.header(t.name).toRight(ParamError.Missing).flatMap(t.decode))
+          .mapError(Endpoint.refused(s"header ${t.name.render}")),
       doc.copy(headers =
         doc.headers :+ ParamDoc(t.name.render, ParamLocation.Header, required = true, SchemaDoc.Str(None))
       ),
@@ -62,7 +62,7 @@ sealed abstract class Endpoint[In, Err, Out]:
       req =>
         req.body.collect
           .mapError(e => Response.badRequest(e.getMessage))
-          .flatMap(raw => ZIO.fromEither(Endpoint.jsonDecode[B](raw)).mapError(Response.badRequest)),
+          .flatMap(raw => ZIO.fromEither(Endpoint.jsonDecode[B](raw)).mapError(e => Response.badRequest(e.message))),
       doc.copy(requestBody = Some(MediaDoc(s.doc, MediaType.Json))),
       (b, acc) => acc.copy(body = Body.fromBytes(Endpoint.jsonBytes(b), Some(MediaType.Json))),
     )
@@ -251,7 +251,7 @@ sealed abstract class Endpoint[In, Err, Out]:
 
   private def replace[E1, O1](
       encodeOut: O1 => Response,
-      decodeOut: Response => IO[String, O1],
+      decodeOut: Response => IO[BodyError, O1],
       errors: ErrorCodec[E1],
       doc: EndpointDoc,
       outputCodec: Option[JsonCodec[O1]],
@@ -342,13 +342,17 @@ object Endpoint:
       val decodeIn: (P, Request) => IO[Response, In],
       val encodeIn: In => (P, Acc),
       val encodeOut: Out => Response,
-      val decodeOut: Response => IO[String, Out],
+      val decodeOut: Response => IO[BodyError, Out],
       val errors: ErrorCodec[Err],
       val outputCodec: Option[JsonCodec[Out]],
       val doc: EndpointDoc,
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P
   end Impl
+
+  /** A 400 that names the parameter and why it was refused: `query parameter n: expected an int, got 'x'`. */
+  private[endpoint] def refused(what: String)(e: ParamError): Response =
+    Response.badRequest(s"$what: ${e.message}")
 
   private def paramDoc(pair: (String, PathKind)): ParamDoc =
     val (name, kind) = pair
@@ -368,9 +372,9 @@ object Endpoint:
 
   private val unauthorized: StatusDoc = StatusDoc(Status.Unauthorized, None, None, "Unauthorized")
 
-  private def jsonDecode[A](raw: Chunk[Byte])(using c: JsonCodec[A]): Either[String, A] =
-    c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8))
+  private def jsonDecode[A](raw: Chunk[Byte])(using c: JsonCodec[A]): Either[BodyError, A] =
+    c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8)).left.map(BodyError.Json(_))
 
-  private def bytes(res: Response): IO[String, Chunk[Byte]] =
-    res.body.collect.mapError(e => s"unreadable body: ${e.getMessage}")
+  private def bytes(res: Response): IO[BodyError, Chunk[Byte]] =
+    res.body.collect.mapError(BodyError.Unreadable(_))
 end Endpoint

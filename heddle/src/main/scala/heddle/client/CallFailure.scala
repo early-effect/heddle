@@ -1,5 +1,6 @@
 package heddle.client
 
+import heddle.endpoint.BodyError
 import heddle.http.Status
 
 /** Why a typed call to an `Endpoint[In, E, Out]` did not produce an `Out`. */
@@ -11,7 +12,7 @@ enum CallFailure[+E]:
   case Transport(error: ClientError)
 
   /** A declared status arrived with a body the endpoint's codecs reject. */
-  case Undecodable(status: Status, reason: String)
+  case Undecodable(status: Status, reason: BodyError)
 
   /** A status the endpoint does not declare. */
   case Unexpected(status: Status)

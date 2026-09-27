@@ -140,7 +140,7 @@ suite checks both directions as laws over generated inputs, including path value
         for
           args  <- zio.ZIO.fromEither(OpArgs.arguments(ep.doc, req))
           again <- zio.ZIO.fromEither(OpArgs.request(ep.doc, args))
-          out   <- routes(again).flatMap(res => ep.fromResponse(res).mapError(_.toString))
+          out   <- routes(again).flatMap(ep.fromResponse)
         yield (req.url.render, args.toJson, out)
       }.assert { case (url, args, out) =>
         assertTrue(url == "/items/7?tag=a%2Fb", args == """{"id":7,"tag":"a/b"}""", out == "7:a/b")

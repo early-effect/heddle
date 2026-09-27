@@ -1,6 +1,6 @@
 package heddle.internal.h2
 
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.{Body, HttpVersion, Method, Request, Response, Url}
 import heddle.http.header.{Header, Headers}
 import heddle.internal.engine.ConnBuf
@@ -26,7 +26,7 @@ private[heddle] object H2Connection:
       flow    <- H2Flow.make(h2.initialWindowSize.toInt)
       streams <- ZIO.succeed(java.util.concurrent.atomic.AtomicInteger(0))
       fibers  <- ZIO.succeed(java.util.concurrent.ConcurrentHashMap.newKeySet[Fiber[Any, Any]]())
-      _       <- write(send, H2Frame.Settings(ack = false, localSettings(h2)))
+      _       <- write(send, H2Frame.Settings(localSettings(h2)))
       wf      <- writer(out, send).forkDaemon
       _       <- (reader(routes, src, out, flow, streams, fibers, config, takingWork, busy, secure) *>
         out.offer(H2Frame.GoAway(0, 0x0)).unit)
@@ -120,10 +120,10 @@ private[heddle] object H2Connection:
       secure: Boolean,
   ): ZIO[R, HttpError, Unit] =
     frame match
-      case H2Frame.Settings(true, _)   => ZIO.unit
-      case H2Frame.Settings(false, _)  => out.offer(H2Frame.Settings(ack = true, Chunk.empty)).unit
-      case H2Frame.Ping(false, opaque) => out.offer(H2Frame.Ping(ack = true, opaque)).unit
-      case H2Frame.Ping(true, _)       => ZIO.unit
+      case H2Frame.SettingsAck         => ZIO.unit
+      case H2Frame.Settings(_)         => out.offer(H2Frame.SettingsAck).unit
+      case H2Frame.Ping(opaque)        => out.offer(H2Frame.PingAck(opaque)).unit
+      case H2Frame.PingAck(_)          => ZIO.unit
       case H2Frame.WindowUpdate(id, n) => flow.creditSend(id, n)
       case H2Frame.GoAway(_, _, _)     => ZIO.unit
       case H2Frame.RstStream(id, _)    =>
@@ -330,13 +330,13 @@ private[heddle] object H2Connection:
   private def readFrame(src: ConnBuf, max: Int): IO[HttpError, Option[H2Frame]] =
     src.takeExact(9).flatMap { hdr =>
       if hdr.isEmpty then ZIO.succeed(None)
-      else if hdr.length < 9 then ZIO.fail(HttpError.Malformed("truncated h2 header"))
+      else if hdr.length < 9 then ZIO.fail(HttpError.Malformed(WireError.TruncatedFrame))
       else
         val len = ((hdr(0) & 0xff) << 16) | ((hdr(1) & 0xff) << 8) | (hdr(2) & 0xff)
-        if len > max then ZIO.fail(HttpError.Malformed("h2 frame too large"))
+        if len > max then ZIO.fail(HttpError.Malformed(WireError.FrameTooLarge(len, max)))
         else
           src.takeExact(len).flatMap { payload =>
-            if payload.length < len then ZIO.fail(HttpError.Malformed("truncated h2 frame"))
+            if payload.length < len then ZIO.fail(HttpError.Malformed(WireError.TruncatedFrame))
             else
               FrameCodec.decode(hdr ++ payload, max) match
                 case Right((f, _)) => ZIO.succeed(Some(f))

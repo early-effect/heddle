@@ -47,11 +47,11 @@ object RpcError:
 
   def methodNotFound(method: String): RpcError = MethodNotFound(s"Method not found: $method")
 
-  /** Reads an error object back into its case. Total: anything with an integer code and a message is an `RpcError`. */
-  def fromJson(obj: Json.Obj): Either[String, RpcError] =
+  /** Reads an error object back into its case. Anything with an integer code and a string message is an `RpcError`. */
+  def fromJson(obj: Json.Obj): Option[RpcError] =
     (obj.get("code").flatMap(integer), obj.get("message")) match
-      case (Some(code), Some(Json.Str(m))) => Right(byCode(code, m, obj.get("data")))
-      case _                               => Left("error must have an integer code and a string message")
+      case (Some(code), Some(Json.Str(m))) => Some(byCode(code, m, obj.get("data")))
+      case _                               => None
 
   private def byCode(code: Int, message: String, data: Option[Json]): RpcError =
     (code, data) match

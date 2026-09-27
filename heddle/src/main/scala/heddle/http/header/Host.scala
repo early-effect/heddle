@@ -1,5 +1,7 @@
 package heddle.http.header
 
+import heddle.error.ParamError
+
 final case class Host(host: String, port: Option[Int] = None)
 
 object Host:
@@ -27,9 +29,9 @@ object Host:
   end parse
 
   given TypedHeader[Host] with
-    def name: HeaderName                          = HeaderName.Host
-    def decode(raw: String): Either[String, Host] =
-      parse(raw).toRight("invalid Host")
+    def name: HeaderName                              = HeaderName.Host
+    def decode(raw: String): Either[ParamError, Host] =
+      parse(raw).toRight(ParamError.Malformed(raw, "host[:port]"))
     def encode(a: Host): String =
       a.port.fold(a.host)(p => if a.host.contains(':') then s"[${a.host}]:$p" else s"${a.host}:$p")
 end Host

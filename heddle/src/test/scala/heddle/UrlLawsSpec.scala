@@ -53,17 +53,23 @@ object UrlLawsSpec extends ZIOSpecDefault:
     test("parse is total"):
       check(anyText)(s => assertTrue(Url.parse(s).path.segments.length >= 0))
     ,
-    test("strict decode rejects characters no URI may hold"):
-      check(anyText.filter(_.exists(c => c == ' ' || c == '"' || c == '<' || c > '~'))) { s =>
-        assertTrue(Url.decode(s).isLeft)
+    test("strict decode names the first character no URI may hold"):
+      val forbidden = (c: Char) => c == ' ' || c == '"' || c == '<' || c > '~'
+      check(anyText.filter(_.exists(forbidden))) { s =>
+        Url.decode(s) match
+          case Left(UrlError.BadCharacter(c, at)) =>
+            assertTrue(s.lift(at).contains(c), at <= s.indexWhere(forbidden))
+          case other => assertNever(s"expected BadCharacter, got $other")
       }
     ,
     test("strict decode rejects a bad host or port"):
       assertTrue(
-        Url.decode("http://exam ple.com").isLeft,
-        Url.decode("http://example.com:99999/").isLeft,
-        Url.decode("http://example.com:8o/").isLeft,
-        Url.decode("http:///nohost").isLeft,
+        Url.decode("http://exam ple.com") == Left(UrlError.BadCharacter(' ', 11)),
+        Url.decode("http://example.com:99999/") == Left(UrlError.BadAuthority("example.com:99999")),
+        Url.decode("http://example.com:8o/") == Left(UrlError.BadAuthority("example.com:8o")),
+        Url.decode("http:///nohost") == Left(UrlError.BadAuthority("")),
+        Url.decode("gopher://example.com/") == Left(UrlError.UnknownScheme("gopher")),
+        Url.decode("") == Left(UrlError.Empty),
       ),
   ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end UrlLawsSpec

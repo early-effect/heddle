@@ -243,8 +243,9 @@ object EndpointSpec extends ZIOSpecDefault:
         val res = Response(Status.Conflict).withBody(Body.json("""{"NotFound":{"id":1}}"""))
         ErrorFixtures.order.fromResponse(res).flip.map { failure =>
           assertTrue(failure match
-            case CallFailure.Undecodable(Status.Conflict, reason) => reason.contains("answers with 404")
-            case _                                                => false)
+            case CallFailure.Undecodable(Status.Conflict, BodyError.WrongStatus(declared, _)) =>
+              declared == Status.NotFound
+            case _ => false)
         }
       ,
       test("a status outside the error set and success is Unexpected"):

@@ -100,6 +100,30 @@ private[heddle] object Ascii:
     while b > a && (raw(b - 1) == ' ' || raw(b - 1) == '\t') do b -= 1
     (a, b)
 
+  /** RFC 9110 `1*DIGIT` (a Content-Length): ASCII digits only, no sign, no whitespace, no overflow. */
+  def decimal(s: String): Option[Long] = unsigned(s, 10)
+
+  /** RFC 9112 `1*HEXDIG` (a chunk size): ASCII hex digits only, no sign, no whitespace, no overflow. */
+  def hex(s: String): Option[Long] = unsigned(s, 16)
+
+  private def unsigned(s: String, radix: Int): Option[Long] =
+    var n  = 0L
+    var i  = 0
+    var ok = s.nonEmpty
+    while ok && i < s.length do
+      val d = digit(s.charAt(i))
+      ok = d >= 0 && d < radix && n <= (Long.MaxValue - d) / radix
+      if ok then n = n * radix + d
+      i += 1
+    Option.when(ok)(n)
+  end unsigned
+
+  private def digit(c: Char): Int =
+    if c >= '0' && c <= '9' then c - '0'
+    else if c >= 'a' && c <= 'f' then c - 'a' + 10
+    else if c >= 'A' && c <= 'F' then c - 'A' + 10
+    else -1
+
   private def lower(c: Int): Int =
     if c >= 'A' && c <= 'Z' then c + 32 else c
 end Ascii

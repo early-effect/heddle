@@ -25,6 +25,6 @@ object TransferCoding:
     header match
       case None | Some("") => Chunk.empty
       case Some(raw)       =>
-        val parts = raw.split(',').toList.map(_.split(';')(0).trim).filter(_.nonEmpty)
+        val parts = raw.split(',').toList.map(_.takeWhile(_ != ';').trim).filter(_.nonEmpty)
         Chunk.fromIterable(parts.map(fromToken))
 end TransferCoding

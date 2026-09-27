@@ -15,7 +15,7 @@ object OpArgs:
     )
     bodyOk && outOk
 
-  def inputSchema(doc: EndpointDoc): Either[String, SchemaDoc] =
+  def inputSchema(doc: EndpointDoc): Either[OpArgsError, SchemaDoc] =
     val pathFields  = doc.pathParams.map(p => SchemaField(p.name, p.schema, optional = !p.required))
     val queryFields = doc.queries.map(p => SchemaField(p.name, p.schema, optional = !p.required))
     val taken       = (doc.pathParams.map(_.name) ++ doc.queries.map(_.name)).toSet
@@ -25,16 +25,16 @@ object OpArgs:
       SchemaDoc.Object(None, fields, required)
     }
 
-  def request(doc: EndpointDoc, args: Json, headers: Headers = Headers.empty): Either[String, Request] =
+  def request(doc: EndpointDoc, args: Json, headers: Headers = Headers.empty): Either[OpArgsError, Request] =
     args match
       case obj: Json.Obj => requestObj(doc, obj, headers)
-      case _             => Left("arguments must be a JSON object")
+      case _             => Left(OpArgsError.NotAnObject)
 
-  private def bodyFields(doc: EndpointDoc, taken: Set[String]): Either[String, List[SchemaField]] =
+  private def bodyFields(doc: EndpointDoc, taken: Set[String]): Either[OpArgsError, List[SchemaField]] =
     doc.requestBody match
       case None                                             => Right(Nil)
       case Some(body) if body.contentType != MediaType.Json =>
-        Left(s"${doc.toolName}: non-JSON body cannot be flattened")
+        Left(OpArgsError.NonJsonBody)
       case Some(body) =>
         val (inner, optional) = body.schema.unwrapOptional
         if doc.nestBody then Right(List(SchemaField(bodyName(inner), inner, optional)))
@@ -42,7 +42,7 @@ object OpArgs:
           inner match
             case SchemaDoc.Object(_, fields, _) =>
               val clash = fields.map(_.name).filter(taken.contains)
-              if clash.nonEmpty then Left(s"${doc.toolName}: argument name collision: ${clash.mkString(", ")}")
+              if clash.nonEmpty then Left(OpArgsError.NameCollision(clash))
               else Right(fields)
             case other =>
               Right(List(SchemaField(bodyName(other), other, optional)))
@@ -54,7 +54,7 @@ object OpArgs:
       case SchemaDoc.Enum(Some(title), _)      => title
       case _                                   => "body"
 
-  private def requestObj(doc: EndpointDoc, args: Json.Obj, headers: Headers): Either[String, Request] =
+  private def requestObj(doc: EndpointDoc, args: Json.Obj, headers: Headers): Either[OpArgsError, Request] =
     for
       path  <- fillPath(doc, args)
       query <- fillQuery(doc, args)
@@ -63,37 +63,37 @@ object OpArgs:
       val url = Url(heddle.http.Path.decode(path), query)
       Request(doc.method, url, headers, body)
 
-  private def fillPath(doc: EndpointDoc, args: Json.Obj): Either[String, String] =
-    doc.pathParams.foldLeft[Either[String, String]](Right(doc.pathTemplate)):
+  private def fillPath(doc: EndpointDoc, args: Json.Obj): Either[OpArgsError, String] =
+    doc.pathParams.foldLeft[Either[OpArgsError, String]](Right(doc.pathTemplate)):
       case (Left(err), _)  => Left(err)
       case (Right(tpl), p) =>
         args.get(p.name) match
-          case None if p.required => Left(s"missing path argument '${p.name}'")
+          case None if p.required => Left(OpArgsError.Missing(ParamLocation.Path, p.name))
           case None               => Right(tpl)
           case Some(json)         =>
             atom(json) match
-              case None    => Left(s"path argument '${p.name}' must be a scalar")
+              case None    => Left(OpArgsError.NotScalar(ParamLocation.Path, p.name))
               case Some(v) => Right(tpl.replace(s"{${p.name}}", UrlEncoding.encode(v)))
 
-  private def fillQuery(doc: EndpointDoc, args: Json.Obj): Either[String, QueryParams] =
+  private def fillQuery(doc: EndpointDoc, args: Json.Obj): Either[OpArgsError, QueryParams] =
     doc.queries
-      .foldLeft[Either[String, List[(String, String)]]](Right(Nil)):
+      .foldLeft[Either[OpArgsError, List[(String, String)]]](Right(Nil)):
         case (Left(err), _)  => Left(err)
         case (Right(acc), p) =>
           args.get(p.name) match
-            case None if p.required => Left(s"missing query argument '${p.name}'")
+            case None if p.required => Left(OpArgsError.Missing(ParamLocation.Query, p.name))
             case None               => Right(acc)
             case Some(json)         =>
               atom(json) match
-                case None    => Left(s"query argument '${p.name}' must be a scalar")
+                case None    => Left(OpArgsError.NotScalar(ParamLocation.Query, p.name))
                 case Some(v) => Right(acc :+ (p.name -> v))
       .map(pairs => QueryParams.of(pairs*))
 
-  private def fillBody(doc: EndpointDoc, args: Json.Obj): Either[String, Body] =
+  private def fillBody(doc: EndpointDoc, args: Json.Obj): Either[OpArgsError, Body] =
     doc.requestBody match
       case None                                               => Right(Body.empty)
       case Some(media) if media.contentType != MediaType.Json =>
-        Left(s"${doc.toolName}: non-JSON body cannot be built from arguments")
+        Left(OpArgsError.NonJsonBody)
       case Some(media) =>
         val taken      = (doc.pathParams.map(_.name) ++ doc.queries.map(_.name)).toSet
         val (inner, _) = media.schema.unwrapOptional
@@ -107,7 +107,7 @@ object OpArgs:
               case _ =>
                 args.get(bodyName(inner)).orElse(args.get("body"))
         payload match
-          case None    => Left(s"${doc.toolName}: missing body arguments")
+          case None    => Left(OpArgsError.MissingBody)
           case Some(j) => Right(Body.json(j.toJson))
 
   private def atom(json: Json): Option[String] =
@@ -121,17 +121,17 @@ object OpArgs:
   /** The arguments `request` turns back into `req`. Headers never travel in arguments, so an endpoint whose input reads
     * a header has no argument form for that piece.
     */
-  def arguments(doc: EndpointDoc, req: Request): Either[String, Json.Obj] =
+  def arguments(doc: EndpointDoc, req: Request): Either[OpArgsError, Json.Obj] =
     for
       path  <- pathArgs(doc, req)
       query <- queryArgs(doc, req)
       body  <- bodyArgs(doc, req)
     yield Json.Obj(Chunk.fromIterable(path ++ query ++ body))
 
-  private def pathArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
+  private def pathArgs(doc: EndpointDoc, req: Request): Either[OpArgsError, List[(String, Json)]] =
     val template = doc.pathTemplate.split('/').toList.filter(_.nonEmpty)
     val actual   = req.path.segments.toList
-    if template.length != actual.length then Left(s"${req.path.render} does not match ${doc.pathTemplate}")
+    if template.length != actual.length then Left(OpArgsError.PathMismatch(req.path.render, doc.pathTemplate))
     else
       val byName = doc.pathParams.map(p => p.name -> p.schema).toMap
       Right(template.zip(actual).collect {
@@ -141,27 +141,27 @@ object OpArgs:
       })
   end pathArgs
 
-  private def queryArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
-    doc.queries.foldLeft[Either[String, List[(String, Json)]]](Right(Nil)) {
+  private def queryArgs(doc: EndpointDoc, req: Request): Either[OpArgsError, List[(String, Json)]] =
+    doc.queries.foldLeft[Either[OpArgsError, List[(String, Json)]]](Right(Nil)) {
       case (Left(err), _)  => Left(err)
       case (Right(acc), p) =>
         req.query.getAll(p.name).toList match
           case Nil          => Right(acc)
           case value :: Nil => Right(acc :+ (p.name -> scalar(p.schema.unwrapOptional._1, value)))
-          case _            => Left(s"query parameter '${p.name}' repeats; arguments hold one value")
+          case _            => Left(OpArgsError.RepeatedQuery(p.name))
     }
 
-  private def bodyArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
+  private def bodyArgs(doc: EndpointDoc, req: Request): Either[OpArgsError, List[(String, Json)]] =
     doc.requestBody match
       case None                                               => Right(Nil)
       case Some(media) if media.contentType != MediaType.Json =>
-        Left(s"${doc.toolName}: non-JSON body has no argument form")
+        Left(OpArgsError.NonJsonBody)
       case Some(media) =>
         val (inner, _) = media.schema.unwrapOptional
         req.body.text match
-          case None      => Left(s"${doc.toolName}: a streamed body has no argument form")
+          case None      => Left(OpArgsError.StreamedBody)
           case Some(raw) =>
-            raw.fromJson[Json].map { json =>
+            raw.fromJson[Json].left.map(OpArgsError.BodyNotJson(_)).map { json =>
               (doc.nestBody, inner, json) match
                 case (false, SchemaDoc.Object(_, _, _), obj: Json.Obj) => obj.fields.toList
                 case _                                                 => List(bodyName(inner) -> json)

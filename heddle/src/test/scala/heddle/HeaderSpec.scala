@@ -56,6 +56,20 @@ object HeaderSpec extends ZIOSpecDefault:
         test("parse quoted charset equals JsonUtf8"):
           assertTrue(MediaType.parse("""application/json; charset="utf-8"""").contains(MediaType.JsonUtf8))
         ,
+        test("any parameter value survives render then parse, quotes and semicolons included"):
+          val value = Gen.string.map(_.filterNot(c => c == '\r' || c == '\n'))
+          check(Gen.alphaNumericStringBounded(1, 8), value) { (k, v) =>
+            val t = MediaType("multipart", "form-data", None, List(k.toLowerCase -> v))
+            assertTrue(MediaType.parse(t.render).contains(t))
+          }
+        ,
+        test("a quoted boundary keeps its semicolon"):
+          assertTrue(
+            MediaType
+              .parse("""multipart/form-data; boundary="a;b c"; x=1""")
+              .map(_.params) == Some(List("boundary" -> "a;b c", "x" -> "1"))
+          )
+        ,
         test("missing slash is None"):
           assertTrue(MediaType.parse("json").isEmpty, MediaType.parse("").isEmpty),
       ),

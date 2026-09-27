@@ -42,6 +42,42 @@ object FormSpec extends ZIOSpecDefault:
           )
         }
       ,
+      test("multipart parse inverts encode for any names, filenames, and values"):
+        val oneLine = Gen.string.map(_.filterNot(c => c == '\r' || c == '\n'))
+        val name    = oneLine.filter(_.nonEmpty)
+        val field   = Gen.oneOf(
+          (name <*> Gen.string).map((n, v) => FormField.Text(n, v)),
+          (name <*> ByteGens.upTo(32) <*> oneLine).map((n, d, f) =>
+            FormField.Binary(n, d, MediaType.OctetStream, Some(f))
+          ),
+        )
+        check(Gen.chunkOfBounded(1, 4)(field)) { fields =>
+          assertTrue(Multipart.parse(Multipart.encode(fields, "----law"), "----law") == Right(fields))
+        }
+      ,
+      test("a part's name is its name parameter, wherever filename sits"):
+        val raw = "--b\r\nContent-Disposition: form-data; filename=\"a.txt\"; name=\"file\"\r\n\r\nabc\r\n--b--\r\n"
+        assertTrue(
+          Multipart
+            .parse(Chunk.fromArray(raw.getBytes), "b")
+            .map(_.map {
+              case FormField.Binary(n, _, _, f) => n -> f
+              case FormField.Text(n, _, _)      => n -> None
+            }) == Right(Chunk("file" -> Some("a.txt")))
+        )
+      ,
+      test("multipart failures are typed"):
+        val open = "--b\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nabc"
+        assertTrue(
+          Multipart.parse(Chunk.fromArray("no boundary here".getBytes), "b") == Left(MultipartError.NoBoundary),
+          Multipart.parse(Chunk.fromArray(open.getBytes), "b") == Left(MultipartError.Truncated),
+        )
+      ,
+      test("a body without a declared boundary is Undeclared"):
+        Body.fromBytes(Chunk.fromArray("x".getBytes), Some(MediaType.MultipartForm)).asMultipart.either.map { r =>
+          assertTrue(r == Left(MultipartError.Undeclared))
+        }
+      ,
       test("Endpoint.inForm decodes the body"):
         val ep     = Endpoint.post("f").inForm.outText()
         val routes = ep.implement(form => ZIO.succeed(form.get("n").getOrElse("")))

@@ -1,7 +1,8 @@
 package heddle.internal.engine
 
 import java.nio.ByteBuffer
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
+import heddle.internal.Ascii
 import zio.*
 import zio.stream.ZStream
 
@@ -45,7 +46,7 @@ private[heddle] final class ConnBuf(
         else
           fillMore.flatMap {
             case false if !buf.hasRemaining => ZIO.succeed(None)
-            case false                      => ZIO.fail(HttpError.Malformed("Unexpected end of request headers"))
+            case false                      => ZIO.fail(HttpError.Malformed(WireError.TruncatedHeaders))
             case true                       => go
           }
         end if
@@ -121,7 +122,7 @@ private[heddle] final class ConnBuf(
     if n <= 0 then ZIO.unit
     else
       takeUpTo(n).flatMap { c =>
-        if c.isEmpty then ZIO.fail(HttpError.Malformed("Unexpected end of request body"))
+        if c.isEmpty then ZIO.fail(HttpError.Malformed(WireError.TruncatedBody))
         else drop(n - c.length)
       }
 
@@ -129,16 +130,16 @@ private[heddle] final class ConnBuf(
     def go: IO[HttpError, Option[Chunk[Byte]]] =
       val idx = indexOfCrlf
       if idx >= 0 then
-        if idx > max then ZIO.fail(HttpError.Malformed("Chunk line too long"))
+        if idx > max then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
         else
           val line = copyOut(idx)
           buf.position(buf.position() + 2)
           ZIO.succeed(Some(line))
-      else if buf.remaining() >= max then ZIO.fail(HttpError.Malformed("Chunk line too long"))
+      else if buf.remaining() >= max then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
       else
         fillMore.flatMap {
           case false if !buf.hasRemaining => ZIO.succeed(None)
-          case false                      => ZIO.fail(HttpError.Malformed("Truncated chunk line"))
+          case false                      => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
           case true                       => go
         }
       end if
@@ -149,7 +150,7 @@ private[heddle] final class ConnBuf(
   def expectCrlf: IO[HttpError, Unit] =
     takeUpTo(2).flatMap { c =>
       if c.length == 2 && c(0) == '\r' && c(1) == '\n' then ZIO.unit
-      else ZIO.fail(HttpError.Malformed("Expected CRLF after chunk"))
+      else ZIO.fail(HttpError.Malformed(WireError.MissingChunkCrlf))
     }
 
   def skipTrailers(maxLine: Int): IO[HttpError, Unit] =
@@ -184,24 +185,22 @@ private[heddle] final class ConnBuf(
 
   def readChunkedPiece(total: Ref[Long], maxBody: Long, maxLine: Int): IO[HttpError, Option[Chunk[Byte]]] =
     takeLine(maxLine).flatMap {
-      case None       => ZIO.fail(HttpError.Malformed("Unexpected end of chunked body"))
+      case None       => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
       case Some(line) =>
-        val token = String(line.toArray, java.nio.charset.StandardCharsets.US_ASCII).split(";", 2)(0).trim
-        val size  =
-          try java.lang.Long.parseLong(token, 16)
-          catch case _: NumberFormatException => -1L
-        if size < 0 then ZIO.fail(HttpError.Malformed(s"Invalid chunk size: $token"))
-        else if size == 0 then skipTrailers(maxLine).as(None)
-        else
-          total.updateAndGet(_ + size).flatMap { n =>
-            if n > maxBody then ZIO.fail(HttpError.BodyTooLarge)
-            else
-              takeUpTo(size).flatMap { data =>
-                if data.length.toLong != size then ZIO.fail(HttpError.Malformed("Truncated chunk"))
-                else expectCrlf.as(Some(data))
-              }
-          }
-        end if
+        val token = String(line.toArray, java.nio.charset.StandardCharsets.US_ASCII).takeWhile(_ != ';').trim
+        Ascii.hex(token) match
+          case None       => ZIO.fail(HttpError.Malformed(WireError.BadChunkSize(token)))
+          case Some(0)    => skipTrailers(maxLine).as(None)
+          case Some(size) =>
+            total.updateAndGet(_ + size).flatMap { n =>
+              if n > maxBody then ZIO.fail(HttpError.BodyTooLarge)
+              else
+                takeUpTo(size).flatMap { data =>
+                  if data.length.toLong != size then ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
+                  else expectCrlf.as(Some(data))
+                }
+            }
+        end match
     }
 
   def toThrowable(err: HttpError): Throwable =

@@ -9,8 +9,8 @@ final class MediaType private (
   def base: String = s"$mainType/$subType"
 
   def render: String =
-    val cs   = charset.map(c => s"; charset=$c").getOrElse("")
-    val rest = params.map((k, v) => s"; $k=$v").mkString
+    val cs   = charset.map(HeaderParams.render("charset", _)).getOrElse("")
+    val rest = params.map(HeaderParams.render).mkString
     s"$base$cs$rest"
 
   def isEventStream: Boolean = mainType == "text" && subType == "event-stream"
@@ -52,46 +52,22 @@ object MediaType:
       charset: Option[String] = None,
       params: List[(String, String)] = Nil,
   ): MediaType =
-    val cs = charset.map(asciiLower)
+    val cs = charset.map(HeaderParams.lower)
     val ps = params.collect:
-      case (k, v) if !k.equalsIgnoreCase("charset") => asciiLower(k) -> v
-    new MediaType(asciiLower(mainType), asciiLower(subType), cs, ps)
+      case (k, v) if !k.equalsIgnoreCase("charset") => HeaderParams.lower(k) -> v
+    new MediaType(HeaderParams.lower(mainType), HeaderParams.lower(subType), cs, ps)
   end apply
 
   def parse(raw: String): Option[MediaType] =
-    val s     = raw.trim
-    val slash = s.indexOf('/')
-    if slash <= 0 || slash == s.length - 1 then None
-    else
-      val restStart = s.indexOf(';', slash)
-      val main      = s.substring(0, slash).trim
-      val subEnd    = if restStart < 0 then s.length else restStart
-      val sub       = s.substring(slash + 1, subEnd).trim
-      if main.isEmpty || sub.isEmpty then None
-      else
-        var charset: Option[String] = None
-        val params                  = List.newBuilder[(String, String)]
-        if restStart >= 0 then
-          var from = restStart + 1
-          while from <= s.length do
-            val semi = s.indexOf(';', from)
-            val end  = if semi < 0 then s.length else semi
-            val seg  = s.substring(from, end).trim
-            if seg.nonEmpty then
-              val eq = seg.indexOf('=')
-              if eq > 0 then
-                val k = seg.substring(0, eq).trim
-                var v = seg.substring(eq + 1).trim
-                if v.length >= 2 && v.charAt(0) == '"' && v.charAt(v.length - 1) == '"' then
-                  v = v.substring(1, v.length - 1)
-                if k.equalsIgnoreCase("charset") then charset = Some(asciiLower(v))
-                else params += (asciiLower(k) -> v)
-            from = if semi < 0 then s.length + 1 else semi + 1
-          end while
-        end if
-        Some(apply(main, sub, charset, params.result()))
-      end if
-    end if
+    val s         = raw.trim
+    val slash     = s.indexOf('/')
+    val restStart = s.indexOf(';', slash.max(0))
+    val main      = if slash <= 0 then "" else s.substring(0, slash).trim
+    val sub = if slash <= 0 then "" else s.substring(slash + 1, if restStart < 0 then s.length else restStart).trim
+    Option.when(main.nonEmpty && sub.nonEmpty) {
+      val params = if restStart < 0 then Nil else HeaderParams.parse(s, restStart + 1)
+      apply(main, sub, params.collectFirst { case ("charset", v) => v }, params)
+    }
   end parse
 
   def fromExtension(ext: String): MediaType =
@@ -108,13 +84,4 @@ object MediaType:
       case "gif"          => Gif
       case "woff2"        => Woff2
       case _              => OctetStream
-
-  private def asciiLower(s: String): String =
-    val arr = s.toCharArray
-    var i   = 0
-    while i < arr.length do
-      val c = arr(i)
-      if c >= 'A' && c <= 'Z' then arr(i) = (c + 32).toChar
-      i += 1
-    String(arr)
 end MediaType

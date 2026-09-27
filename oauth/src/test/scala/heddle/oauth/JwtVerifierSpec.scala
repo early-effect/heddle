@@ -1,6 +1,6 @@
 package heddle.oauth
 
-import heddle.oauth.jose.{Jose, SigningKey}
+import heddle.oauth.jose.{Jose, JoseError, SigningKey}
 import heddle.oauth.rs.JwtVerifier
 import zio.*
 import zio.test.*
@@ -22,14 +22,18 @@ object JwtVerifierSpec extends ZIOSpecDefault:
         ZIO.serviceWithZIO[SigningKey] { key =>
           val token = Jose.sign(key, "ada", "http://iss", "api", Set.empty, 5.minutes)
           JwtVerifier.static(key.publicJwksJson, "http://other", "api").flatMap { v =>
-            v.verify(token).either.map(e => assertTrue(e.isLeft))
+            v.verify(token)
+              .either
+              .map(e =>
+                assertTrue(e == Left(OAuthError.InvalidToken(JoseError.IssuerMismatch("http://other", "http://iss"))))
+              )
           }
         }
       ,
       test("authorizationUrl includes PKCE S256"):
         val dummy = new heddle.client.Client:
           def batched(req: heddle.http.Request) =
-            ZIO.fail(heddle.client.ClientError.InvalidTarget(req.url.render, "unused"))
+            ZIO.fail(heddle.client.ClientError.InvalidTarget(req.url.render, heddle.client.TargetError.NoHost))
           def streaming(req: heddle.http.Request) = batched(req)
         val oc =
           heddle.oauth.client.OAuthClient(dummy, "http://iss", "cid", None, "http://iss/authorize", "http://iss/token")

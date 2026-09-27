@@ -1,7 +1,7 @@
 package heddle.internal.engine
 
 import java.nio.charset.StandardCharsets
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.{Body, HttpVersion, MediaType, Method, Request, Response, Status, Url}
 import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
@@ -156,9 +156,8 @@ private[heddle] object Http1:
       headers.get(Ascii.ContentLength) match
         case None      => ZIO.succeed(Body.empty -> ZIO.unit)
         case Some(raw) =>
-          raw.toLongOption match
-            case None             => ZIO.fail(HttpError.Malformed(s"Invalid Content-Length: $raw"))
-            case Some(n) if n < 0 => ZIO.fail(HttpError.Malformed("Negative Content-Length"))
+          Ascii.decimal(raw) match
+            case None => ZIO.fail(HttpError.Malformed(WireError.BadContentLength(raw)))
             case Some(n) if n > config.maxBodyBytes.toLong => ZIO.fail(HttpError.BodyTooLarge)
             case Some(0)                                   => ZIO.succeed(Body.empty -> ZIO.unit)
             case Some(n)                                   =>
@@ -356,7 +355,7 @@ private[heddle] object Http1:
     val n       = raw.length
     var i       = 0
     while i + 1 < n && !(raw(i) == '\r' && raw(i + 1) == '\n') do i += 1
-    if i + 1 >= n then Left(HttpError.Malformed("Malformed request line"))
+    if i + 1 >= n then Left(HttpError.Malformed(WireError.BadRequestLine(Ascii.string(raw, 0, n))))
     else
       val lineEnd = i
       var sp1     = 0
@@ -364,39 +363,33 @@ private[heddle] object Http1:
       var sp2 = sp1 + 1
       while sp2 < lineEnd && raw(sp2) != ' ' do sp2 += 1
       if sp1 <= 0 || sp2 >= lineEnd then
-        Left(HttpError.Malformed(s"Malformed request line: ${Ascii.string(raw, 0, lineEnd)}"))
+        Left(HttpError.Malformed(WireError.BadRequestLine(Ascii.string(raw, 0, lineEnd))))
       else
         Method.parse(wrapped, 0, sp1) match
-          case None         => Left(HttpError.Malformed(s"Unknown method: ${Ascii.string(raw, 0, sp1)}"))
+          case None         => Left(HttpError.Malformed(WireError.UnknownMethod(Ascii.string(raw, 0, sp1))))
           case Some(method) =>
             val url     = Url.parse(wrapped, sp1 + 1, sp2)
             val version = HttpVersion.parse(wrapped, sp2 + 1, lineEnd)
             val hdrs    = scala.collection.mutable.ArrayBuffer.empty[Header]
             i = lineEnd + 2
-            var ok             = true
-            var err: HttpError = null
-            while ok && i + 1 < n do
+            var err = Option.empty[WireError]
+            while err.isEmpty && i + 1 < n do
               if raw(i) == '\r' && raw(i + 1) == '\n' then i = n
               else
                 var j = i
                 while j + 1 < n && !(raw(j) == '\r' && raw(j + 1) == '\n') do j += 1
-                if j + 1 >= n then
-                  ok = false
-                  err = HttpError.Malformed("Truncated header")
+                if j + 1 >= n then err = Some(WireError.TruncatedHeaders)
                 else
                   var colon = i
                   while colon < j && raw(colon) != ':' do colon += 1
-                  if colon <= i || colon >= j then
-                    ok = false
-                    err = HttpError.Malformed("Malformed header")
+                  if colon <= i || colon >= j then err = Some(WireError.BadHeaderLine)
                   else
                     val (ns, ne) = Ascii.trim(raw, i, colon)
                     hdrs += Header.slice(HeaderName.intern(raw, ns, ne), raw, colon + 1, j)
                     i = j + 2
                 end if
             end while
-            if !ok then Left(err)
-            else Right((method, url, version, Headers(Chunk.fromIterable(hdrs))))
+            err.map(HttpError.Malformed(_)).toLeft((method, url, version, Headers(Chunk.fromIterable(hdrs))))
       end if
     end if
   end parseHead

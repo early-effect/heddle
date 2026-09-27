@@ -2,11 +2,11 @@ package heddle.error
 
 import heddle.http.{Response, Status}
 enum HttpError(val message: String) extends HeddleError:
-  case HeadersTooLarge        extends HttpError("Request headers too large")
-  case BodyTooLarge           extends HttpError("Request body too large")
-  case Timeout                extends HttpError("Request timeout")
-  case Malformed(msg: String) extends HttpError(msg)
-  case Io(cause: Throwable)   extends HttpError(s"HTTP I/O failed: $cause")
+  case HeadersTooLarge             extends HttpError("Request headers too large")
+  case BodyTooLarge                extends HttpError("Request body too large")
+  case Timeout                     extends HttpError("Request timeout")
+  case Malformed(error: WireError) extends HttpError(error.message)
+  case Io(cause: Throwable)        extends HttpError(s"HTTP I/O failed: $cause")
 
   def status: Option[Status] =
     this match

@@ -11,7 +11,7 @@ trait JwtVerifier:
 
 object JwtVerifier:
   def static(jwksJson: String, issuer: String, audience: String): IO[OAuthError, JwtVerifier] =
-    ZIO.fromEither(Jose.parseJwks(jwksJson)).mapError(OAuthError.InvalidToken.apply).map { jwks =>
+    ZIO.fromEither(Jose.parseJwks(jwksJson)).mapError(OAuthError.InvalidToken(_)).map { jwks =>
       Static(jwks, issuer, audience)
     }
 
@@ -71,7 +71,7 @@ object JwtVerifier:
       .mapError(OAuthError.Transport.apply)
       .flatMap { res =>
         res.body.utf8.mapError(OAuthError.Transport.apply).flatMap { json =>
-          ZIO.fromEither(Jose.parseJwks(json)).mapError(OAuthError.InvalidToken.apply).flatMap { set =>
+          ZIO.fromEither(Jose.parseJwks(json)).mapError(OAuthError.InvalidToken(_)).flatMap { set =>
             cache.set(Some(set))
           }
         }
@@ -79,7 +79,7 @@ object JwtVerifier:
 
   private final class Static(jwks: Jwks, issuer: String, audience: String) extends JwtVerifier:
     def verify(token: String): IO[OAuthError, JwtClaim] =
-      ZIO.fromEither(Jose.verify(token, jwks, issuer, audience)).mapError(OAuthError.InvalidToken.apply)
+      ZIO.fromEither(Jose.verify(token, jwks, issuer, audience)).mapError(OAuthError.InvalidToken(_))
 
   private final class Remote(
       client: Client,
@@ -90,16 +90,16 @@ object JwtVerifier:
   ) extends JwtVerifier:
     def verify(token: String): IO[OAuthError, JwtClaim] =
       cache.get.flatMap {
-        case None       => ZIO.fail(OAuthError.InvalidToken("JWKS not loaded"))
+        case None       => ZIO.fail(OAuthError.NoKeys)
         case Some(jwks) =>
           Jose.verify(token, jwks, issuer, audience) match
             case Right(c) => ZIO.succeed(c)
             case Left(_)  =>
               refresh(client, jwksUri, cache) *>
                 cache.get.flatMap {
-                  case None        => ZIO.fail(OAuthError.InvalidToken("JWKS not loaded"))
+                  case None        => ZIO.fail(OAuthError.NoKeys)
                   case Some(jwks2) =>
-                    ZIO.fromEither(Jose.verify(token, jwks2, issuer, audience)).mapError(OAuthError.InvalidToken.apply)
+                    ZIO.fromEither(Jose.verify(token, jwks2, issuer, audience)).mapError(OAuthError.InvalidToken(_))
                 }
       }
   end Remote

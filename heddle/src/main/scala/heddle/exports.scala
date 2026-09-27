@@ -8,6 +8,7 @@ export heddle.http.{
   Status,
   HttpVersion,
   Url,
+  UrlError,
   Scheme,
   Path,
   QueryParams,
@@ -17,6 +18,7 @@ export heddle.http.{
   Form,
   FormField,
   Multipart,
+  MultipartError,
   UrlEncoding,
 }
 export heddle.http.header.{
@@ -83,13 +85,15 @@ export heddle.endpoint.{
   BoundOp,
   Api,
   OpArgs,
+  OpArgsError,
+  BodyError,
 }
 export heddle.auth.Auth
 export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}
 export BytesLength.*
 export heddle.server.{Compressor, Decompressor, Files, Http2Config, Tls}
-export heddle.client.{Authority, CallFailure, Client, ClientError}
-export heddle.error.{FileError, HeddleError, HttpError, ServerError, TlsError}
+export heddle.client.{Authority, CallFailure, Client, ClientError, TargetError}
+export heddle.error.{FileError, HeddleError, HttpError, ParamError, ServerError, TlsError, WireError}
 export heddle.route.QueryCodec.given
 export heddle.route.HeaderCodec.given
 export heddle.endpoint.Schema.given

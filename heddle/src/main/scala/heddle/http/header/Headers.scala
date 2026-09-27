@@ -54,7 +54,7 @@ final case class Headers(toChunk: Chunk[Header]):
   def contentType: Option[MediaType] = get[MediaType]
 
   def contentLength: Option[Long] =
-    get(HeaderName.ContentLength).flatMap(_.toLongOption)
+    get(HeaderName.ContentLength).flatMap(heddle.internal.Ascii.decimal)
 
   def contentEncoding: Chunk[ContentEncoding] =
     ContentEncoding.parseList(get(HeaderName.ContentEncoding))

@@ -48,11 +48,19 @@ object SseSpec extends ZIOSpecDefault:
       test("a field with CR or LF is a value at run time and a compile error as a literal"):
         typeCheck("""SseField("a\nb")""").map { literal =>
           assertTrue(
-            SseField.from("a\nb").isLeft,
-            SseField.from("a\r").isLeft,
+            SseField.from("a\nb") == Left(SseFieldError.LineBreak(1)),
+            SseField.from("tick\r") == Left(SseFieldError.LineBreak(4)),
             SseField.from("tick").map(_.value) == Right("tick"),
             literal.left.exists(_.contains("CR or LF")),
           )
+        }
+      ,
+      test("from refuses exactly the text with a line break, naming the first"):
+        val broken = (Gen.string <*> Gen.elements('\n', '\r') <*> Gen.string).map((a, c, b) => s"$a$c$b")
+        check(Gen.oneOf(Gen.string, broken)) { s =>
+          s.indexWhere(c => c == '\n' || c == '\r') match
+            case -1 => assertTrue(SseField.from(s).map(_.value) == Right(s))
+            case at => assertTrue(SseField.from(s) == Left(SseFieldError.LineBreak(at)))
         }
       ,
       test("encode then decode is the identity for any data and fields"):

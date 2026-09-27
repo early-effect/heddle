@@ -93,7 +93,10 @@ value. Idle, header, and connection caps live on `Server.Config`. See
 head arrives and reads the body from the connection until its `Scope` closes. `Client.sse` is a
 `text/event-stream` GET. All of them fail with `ClientError`, a closed enum of transport facts:
 `InvalidTarget`, `Connect`, `ConnectTimeout`, `Tls`, `ReadTimeout`, `Io`, `Protocol`,
-`PoolExhausted`, `InvalidTrust`. A response with any status is a success.
+`PoolExhausted`, `NotAnEventStream`, `InvalidTrust`, `BodyFailed`. A response with any status is
+a success. The cases carry data: `InvalidTarget` holds a `TargetError` (`NoHost`, `NotHttp`, or a
+`Malformed` URL with its `UrlError`), and `Protocol` holds the `HttpError`, down to the
+`WireError` that named which byte broke the framing.
 
 JVM and Native share one pooled HTTP/1.1 client. Every exchange settles its connection on
 success, failure, and interruption, so a timed-out call gives its slot back. A close-delimited
@@ -116,7 +119,8 @@ Node's `fetch`. TLS verifies the peer and its name on every platform. `ClientTls
       md"""
 `Client.call(endpoint)(in)` is the typed call. It fails with `CallFailure[E]`: `Domain(e)` for
 one of the endpoint's own errors, `Transport` for a `ClientError`, `Undecodable` for a body the
-codecs reject, `Unexpected` for a status the endpoint never declared. Nothing becomes a defect.
+codecs reject (with the status and a `BodyError` saying why), `Unexpected` for a status the
+endpoint never declared. Nothing becomes a defect.
 """,
       exampleZIO {
         val ep  = Endpoint.get("hello" / string("name")).out[String].outError[String](Status.NotFound)

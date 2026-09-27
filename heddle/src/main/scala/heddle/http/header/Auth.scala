@@ -1,5 +1,7 @@
 package heddle.http.header
 
+import heddle.error.ParamError
+
 enum AuthScheme:
   case Basic, Bearer
   case Other(token: String)
@@ -53,9 +55,9 @@ object Authorization:
     else Authorization(AuthScheme.parse(s.substring(0, space)), s.substring(space + 1))
 
   given TypedHeader[Authorization] with
-    def name: HeaderName                                   = HeaderName.Authorization
-    def decode(raw: String): Either[String, Authorization] = Right(parse(raw))
-    def encode(a: Authorization): String                   =
+    def name: HeaderName                                       = HeaderName.Authorization
+    def decode(raw: String): Either[ParamError, Authorization] = Right(parse(raw))
+    def encode(a: Authorization): String                       =
       if a.credentials.isEmpty then a.scheme.render else s"${a.scheme.render} ${a.credentials}"
 end Authorization
 
@@ -102,9 +104,9 @@ object WwwAuthenticate:
   end params
 
   given TypedHeader[WwwAuthenticate] with
-    def name: HeaderName                                     = HeaderName.WwwAuthenticate
-    def decode(raw: String): Either[String, WwwAuthenticate] = Right(parse(raw))
-    def encode(a: WwwAuthenticate): String                   =
+    def name: HeaderName                                         = HeaderName.WwwAuthenticate
+    def decode(raw: String): Either[ParamError, WwwAuthenticate] = Right(parse(raw))
+    def encode(a: WwwAuthenticate): String                       =
       if a.params.isEmpty then a.scheme.render
       else
         val ps = a.params.map((k, v) => s"$k=\"$v\"").mkString(", ")

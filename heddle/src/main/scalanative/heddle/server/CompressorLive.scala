@@ -2,7 +2,7 @@ package heddle.server
 
 import java.io.ByteArrayOutputStream
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.ContentEncoding
 import heddle.internal.zlib.GzipStream
 import zio.Chunk
@@ -26,7 +26,9 @@ private[server] object CompressorLive:
         if total > limit then Left(HttpError.BodyTooLarge) else Right(Chunk.fromArray(out.toByteArray))
       finally in.close()
       end try
-    catch case e: java.io.IOException => Left(HttpError.Malformed(s"gzip: ${e.getMessage}"))
+    catch
+      case e: java.io.IOException =>
+        Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Gzip, String.valueOf(e.getMessage))))
 end CompressorLive
 
 private object GzipCompressor extends Compressor:

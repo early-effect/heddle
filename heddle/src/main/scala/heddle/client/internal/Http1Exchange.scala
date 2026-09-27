@@ -1,7 +1,7 @@
 package heddle.client.internal
 
 import heddle.client.{Authority, Client, ClientError, Target}
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.{Body, HttpVersion, Method, Response, Status}
 import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
@@ -79,17 +79,22 @@ private[heddle] object Http1Exchange:
       .flatMap {
         case None      => ZIO.fail(io(target.authority, java.io.EOFException("connection closed before a response")))
         case Some(raw) =>
-          ZIO.fromEither(parseHead(raw)).mapError(e => ClientError.Protocol(target.authority, HttpError.Malformed(e)))
+          ZIO.fromEither(parseHead(raw)).mapError(malformed(target))
       }
 
-  def framing(method: Method, head: Head): Framing =
+  def malformed(target: Target)(e: WireError): ClientError =
+    ClientError.Protocol(target.authority, HttpError.Malformed(e))
+
+  /** RFC 9112 §6.3: a Content-Length that is not `1*DIGIT` leaves the response unframed, so it fails. */
+  def framing(method: Method, head: Head): Either[WireError, Framing] =
     val code = head.status.code
-    if method == Method.HEAD || code / 100 == 1 || code == 204 || code == 304 then Framing.NoBody
-    else if head.headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked")) then Framing.Chunked
+    if method == Method.HEAD || code / 100 == 1 || code == 204 || code == 304 then Right(Framing.NoBody)
+    else if head.headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked")) then
+      Right(Framing.Chunked)
     else
-      head.headers.contentLength match
-        case Some(n) => Framing.Length(n)
-        case None    => Framing.UntilClose
+      head.headers.get(HeaderName.ContentLength) match
+        case None      => Right(Framing.UntilClose)
+        case Some(raw) => Ascii.decimal(raw).map(Framing.Length(_)).toRight(WireError.BadContentLength(raw))
 
   def reuse(request: Headers, head: Head, framing: Framing): Reuse =
     val closes    = (h: Headers) => h.get(HeaderName.Connection).exists(_.toLowerCase.contains("close"))
@@ -176,35 +181,35 @@ private[heddle] object Http1Exchange:
       case HttpError.Timeout   => ClientError.ReadTimeout(authority)
       case other               => ClientError.Protocol(authority, other)
 
-  private[heddle] def parseHead(raw: Array[Byte]): Either[String, Head] =
+  private[heddle] def parseHead(raw: Array[Byte]): Either[WireError, Head] =
     val n = raw.length
     var i = 0
     while i + 1 < n && !(raw(i) == '\r' && raw(i + 1) == '\n') do i += 1
-    if i + 1 >= n then Left("Malformed status line")
+    if i + 1 >= n then Left(WireError.BadStatusLine(Ascii.string(raw, 0, n)))
     else
       val line = Ascii.string(raw, 0, i)
       val sp1  = line.indexOf(' ')
       val sp2  = if sp1 < 0 then -1 else line.indexOf(' ', sp1 + 1)
-      if sp1 < 0 then Left(s"Malformed status line: $line")
+      if sp1 < 0 then Left(WireError.BadStatusLine(line))
       else
         val version = HttpVersion.parse(Chunk.fromArray(raw), 0, sp1)
         val codeStr = if sp2 < 0 then line.substring(sp1 + 1) else line.substring(sp1 + 1, sp2)
         codeStr.toIntOption.filter(c => c >= 100 && c <= 999) match
-          case None    => Left(s"Malformed status line: $line")
+          case None    => Left(WireError.BadStatusLine(line))
           case Some(c) =>
             val hdrs = scala.collection.mutable.ArrayBuffer.empty[Header]
             var j    = i + 2
-            var err  = Option.empty[String]
+            var err  = Option.empty[WireError]
             while err.isEmpty && j + 1 < n do
               if raw(j) == '\r' && raw(j + 1) == '\n' then j = n
               else
                 var k = j
                 while k + 1 < n && !(raw(k) == '\r' && raw(k + 1) == '\n') do k += 1
-                if k + 1 >= n then err = Some("Truncated header")
+                if k + 1 >= n then err = Some(WireError.TruncatedHeaders)
                 else
                   var colon = j
                   while colon < k && raw(colon) != ':' do colon += 1
-                  if colon <= j || colon >= k then err = Some("Malformed header")
+                  if colon <= j || colon >= k then err = Some(WireError.BadHeaderLine)
                   else
                     val (ns, ne) = Ascii.trim(raw, j, colon)
                     hdrs += Header.slice(HeaderName.intern(raw, ns, ne), raw, colon + 1, k)

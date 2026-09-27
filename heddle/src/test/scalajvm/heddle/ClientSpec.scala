@@ -68,7 +68,8 @@ object ClientSpec extends ZIOSpecDefault:
                   b <- Client.batched(Request.get(url)).either
                   _ <- gate.succeed(())
                   _ <- a.join
-                yield assertTrue(b.isLeft)).provide(ZLayer.succeed(cfg) >>> Client.layer)
+                yield assertTrue(b == Left(ClientError.PoolExhausted(Authority("127.0.0.1", port)))))
+                  .provide(ZLayer.succeed(cfg) >>> Client.layer)
               }
             }
           }
