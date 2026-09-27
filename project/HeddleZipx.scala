@@ -47,11 +47,14 @@ object HeddleZipx:
     zipxWorkflowDispatch := true,
     zipxEnv              := javaOpts,
     zipxCapabilities ++= Seq(
-      Capability.once(
-        name = Capability.TestName,
-        command = alias("testJVM"),
-        env = javaOpts,
-      ),
+      // Replaces the builtin test by name, so it has to claim the LocalDir snapshot itself.
+      Capability
+        .once(
+          name = Capability.TestName,
+          command = alias("testJVM"),
+          env = javaOpts,
+        )
+        .withLocalCache(LocalCacheMode.Save),
       Capability.once(
         name = TestJs,
         command = alias("testJS"),
