@@ -46,19 +46,49 @@ object UiMeta:
     (ToolUi(uri.flatMap(_.toOption), vis), Chunk.fromIterable(uri.flatMap(_.left.toOption)))
   end decodeTool
 
-  def encodeResource(policy: UiPolicy): Json.Obj =
+  /** `McpUiResourceCsp`: each directive's origins, sorted; an empty directive is omitted. */
+  def encodeCsp(n: Network): Json.Obj =
     def list(d: Directive, os: Set[Origin]) =
       Option.when(os.nonEmpty)(d.wire -> Json.Arr(Chunk.fromIterable(os.toList.map(_.render).sorted).map(Json.Str(_))))
-    val n   = policy.network
-    val csp = Chunk(
-      list(Directive.Connect, n.connect),
-      list(Directive.Resource, n.resources),
-      list(Directive.Frame, n.frames),
-      list(Directive.Base, n.base),
-    ).flatten
-    val perm   = Chunk.fromIterable(policy.permissions.toList.sortBy(_.ordinal)).map(p => p.wire -> Json.Obj())
-    val fields = Chunk.fromIterable(Option.when(csp.nonEmpty)("csp" -> Json.Obj(csp))) ++
-      Chunk.fromIterable(Option.when(perm.nonEmpty)("permissions" -> Json.Obj(perm))) ++
+    Json.Obj(
+      Chunk(
+        list(Directive.Connect, n.connect),
+        list(Directive.Resource, n.resources),
+        list(Directive.Frame, n.frames),
+        list(Directive.Base, n.base),
+      ).flatten
+    )
+  end encodeCsp
+
+  /** `McpUiResourcePermissions`: one empty object per permission. */
+  def encodePermissions(ps: Set[Permission]): Json.Obj =
+    Json.Obj(Chunk.fromIterable(ps.toList.sortBy(_.ordinal)).map(p => p.wire -> Json.Obj()))
+
+  def decodeCsp(csp: Json.Obj): (Network, Chunk[MetaProblem]) =
+    def origins(d: Directive): (Set[Origin], Chunk[MetaProblem]) =
+      val raws =
+        csp.get(d.wire).collect { case Json.Arr(vs) => vs.collect { case Json.Str(s) => s } }.getOrElse(Chunk.empty)
+      val parsed = raws.map(r => Origin.from(r).left.map(MetaProblem.BadOrigin(d, r, _)))
+      (parsed.flatMap(_.toOption).toSet, parsed.flatMap(_.left.toOption))
+    val (connect, p1)   = origins(Directive.Connect)
+    val (resources, p2) = origins(Directive.Resource)
+    val (frames, p3)    = origins(Directive.Frame)
+    val (base, p4)      = origins(Directive.Base)
+    (Network(connect, resources, frames, base), p1 ++ p2 ++ p3 ++ p4)
+  end decodeCsp
+
+  def decodePermissions(perms: Json.Obj): (Set[Permission], Chunk[MetaProblem]) =
+    val asked = perms.fields.map(_._1)
+    (
+      asked.flatMap(n => Permission.values.find(_.wire == n)).toSet,
+      asked.filterNot(n => Permission.values.exists(_.wire == n)).map(MetaProblem.UnknownPermission(_)),
+    )
+
+  def encodeResource(policy: UiPolicy): Json.Obj =
+    val csp    = encodeCsp(policy.network)
+    val perm   = encodePermissions(policy.permissions)
+    val fields = Chunk.fromIterable(Option.when(csp.fields.nonEmpty)("csp" -> csp)) ++
+      Chunk.fromIterable(Option.when(perm.fields.nonEmpty)("permissions" -> perm)) ++
       Chunk.fromIterable(policy.origin match
         case AppOrigin.Stable(label) => Some("domain" -> Json.Str(label))
         case AppOrigin.Opaque        => None) ++
@@ -70,21 +100,11 @@ object UiMeta:
   end encodeResource
 
   def decodeResource(meta: Option[Json.Obj]): (UiPolicy, Chunk[MetaProblem]) =
-    val ui  = meta.flatMap(_.get(Key)).collect { case o: Json.Obj => o }.getOrElse(Json.Obj())
-    val csp = ui.get("csp").collect { case o: Json.Obj => o }.getOrElse(Json.Obj())
-    def origins(d: Directive): (Set[Origin], Chunk[MetaProblem]) =
-      val raws =
-        csp.get(d.wire).collect { case Json.Arr(vs) => vs.collect { case Json.Str(s) => s } }.getOrElse(Chunk.empty)
-      val parsed = raws.map(r => Origin.from(r).left.map(MetaProblem.BadOrigin(d, r, _)))
-      (parsed.flatMap(_.toOption).toSet, parsed.flatMap(_.left.toOption))
-    val (connect, p1)   = origins(Directive.Connect)
-    val (resources, p2) = origins(Directive.Resource)
-    val (frames, p3)    = origins(Directive.Frame)
-    val (base, p4)      = origins(Directive.Base)
-    val asked   = ui.get("permissions").collect { case o: Json.Obj => o.fields.map(_._1) }.getOrElse(Chunk.empty)
-    val known   = asked.flatMap(n => Permission.values.find(_.wire == n))
-    val unknown = asked.filterNot(n => Permission.values.exists(_.wire == n)).map(MetaProblem.UnknownPermission(_))
-    val origin  = ui
+    val ui                     = meta.flatMap(_.get(Key)).collect { case o: Json.Obj => o }.getOrElse(Json.Obj())
+    val (network, cspProblems) = decodeCsp(ui.get("csp").collect { case o: Json.Obj => o }.getOrElse(Json.Obj()))
+    val (known, unknown)       =
+      decodePermissions(ui.get("permissions").collect { case o: Json.Obj => o }.getOrElse(Json.Obj()))
+    val origin = ui
       .get("domain")
       .collect { case Json.Str(s) if s.nonEmpty => AppOrigin.Stable(s) }
       .getOrElse(
@@ -94,9 +114,6 @@ object UiMeta:
       case Some(Json.Bool(true))  => Border.Visible
       case Some(Json.Bool(false)) => Border.Hidden
       case _                      => Border.HostDefault
-    (
-      UiPolicy(Network(connect, resources, frames, base), known.toSet, origin, border),
-      p1 ++ p2 ++ p3 ++ p4 ++ unknown,
-    )
+    (UiPolicy(network, known, origin, border), cspProblems ++ unknown)
   end decodeResource
 end UiMeta
