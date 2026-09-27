@@ -34,7 +34,7 @@ end Route
 final case class RoutePattern[A](method: Method, path: PathCodec[A]):
   def /(lit: String): RoutePattern[A] = copy(path = path / lit)
 
-  def /[B](codec: PathCodec[B]): RoutePattern[Combine[A, B]] =
+  def /[B](codec: PathCodec[B])(using c: Combiner[A, B]): RoutePattern[c.Out] =
     RoutePattern(method, path / codec)
 
   def ->[R, E](h: Handler[R, E])(using ev: A =:= Unit): Route[R, E] =
