@@ -203,13 +203,15 @@ bounded, or free), and fields a newer host sends that this revision does not kno
       md"""
 A view connects to its host with `AppBridge.connect(shed, port, settings)`. The handshake is
 `ui/initialize` and then `ui/notifications/initialized`; the bridge answers and routes messages
-until its scope closes. `ViewPort` is the transport: `postMessage` in a browser, or
-`ViewPort.pair` for a host and a view in one process, as the tests use.
+until its scope closes. `ViewPort` is the transport. In a browser it is
+`PostMessageBridge.toParent`: the view posts to `window.parent` and hears only messages from it,
+as the ext-apps SDK does, and anything that is not JSON-RPC is dropped. `ViewPort.pair` joins a
+host and a view in one process, as the tests do.
 
 ```scala
 ZIO.scoped {
   for
-    bridge <- AppBridge.connect(bill, port, AppBridge.Settings(Implementation("bill-view", "1")))
+    bridge <- AppBridge.connect(bill, PostMessageBridge.toParent, AppBridge.Settings(Implementation("bill-view", "1")))
     show   <- bridge.call(_.show)(7)          // Int in, Show out, ShowNotFound as a typed error
   yield show
 }
