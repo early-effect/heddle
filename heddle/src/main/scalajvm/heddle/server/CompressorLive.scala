@@ -2,6 +2,7 @@ package heddle.server
 
 import java.io.ByteArrayOutputStream
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
+import heddle.error.HttpError
 import heddle.http.ContentEncoding
 import zio.Chunk
 import zio.stream.ZStream
@@ -9,10 +10,23 @@ import zio.stream.ZStream
 private[server] object CompressorLive:
   val gzip: Compressor = GzipCompressor
 
-  def gunzip(bytes: Chunk[Byte]): Chunk[Byte] =
-    val in = GZIPInputStream(java.io.ByteArrayInputStream(bytes.toArray))
-    try Chunk.fromArray(in.readAllBytes())
-    finally in.close()
+  def gunzip(bytes: Chunk[Byte], limit: Long): Either[HttpError, Chunk[Byte]] =
+    try
+      val in = GZIPInputStream(java.io.ByteArrayInputStream(bytes.toArray))
+      try
+        val out   = ByteArrayOutputStream(math.min(limit, 64L * 1024).toInt.max(64))
+        val buf   = new Array[Byte](8192)
+        var total = 0L
+        var n     = in.read(buf)
+        while n >= 0 && total <= limit do
+          total += n
+          if total <= limit then out.write(buf, 0, n)
+          n = in.read(buf)
+        if total > limit then Left(HttpError.BodyTooLarge) else Right(Chunk.fromArray(out.toByteArray))
+      finally in.close()
+      end try
+    catch case e: java.io.IOException => Left(HttpError.Malformed(s"gzip: ${e.getMessage}"))
+end CompressorLive
 
 private object GzipCompressor extends Compressor:
   def encoding: ContentEncoding = ContentEncoding.Gzip

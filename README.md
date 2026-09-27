@@ -24,7 +24,7 @@ their own packages.
 Core (ZIO only):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.2.0"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.4.1"
 ```
 
 Optional artifacts, same version: `heddle-mcp`, `heddle-oauth`, `heddle-brotli`.

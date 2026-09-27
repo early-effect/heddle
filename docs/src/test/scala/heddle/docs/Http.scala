@@ -84,16 +84,62 @@ value. Idle, header, and connection caps live on `Server.Config`. See
         assertTrue(status == Status.Ok, body == "ok")
       },
     ),
-    section("Client, files, compression")(
+    section("Client")(
       md"""
-`Client.get` / `Client.batched` are the HTTP/1.1 client. JVM pools sockets. JS uses
-`fetch`. Native opens a POSIX (or TLS) socket per call. One-shot helpers take
-`Client.Config` (default named values, including connect and read timeouts).
+`Client.batched` sends a request and reads the whole body. `Client.streaming` returns once the
+head arrives and reads the body from the connection until its `Scope` closes. `Client.sse` is a
+`text/event-stream` GET. All of them fail with `ClientError`, a closed enum of transport facts:
+`InvalidTarget`, `Connect`, `ConnectTimeout`, `Tls`, `ReadTimeout`, `Io`, `Protocol`,
+`PoolExhausted`, `InvalidTrust`. A response with any status is a success.
+
+JVM and Native share one pooled HTTP/1.1 client. Every exchange settles its connection on
+success, failure, and interruption, so a timed-out call gives its slot back. A close-delimited
+body never returns to the pool. A GET, HEAD, PUT, DELETE, OPTIONS, or TRACE whose pooled
+connection the server already dropped is sent once more on a fresh one; a POST is not. JS is
+Node's `fetch`. TLS verifies the peer and its name on every platform. `ClientTls.trusting(pem)`
+(JVM, Native) pins a private CA; Node reads `NODE_EXTRA_CA_CERTS`.
+""",
+      exampleZIO {
+        ZIO.attemptBlocking(java.net.ServerSocket(0)).flatMap { ss =>
+          val port = ss.getLocalPort
+          ss.close()
+          Client.get(s"http://127.0.0.1:$port/").either
+        }
+      }.assert { out =>
+        assertTrue(out match
+          case Left(ClientError.Connect(Authority("127.0.0.1", _), _)) => true
+          case _                                                       => false)
+      },
+      md"""
+`Client.call(endpoint)(in)` is the typed call. It fails with `CallFailure[E]`: `Domain(e)` for
+one of the endpoint's own errors, `Transport` for a `ClientError`, `Undecodable` for a body the
+codecs reject, `Unexpected` for a status the endpoint never declared. Nothing becomes a defect.
+""",
+      exampleZIO {
+        val ep  = Endpoint.get("hello" / string("name")).out[String].outError[String](Status.NotFound)
+        val api =
+          Api("hello", "1").bind(ep)(name => if name == "ada" then ZIO.succeed(s"hi $name") else ZIO.fail("nobody"))
+        (Client.call(ep)("ada") <*> Client.call(ep)("bob").either).provideLayer(Client.inMemory(api.routes))
+      }.assert { case (ok, missing) =>
+        assertTrue(ok == "hi ada", missing == Left(CallFailure.Domain("nobody")))
+      },
+    ),
+    section("Files and compression")(
+      md"""
 A caller-given file is `Files.fromPath` (jailed under `SafePath` for directory roots).
 Compression is `@@ Middleware.compress` (gzip in core). Add `heddle-brotli` and pass
 `Brotli.compressor` when you want `br`. Incoming `Content-Encoding` is
-`@@ Middleware.decompress(maxBytes = ...)`.
+`@@ Middleware.decompress(maxBytes = ...)`. Inflation stops at `maxBytes`: a small gzip bomb
+gets `413` before it can fill memory, and corrupt input gets `400`.
 """,
+      exampleZIO {
+        val bomb   = Compressor.gzip.compress(zio.Chunk.fill(8 * 1024 * 1024)(0.toByte))
+        val routes = Routes(Method.POST / "in" -> Handler.text("reached")) @@ Middleware.decompress(maxBytes = 64.K)
+        routes(Request.post("/in", Body.fromBytes(bomb)).withHeader("Content-Encoding", "gzip"))
+          .map(res => (bomb.length, res.status))
+      }.assert { case (compressed, status) =>
+        assertTrue(compressed < 64 * 1024, status == Status.ContentTooLarge)
+      },
       exampleValue {
         Brotli.encode(zio.Chunk.fromArray("hi".getBytes("UTF-8"))).nonEmpty
       }.assert(ok => assertTrue(ok)),

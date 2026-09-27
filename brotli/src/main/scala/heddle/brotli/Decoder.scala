@@ -20,7 +20,8 @@ private[brotli] object Decoder:
   private val BlockLenExtra =
     Array(2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24)
 
-  def decode(data: Array[Byte]): Array[Byte] =
+  /** Throws `BrotliException` on corrupt input and `OverLimit` before output would pass `limit` bytes. */
+  def decode(data: Array[Byte], limit: Long): Array[Byte] =
     val br      = BitReader(data)
     val wbits   = windowBits(br)
     val maxBack = (1 << wbits) - 16
@@ -31,6 +32,7 @@ private[brotli] object Decoder:
     while !last do
       val hdr = metablock(br)
       last = hdr.last
+      if !hdr.metadata && out.length.toLong + hdr.length > limit then throw OverLimit()
       if hdr.length == 0 then ()
       else if hdr.metadata then
         br.jumpToByteBoundary()

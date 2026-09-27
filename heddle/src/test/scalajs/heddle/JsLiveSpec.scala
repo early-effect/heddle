@@ -37,6 +37,37 @@ object JsLiveSpec extends ZIOSpecDefault:
           }
         }
       ,
+      test("a body past maxBodyBytes is BodyTooLarge over fetch"):
+        val routes = Routes(Method.GET / "big" -> Handler.text("x" * 4096))
+        ZIO.scoped {
+          Server.install(routes, local).flatMap { server =>
+            server.port.flatMap { port =>
+              Client
+                .batched(Request.get(s"http://127.0.0.1:$port/big"))
+                .provideLayer(ZLayer.succeed(Client.Config.default.copy(maxBodyBytes = 1.K)) >>> Client.layer)
+                .either
+                .map(out =>
+                  assertTrue(out match
+                    case Left(ClientError.Protocol(_, HttpError.BodyTooLarge)) => true
+                    case _                                                     => false)
+                )
+            }
+          }
+        }
+      ,
+      test("a refused connection is Connect over fetch"):
+        val free = ZIO.scoped(Server.install(Routes.empty, local).flatMap(_.port))
+        free.flatMap { port =>
+          Client
+            .get(s"http://127.0.0.1:$port/")
+            .either
+            .map(out =>
+              assertTrue(out match
+                case Left(_: ClientError.Connect) => true
+                case _                            => false)
+            )
+        }
+      ,
       test("Files.fromPath serves a Node file"):
         val path = "target/heddle-js-files-test.txt"
         val _    = Fs.writeFileSync(path, Buffers.toU8(Chunk.fromArray("hello-js".getBytes)))

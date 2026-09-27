@@ -34,7 +34,7 @@ packages. Datastar `readSignals` is an extension on `Request`.
 | `Server.install` HTTP/1.1 | yes (Loom default) | yes (`node:net`) | yes (POSIX) |
 | TLS | `javax.net.ssl` | `node:tls` | OpenSSL |
 | HTTP/2 | yes | no | no |
-| `Client` | pooled sockets | `fetch` | one-shot socket |
+| `Client` | pooled HTTP/1.1 | `fetch` | pooled HTTP/1.1 (`getaddrinfo`, verified OpenSSL) |
 | `Files` | nio | `node:fs` + `SafePath` | nio + `SafePath` |
 | Digest / RS256 | `java.security` | `node:crypto` | OpenSSL |
 | MCP HTTP + stdio | yes | yes | yes |

@@ -8,6 +8,7 @@ export heddle.http.{
   Status,
   HttpVersion,
   Url,
+  Scheme,
   Path,
   QueryParams,
   ContentEncoding,
@@ -87,7 +88,7 @@ export heddle.auth.Auth
 export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}
 export BytesLength.*
 export heddle.server.{Compressor, Decompressor, Files, Http2Config, Tls}
-export heddle.client.Client
+export heddle.client.{Authority, CallFailure, Client, ClientError}
 export heddle.error.{HeddleError, HttpError, ServerError}
 export heddle.route.QueryCodec.given
 export heddle.route.HeaderCodec.given

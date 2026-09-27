@@ -155,6 +155,12 @@ and idle keepers (`maxIdlePerHost`, default 10). `poolIdleTimeout` (default 60 s
 closes idle pooled sockets. `connectTimeout` (default 10 seconds) and `idleTimeout`
 (default 60 seconds) stop a hung peer from blocking a fiber forever.
 
+Interrupting a call (a `timeout`, a lost race) closes its socket and frees its slot. A body
+that ends when the server closes the socket (no `Content-Length`, not chunked) is never pooled,
+and neither is a `Connection: close` exchange or an HTTP/1.0 one without keep-alive. Bodies
+past `maxBodyBytes` fail with `ClientError.Protocol(_, HttpError.BodyTooLarge)`, however they
+are framed.
+
 `Client.get` does not add `Accept-Encoding`. If you want gzip, set the header.
 The client inflates a gzip body only when that request asked for gzip.
 """,

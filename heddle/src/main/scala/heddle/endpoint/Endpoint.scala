@@ -1,6 +1,7 @@
 package heddle.endpoint
 
 import java.nio.charset.StandardCharsets
+import heddle.client.CallFailure
 import heddle.http.{Body, Form, MediaType, Method, Path, QueryParams, Request, Response, Status, Url}
 import heddle.http.header.Headers
 import heddle.http.header.TypedHeader
@@ -227,38 +228,39 @@ sealed abstract class Endpoint[In, Err, Out]:
       val url     = base.copy(path = Path(base.path.segments ++ encoded.segments), query = acc.query)
       Right(Request(method, url, acc.headers, acc.body))
 
-  def fromResponse(res: Response): IO[Err, Out] =
+  def fromResponse(res: Response): IO[CallFailure[Err], Out] =
     if errors.handles(res.status) then decodeFailure(res)
     else if res.status.isSuccess then decodeSuccess(res)
-    else ZIO.dieMessage(s"HTTP ${res.status.code}")
+    else ZIO.fail(CallFailure.Unexpected(res.status))
 
-  private def decodeSuccess(res: Response): IO[Err, Out] =
+  private def collected(res: Response): IO[CallFailure[Nothing], Chunk[Byte]] =
+    res.body.collect.mapError(e => CallFailure.Undecodable(res.status, s"unreadable body: ${e.getMessage}"))
+
+  private def decodeSuccess(res: Response): IO[CallFailure[Err], Out] =
     val ct = doc.responses.find(_.status.isSuccess).flatMap(_.contentType)
     ct match
       case Some(mt) if mt.isJson =>
         outputCodec match
-          case None    => ZIO.dieMessage("JSON out missing codec")
+          case None    => ZIO.fail(CallFailure.Undecodable(res.status, "JSON output has no codec"))
           case Some(c) =>
-            res.body.collect.orDie.flatMap { raw =>
-              Endpoint.jsonDecode(raw)(using c) match
-                case Left(msg) => ZIO.dieMessage(msg)
-                case Right(o)  => ZIO.succeed(o)
+            collected(res).flatMap { raw =>
+              ZIO.fromEither(Endpoint.jsonDecode(raw)(using c)).mapError(CallFailure.Undecodable(res.status, _))
             }
       case Some(mt) if mt.mainType == "text" && !mt.isEventStream =>
-        res.body.utf8.orDie.map(_.asInstanceOf[Out])
+        collected(res).map(raw => String(raw.toArray, StandardCharsets.UTF_8).asInstanceOf[Out])
       case None =>
         ZIO.succeed(().asInstanceOf[Out])
       case Some(_) =>
-        res.body.collect.orDie.map(_.asInstanceOf[Out])
+        collected(res).map(_.asInstanceOf[Out])
     end match
   end decodeSuccess
 
-  private def decodeFailure(res: Response): IO[Err, Out] =
-    res.body.collect.orDie.flatMap { raw =>
+  private def decodeFailure(res: Response): IO[CallFailure[Err], Out] =
+    collected(res).flatMap { raw =>
       errors.decode(res.status, raw) match
-        case None            => ZIO.dieMessage(s"HTTP ${res.status.code}")
-        case Some(Left(msg)) => ZIO.dieMessage(msg)
-        case Some(Right(e))  => ZIO.fail(e)
+        case None            => ZIO.fail(CallFailure.Unexpected(res.status))
+        case Some(Left(msg)) => ZIO.fail(CallFailure.Undecodable(res.status, msg))
+        case Some(Right(e))  => ZIO.fail(CallFailure.Domain(e))
     }
 
   private def zipIn[P](in: In, piece: P): Combine[In, P] = Combine(in, piece)

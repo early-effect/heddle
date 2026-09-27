@@ -28,7 +28,9 @@ object JwtVerifierSpec extends ZIOSpecDefault:
       ,
       test("authorizationUrl includes PKCE S256"):
         val dummy = new heddle.client.Client:
-          def batched(req: heddle.http.Request) = ZIO.fail(new RuntimeException("unused"))
+          def batched(req: heddle.http.Request) =
+            ZIO.fail(heddle.client.ClientError.InvalidTarget(req.url.render, "unused"))
+          def streaming(req: heddle.http.Request) = batched(req)
         val oc =
           heddle.oauth.client.OAuthClient(dummy, "http://iss", "cid", None, "http://iss/authorize", "http://iss/token")
         val pkce = heddle.oauth.client.OAuthClient.pkce()

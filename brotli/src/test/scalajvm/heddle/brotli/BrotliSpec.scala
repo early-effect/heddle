@@ -46,7 +46,7 @@ object BrotliSpec extends ZIOSpecDefault:
       test("encode then our decode is identity"):
         check(BrotliGens.bytes) { raw =>
           val enc = Brotli.encode(Chunk.fromArray(raw))
-          assertTrue(Brotli.decode(enc).toArray.toSeq == raw.toSeq)
+          assertTrue(Brotli.decode(enc).map(_.toArray.toSeq) == Right(raw.toSeq))
         }
       ,
       test("streamed encode then org.brotli.dec is identity"):
@@ -61,10 +61,23 @@ object BrotliSpec extends ZIOSpecDefault:
         val bad   = names.flatMap { name =>
           val raw = resource(s"/heddle/brotli/google/$name.bin")
           val br  = resource(s"/heddle/brotli/google/$name.br")
-          val got = Brotli.decode(Chunk.fromArray(br)).toArray
-          if got.toSeq == raw.toSeq then Nil else List(name)
+          val got = Brotli.decode(Chunk.fromArray(br)).map(_.toArray.toSeq)
+          if got == Right(raw.toSeq) then Nil else List(name)
         }
         assertTrue(bad.isEmpty)
+      ,
+      test("decode refuses output past its limit"):
+        check(BrotliGens.bytes) { raw =>
+          val enc = Brotli.encode(Chunk.fromArray(raw))
+          val cap = raw.length / 2
+          if raw.length == 0 then assertTrue(Brotli.decode(enc, BytesLength(0)).isRight)
+          else assertTrue(Brotli.decode(enc, BytesLength(cap)) == Left(HttpError.BodyTooLarge))
+        }
+      ,
+      test("decode of junk is a value, never a throw"):
+        check(BrotliGens.bytes) { junk =>
+          assertTrue(Brotli.decode(Chunk.fromArray(junk)).fold(_ => true, _ => true))
+        }
       ,
       test("repeated input shrinks"):
         check(BrotliGens.compressible) { raw =>

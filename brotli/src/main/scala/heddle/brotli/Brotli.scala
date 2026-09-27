@@ -1,5 +1,7 @@
 package heddle.brotli
 
+import heddle.BytesLength
+import heddle.error.HttpError
 import heddle.http.ContentEncoding
 import heddle.server.{Compressor, Decompressor}
 import zio.Chunk
@@ -13,11 +15,13 @@ object Brotli:
   def encode(bytes: Chunk[Byte]): Chunk[Byte] =
     Chunk.fromArray(encodeArray(bytes.toArray))
 
-  def decode(bytes: Chunk[Byte]): Chunk[Byte] =
-    Chunk.fromArray(decodeArray(bytes.toArray))
-
-  def decodeArray(data: Array[Byte]): Array[Byte] =
-    Decoder.decode(data)
+  /** Total. Corrupt input is `Malformed`; more than `limit` decoded bytes is `BodyTooLarge`. */
+  def decode(bytes: Chunk[Byte], limit: BytesLength = BytesLength(Int.MaxValue)): Either[HttpError, Chunk[Byte]] =
+    try Right(Chunk.fromArray(Decoder.decode(bytes.toArray, limit.toLong)))
+    catch
+      case _: OverLimit                                            => Left(HttpError.BodyTooLarge)
+      case e @ (_: BrotliException | _: IndexOutOfBoundsException) =>
+        Left(HttpError.Malformed(s"brotli: ${e.getMessage}"))
 
   def encodeArray(data: Array[Byte]): Array[Byte] =
     val w = BitWriter()
@@ -62,7 +66,7 @@ end BrotliCompressor
 private object BrotliDecompressor extends Decompressor:
   def encoding: ContentEncoding = ContentEncoding.Brotli
 
-  def decompress(bytes: Chunk[Byte]): Chunk[Byte] = Brotli.decode(bytes)
+  def decompress(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]] = Brotli.decode(bytes, limit)
 
 private def writeCompressed(w: BitWriter, data: Array[Byte]): Unit =
   val cmds = Lz77.compress(data)

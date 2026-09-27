@@ -72,10 +72,7 @@ final case class Headers(toChunk: Chunk[Header]):
     getAll(HeaderName.SetCookie).flatMap(raw => Chunk.fromIterable(SetCookie.parse(raw)))
 
   def location: Option[Url] =
-    get(HeaderName.Location).flatMap { raw =>
-      try Some(Url.parse(raw))
-      catch case _: java.net.URISyntaxException => None
-    }
+    get(HeaderName.Location).flatMap(Url.decode(_).toOption)
 
   def date: Option[Instant]            = get(HeaderName.Date).flatMap(HttpDate.parse)
   def expires: Option[Instant]         = get(HeaderName.Expires).flatMap(HttpDate.parse)

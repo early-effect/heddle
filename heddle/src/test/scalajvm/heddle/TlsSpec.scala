@@ -1,6 +1,6 @@
 package heddle
 
-import heddle.client.ClientPlatform
+import heddle.client.ClientTls
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.security.KeyStore
@@ -51,8 +51,37 @@ object TlsSpec extends ZIOSpecDefault:
         LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
           Client
             .batched(Request.get(s"$base/health"))
-            .provide(ZLayer.succeed(Client.Config.default) >>> ClientPlatform.withSsl(TlsFixture.ssl))
+            .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.context(TlsFixture.ssl))
             .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+        }
+      ,
+      test("ClientTls.trusting pins the PEM it is given"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
+          Client
+            .batched(Request.get(s"$base/health"))
+            .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting(TlsFixture.certPem))
+            .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+        }
+      ,
+      test("the default trust store rejects a self-signed peer with Tls"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
+          Client
+            .get(s"$base/health")
+            .either
+            .map(out =>
+              assertTrue(out match
+                case Left(_: ClientError.Tls) => true
+                case _                        => false)
+            )
+        }
+      ,
+      test("a PEM with no certificate is InvalidTrust"):
+        ZIO.scoped((ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting("not a pem")).build).exit.map { exit =>
+          assertTrue(exit match
+            case Exit.Failure(c) => c.failureOption.exists(_.isInstanceOf[ClientError.InvalidTrust])
+            case _               => false)
         }
       ,
       test("requireTls forbids cleartext and allows HTTPS"):

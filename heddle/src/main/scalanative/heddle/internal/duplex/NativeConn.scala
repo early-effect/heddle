@@ -6,8 +6,12 @@ import heddle.internal.posix.{AsyncFd, Net}
 import java.nio.ByteBuffer
 import zio.*
 
+/** A non-blocking socket, plain or TLS. `SO_RCVTIMEO` never fires on a non-blocking socket, so the read timeout bounds
+  * each park on the poller instead.
+  */
 private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) extends ByteConn:
   @volatile private var closed                  = false
+  @volatile private var readTimeout: Duration   = Duration.Infinity
   def read(dst: ByteBuffer): IO[HttpError, Int] =
     def attempt: IO[HttpError, Option[Int]] =
       ZIO
@@ -54,32 +58,22 @@ private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) ex
       loop(0)
 
   private def parkRead: IO[HttpError, Unit] =
-    AsyncFd.readable(fd).mapError(HttpError.Io(_))
+    val park    = AsyncFd.readable(fd).mapError(HttpError.Io(_))
+    val timeout = readTimeout
+    if timeout == Duration.Infinity || timeout.toNanos <= 0L then park
+    else park.timeoutFail(HttpError.Timeout)(timeout)
 
   def close: UIO[Unit] =
     ZIO.succeed {
       if !closed then
         closed = true
-        ssl match
-          case Some(s) =>
-            // SSL_set_fd transfers the fd to the BIO; SSL_free closes it.
-            s.close()
-          case None =>
-            Net.close(fd)
+        // SSL_set_fd wraps the socket in a BIO_NOCLOSE BIO: SSL_free leaves it open.
+        ssl.foreach(_.close())
+        Net.close(fd)
     }
 
   def setReadTimeout(d: Duration): UIO[Unit] =
-    ZIO.succeed {
-      ssl match
-        case Some(_) =>
-          // SSL_set_fd owns the socket. SO_RCVTIMEO after that stalls SSL_read on Native.
-          ()
-        case None =>
-          val ms =
-            if d == Duration.Infinity || d.toNanos <= 0L then 0
-            else math.max(1L, d.toMillis).min(Int.MaxValue.toLong).toInt
-          Net.setRecvTimeout(fd, ms)
-    }
+    ZIO.succeed { readTimeout = d }
 end NativeConn
 
 object NativeConn:

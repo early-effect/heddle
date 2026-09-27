@@ -129,7 +129,7 @@ object EndpointSpec extends ZIOSpecDefault:
         for
           a <- ep.fromResponse(ok)
           b <- ep.fromResponse(no).either
-        yield assertTrue(a == "hi", b == Left("nope"))
+        yield assertTrue(a == "hi", b == Left(CallFailure.Domain("nope")))
       ,
       test("chaining outError keeps only the last status"):
         val ep = Endpoint.get("x").out[String].outError[String](Status.BadRequest).outError[String](Status.Conflict)
@@ -189,13 +189,13 @@ object EndpointSpec extends ZIOSpecDefault:
       test("fromResponse decodes every case back from its own response"):
         val ep = ErrorFixtures.order
         check(Gen.fromIterable(OrderError.all)) { e =>
-          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == CallFailure.Domain(e)))
         }
       ,
       test("cases may share a status and still decode to the right case"):
         val ep = ErrorFixtures.seating
         check(Gen.fromIterable(List(Seating.SoldOut(1), Seating.NoBlock(1, 2), Seating.Closed))) { e =>
-          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == CallFailure.Domain(e)))
         } && assertTrue(
           ep.encodeErr(Seating.SoldOut(1)).status == Status.Conflict,
           ep.encodeErr(Seating.NoBlock(1, 2)).status == Status.Conflict,
@@ -206,18 +206,24 @@ object EndpointSpec extends ZIOSpecDefault:
         val ep  = ErrorFixtures.light
         val res = ep.encodeErr(Light.Red)
         ep.fromResponse(res).flip.map { back =>
-          assertTrue(res.status == Status.Forbidden, res.body.asString == "\"Red\"", back == Light.Red)
+          assertTrue(
+            res.status == Status.Forbidden,
+            res.body.asString == "\"Red\"",
+            back == CallFailure.Domain(Light.Red),
+          )
         }
       ,
-      test("a body whose case answers with another status dies"):
+      test("a body whose case answers with another status is Undecodable"):
         val res = Response(Status.Conflict).withBody(Body.json("""{"NotFound":{"id":1}}"""))
-        ErrorFixtures.order.fromResponse(res).exit.map { exit =>
-          assertTrue(exit.causeOption.flatMap(_.dieOption).exists(_.getMessage.contains("answers with 404")))
+        ErrorFixtures.order.fromResponse(res).flip.map { failure =>
+          assertTrue(failure match
+            case CallFailure.Undecodable(Status.Conflict, reason) => reason.contains("answers with 404")
+            case _                                                => false)
         }
       ,
-      test("a status outside the error set and success dies"):
-        ErrorFixtures.order.fromResponse(Response(Status.BadGateway)).exit.map { exit =>
-          assertTrue(exit.causeOption.exists(_.isDie))
+      test("a status outside the error set and success is Unexpected"):
+        ErrorFixtures.order.fromResponse(Response(Status.BadGateway)).flip.map { failure =>
+          assertTrue(failure == CallFailure.Unexpected(Status.BadGateway))
         }
       ,
       test("Client.call surfaces the typed case"):
@@ -225,12 +231,12 @@ object EndpointSpec extends ZIOSpecDefault:
           .call(ErrorFixtures.order)(2)
           .either
           .provideLayer(Client.inMemory(orderApi.routes))
-          .map(out => assertTrue(out == Left(OrderError.Conflict("busy"))))
+          .map(out => assertTrue(out == Left(CallFailure.Domain(OrderError.Conflict("busy")))))
       ,
       test("a nested sealed trait is one case covering all its leaves"):
         val ep = ErrorFixtures.lookup
         check(Gen.fromIterable(List(Lookup.NoUser(1), Lookup.NoOrg(2), Lookup.Throttled))) { e =>
-          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == e))
+          ep.fromResponse(ep.encodeErr(e)).flip.map(back => assertTrue(back == CallFailure.Domain(e)))
         } && assertTrue(
           ep.encodeErr(Lookup.NoUser(1)).status == Status.NotFound,
           ep.encodeErr(Lookup.NoOrg(2)).status == Status.NotFound,

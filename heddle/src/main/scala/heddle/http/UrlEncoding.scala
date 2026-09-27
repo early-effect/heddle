@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets
   * [[encode]] / [[decode]] are RFC 3986 unreserved (`-._~`). Space is `%20`. Plus is `%2B`. [[encodeForm]] /
   * [[decodeForm]] are `application/x-www-form-urlencoded` as `URLEncoder.encode` / `URLDecoder.decode`: space is `+`,
   * `*` stays, `~` is `%7E`.
+  *
+  * Decoding is total and follows the WHATWG URL percent-decode: a `%` not followed by two hex digits stays literal.
   */
 object UrlEncoding:
   def encode(s: String): String     = encodeBytes(s, form = false)
@@ -39,12 +41,8 @@ object UrlEncoding:
         case '+' if plusIsSpace =>
           bytes += ' '.toByte
           i += 1
-        case '%' =>
-          if i + 2 >= n then throw IllegalArgumentException("incomplete percent-escape")
-          val hi = fromHex(s.charAt(i + 1))
-          val lo = fromHex(s.charAt(i + 2))
-          if hi < 0 || lo < 0 then throw IllegalArgumentException("illegal percent-escape")
-          bytes += ((hi << 4) | lo).toByte
+        case '%' if i + 2 < n && fromHex(s.charAt(i + 1)) >= 0 && fromHex(s.charAt(i + 2)) >= 0 =>
+          bytes += ((fromHex(s.charAt(i + 1)) << 4) | fromHex(s.charAt(i + 2))).toByte
           i += 3
         case c if c < 128 =>
           bytes += c.toByte

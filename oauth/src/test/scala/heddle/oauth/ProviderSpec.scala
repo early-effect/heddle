@@ -28,7 +28,8 @@ object ProviderSpec extends ZIOSpecDefault:
         withOp { (base, key, _) =>
           val pkce = OAuthClient.pkce()
           val http = new Client:
-            def batched(req: Request) = Client.request(req.method, abs(base, req), req.headers, req.body)
+            def batched(req: Request)   = Client.request(req.method, abs(base, req), req.headers, req.body)
+            def streaming(req: Request) = batched(req)
           val oc   = OAuthClient(http, base, "web", None, s"$base/authorize", s"$base/token", Some(s"$base/userinfo"))
           val auth = AuthzRequest("http://127.0.0.1/cb", Set("openid", "profile"), "st")
           for
@@ -64,7 +65,8 @@ object ProviderSpec extends ZIOSpecDefault:
       test("client credentials grant"):
         withOp { (base, key, _) =>
           val http = new Client:
-            def batched(req: Request) = Client.request(req.method, abs(base, req), req.headers, req.body)
+            def batched(req: Request)   = Client.request(req.method, abs(base, req), req.headers, req.body)
+            def streaming(req: Request) = batched(req)
           val oc = OAuthClient(http, base, "machine", Some("secret"), s"$base/authorize", s"$base/token")
           for
             tokens <- oc.clientCredentials(Set("api"))

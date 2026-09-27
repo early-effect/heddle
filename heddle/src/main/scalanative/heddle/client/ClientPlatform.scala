@@ -1,301 +1,87 @@
 package heddle.client
 
-import heddle.error.HttpError
-import heddle.http.{Body, Method, Request, Response, Status}
-import heddle.http.header.{Header, HeaderName, Headers}
-import heddle.internal.Ascii
-import heddle.internal.duplex.{ByteConn, NativeConn}
-import heddle.internal.engine.ConnBuf
+import heddle.client.internal.{Connector, Http1Client, Http1Conn, IoFailure}
+import heddle.http.{Request, Response}
+import heddle.internal.duplex.NativeConn
 import heddle.internal.openssl.Ssl
-import heddle.internal.posix.{AsyncFd, Net, SslIo}
-import heddle.sse.{ServerSentEvent, SseCodec}
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
+import heddle.internal.posix.{AsyncFd, Net, SockAddr, SslIo}
 import zio.*
-import zio.stream.ZStream
 
 private[heddle] object ClientPlatform:
-  def layer: ZLayer[Client.Config, Nothing, Client] =
-    ZLayer.fromZIO(ZIO.serviceWith[Client.Config](cfg => Live(cfg)))
+  def layer: ZLayer[Client.Config, ClientError, Client] =
+    trusting(None)
 
-  def get(url: String, config: Client.Config): Task[Response] =
-    request(Method.GET, url, Headers.empty, Body.empty, config)
-
-  def request(base: String, req: Request): Task[Response] =
-    request(req.method, join(base, req.url.render), req.headers, req.body, Client.Config.default)
-
-  def request(base: String, req: Request, config: Client.Config): Task[Response] =
-    request(req.method, join(base, req.url.render), req.headers, req.body, config)
-
-  def request(
-      method: Method,
-      url: String,
-      headers: Headers,
-      body: Body,
-      config: Client.Config,
-  ): Task[Response] =
-    oneShot(config, method, url, headers, body)
-
-  def sse(url: String, config: Client.Config): ZStream[Any, Throwable, ServerSentEvent] =
-    ZStream.unwrapScoped {
+  /** A pooled client whose TLS context verifies against `trustPem`, or the system store when `None`. */
+  def trusting(trustPem: Option[String]): ZLayer[Client.Config, ClientError, Client] =
+    ZLayer.scoped {
       for
-        target <- ZIO.attempt(Target.parse(url))
-        conn   <- open(config, target)
-        t = Transport(conn)
-        _ <- writeRequest(t, Method.GET, target, prepare(config, Headers.empty), Body.empty)
-        src = t.src
-        _      <- src.setReadTimeout(config.idleTimeout)
-        raw    <- src.takeHeaders(config.maxHeaderBytes.toInt).mapError(e => java.io.IOException(e.message))
-        parsed <- raw match
-          case None    => ZIO.fail(java.io.IOException("empty response"))
-          case Some(h) => ZIO.fromEither(parseResponse(h)).mapError(java.io.IOException(_))
-        (status, headers) = parsed
-        _ <- ZIO.fail(java.io.IOException(s"SSE GET $url → $status")).unless(status.code == 200)
-      yield decodeSse(bodyStream(src, headers))
+        cfg    <- ZIO.service[Client.Config]
+        ctx    <- context(trustPem)
+        client <- Http1Client.scoped(cfg, NativeConnector(cfg, ctx))
+      yield client
     }
 
-  private final class Live(cfg: Client.Config) extends Client:
-    def batched(req: Request): Task[Response] =
-      val url =
-        if req.url.absolute then req.url.render
-        else
-          req.header("Host") match
-            case Some(h) =>
-              val scheme = if req.secure then "https" else "http"
-              s"$scheme://$h${req.url.render}"
-            case None => req.url.render
-      oneShot(cfg, req.method, url, req.headers, req.body)
-    end batched
-  end Live
+  def once(req: Request, config: Client.Config): IO[ClientError, Response] =
+    ZIO.scoped(context(None).flatMap(ctx => Http1Client.once(config, NativeConnector(config, ctx), req)))
 
-  private def oneShot(
-      cfg: Client.Config,
-      method: Method,
-      url: String,
-      headers: Headers,
-      body: Body,
-  ): Task[Response] =
-    val prepared = prepare(cfg, headers)
-    ZIO.scoped {
-      for
-        target <- ZIO.attempt(Target.parse(url))
-        conn   <- open(cfg, target)
-        t = Transport(conn)
-        _   <- writeRequest(t, method, target, prepared, body)
-        res <- readResponse(cfg, t)
-      yield decodeBody(prepared, res)
-    }
-  end oneShot
+  def streaming(req: Request, config: Client.Config): ZIO[Scope, ClientError, Response] =
+    context(None).flatMap(ctx => Http1Client.streaming(config, NativeConnector(config, ctx), req))
 
-  private def open(cfg: Client.Config, target: Target): ZIO[Scope, Throwable, ByteConn] =
-    val _ = cfg
-    ZIO.acquireRelease {
-      for
-        fd   <- ZIO.attempt(Net.connect(target.host, target.port))
-        _    <- AsyncFd.writable(fd)
-        err  <- ZIO.attempt(Net.socketError(fd))
-        _    <- ZIO.fail(java.io.IOException(s"connect ${target.host}:${target.port}")).when(err != 0)
-        _    <- ZIO.attempt(Net.setTcpNoDelay(fd, true))
-        conn <-
-          if !target.tls then ZIO.succeed(NativeConn.of(fd))
-          else
-            ZIO
-              .attempt {
-                val ctx = Ssl.clientCtx()
-                val sni = if target.host.exists(c => c >= 'A' && c <= 'z') then target.host else "localhost"
-                (ctx, Ssl.connect(ctx, fd, sni))
-              }
-              .flatMap { (ctx, session) =>
-                SslIo
-                  .handshake(session, accept = false, fd)
-                  .as(NativeConn.tls(fd, session))
-                  .tapError(_ => ZIO.succeed { ctx.close(); Net.close(fd) })
-              }
-      yield conn
-    }(_.close)
-  end open
+  /** Sessions hold their own reference to the context, so freeing it at scope end is safe. */
+  private def context(trustPem: Option[String]): ZIO[Scope, ClientError, Ssl.Ctx] =
+    ZIO.acquireRelease(
+      ZIO.attempt(Ssl.clientCtx(trustPem)).mapError(e => ClientError.InvalidTrust(e.getMessage))
+    )(ctx => ZIO.succeed(ctx.close()))
 
-  private final class Transport(conn: ByteConn):
-    def src: ConnBuf                    = ConnBuf.fromConn(ByteBuffer.allocate(64 * 1024), conn)
-    def send: Chunk[Byte] => Task[Unit] = conn.write
+  private object NativeIo extends IoFailure:
+    def apply(authority: Authority, cause: Throwable): ClientError = ClientError.Io(authority, cause)
 
-  private def prepare(cfg: Client.Config, headers: Headers): Headers =
-    var hdrs = headers
-    if cfg.addUserAgent && !hdrs.has(HeaderName.UserAgent) then hdrs = hdrs.add(HeaderName.UserAgent, "heddle")
-    hdrs
+  private final class NativeConnector(cfg: Client.Config, ctx: Ssl.Ctx) extends Connector:
+    val io: IoFailure = NativeIo
 
-  private def decodeBody(reqHeaders: Headers, res: Response): Response =
-    val asked = reqHeaders.get(HeaderName.AcceptEncoding).exists(_.toLowerCase.contains("gzip"))
-    if asked && res.headers.contentEncoding.contains(heddle.http.ContentEncoding.Gzip) then
-      val raw = res.body.asBytes
-      val out = heddle.server.Decompressor.gzip.decompress(raw)
-      res
-        .copy(headers = res.headers.remove(HeaderName.ContentEncoding).remove(HeaderName.ContentLength))
-        .withBody(Body.fromBytes(out, res.body.mediaType))
-    else res
+    def open(target: Target): IO[ClientError, Http1Conn] =
+      val a         = target.authority
+      val connected =
+        for
+          addrs <- ZIO.attemptBlocking(Net.resolve(a.host, a.port)).mapError(ClientError.Connect(a, _))
+          fd    <- first(a, addrs.toList)
+          conn  <- if target.tls then secure(target, fd) else ZIO.succeed(NativeConn.of(fd))
+        yield Http1Conn(conn)
+      if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then connected
+      else connected.timeoutFail(ClientError.ConnectTimeout(a))(cfg.connectTimeout)
+    end open
 
-  private def writeRequest(
-      t: Transport,
-      method: Method,
-      target: Target,
-      headers: Headers,
-      body: Body,
-  ): Task[Unit] =
-    val send = t.send
-    val len  = body.length
-    var hdrs = headers
-    if !hdrs.has(HeaderName.Host) then hdrs = hdrs.add(HeaderName.Host, target.hostHeader)
-    len.foreach(n => if !hdrs.has(HeaderName.ContentLength) then hdrs = hdrs.add(HeaderName.ContentLength, n.toString))
-    body.mediaType.foreach(mt =>
-      if !hdrs.has(HeaderName.ContentType) then hdrs = hdrs.add(HeaderName.ContentType, mt.render)
-    )
-    val head = Chunk.fromArray(
-      (s"${method.render} ${target.path} HTTP/1.1\r\n" +
-        hdrs.toChunk.map(h => s"${h.name.render}: ${h.value}\r\n").mkString + "\r\n")
-        .getBytes(StandardCharsets.US_ASCII)
-    )
-    body match
-      case Body.Empty           => send(head)
-      case Body.Bytes(bytes, _) => send(head ++ bytes)
-      case Body.Stream(s, _, _) => send(head) *> s.runForeachChunk(send)
-  end writeRequest
-
-  private def readResponse(cfg: Client.Config, t: Transport): Task[Response] =
-    val src = t.src
-    src.setReadTimeout(cfg.idleTimeout) *>
-      src
-        .takeHeaders(cfg.maxHeaderBytes.toInt)
-        .mapError(e => java.io.IOException(e.message))
-        .flatMap {
-          case None      => ZIO.fail(java.io.IOException("empty response"))
-          case Some(raw) =>
-            ZIO.fromEither(parseResponse(raw)).mapError(java.io.IOException(_)).flatMap { (status, headers) =>
-              readBody(cfg, src, status, headers)
-            }
-        }
-  end readResponse
-
-  private def readBody(cfg: Client.Config, src: ConnBuf, status: Status, headers: Headers): Task[Response] =
-    val io: IO[HttpError, Response] =
-      headers.contentLength match
-        case Some(0) => ZIO.succeed(Response(status, headers, Body.empty))
-        case Some(n) =>
-          if n > cfg.maxBodyBytes.toLong then ZIO.fail(HttpError.BodyTooLarge)
-          else
-            src.takeUpTo(n).map { bytes =>
-              Response(status, headers, Body.fromBytes(bytes, headers.contentType))
-            }
-        case None =>
-          if headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked")) then
-            Ref.make(0L).flatMap { total =>
-              def pieces: IO[HttpError, Chunk[Byte]] =
-                src.readChunkedPiece(total, cfg.maxBodyBytes.toLong, cfg.maxHeaderBytes.toInt).flatMap {
-                  case None    => ZIO.succeed(Chunk.empty)
-                  case Some(c) => pieces.map(c ++ _)
+    /** Tries each resolved address in order. A socket is closed unless its connect succeeds. */
+    private def first(a: Authority, addrs: List[SockAddr]): IO[ClientError, Int] =
+      addrs match
+        case Nil          => ZIO.fail(ClientError.Connect(a, java.io.IOException(s"no address for ${a.host}")))
+        case addr :: rest =>
+          ZIO
+            .acquireReleaseExitWith(ZIO.attempt(Net.connect(addr)).mapError(ClientError.Connect(a, _)))(
+              (fd: Int, exit: Exit[ClientError, Int]) => ZIO.succeed(Net.close(fd)).unless(exit.isSuccess).unit
+            ) { fd =>
+              AsyncFd.writable(fd).mapError(ClientError.Connect(a, _)) *>
+                ZIO.attempt(Net.socketError(fd)).mapError(ClientError.Connect(a, _)).flatMap { err =>
+                  if err == 0 then ZIO.attempt(Net.setTcpNoDelay(fd, true)).ignore.as(fd)
+                  else ZIO.fail(ClientError.Connect(a, java.io.IOException(s"connect errno $err")))
                 }
-              pieces.map(b => Response(status, headers, Body.fromBytes(b, headers.contentType)))
             }
-          else
-            def rest(acc: Chunk[Byte]): IO[HttpError, Chunk[Byte]] =
-              src.takeUpTo(8192).flatMap { c =>
-                if c.isEmpty then ZIO.succeed(acc) else rest(acc ++ c)
-              }
-            rest(Chunk.empty).map(b => Response(status, headers, Body.fromBytes(b, headers.contentType)))
-    io.mapError(e => java.io.IOException(e.message))
-  end readBody
+            .catchSome { case _: ClientError.Connect if rest.nonEmpty => first(a, rest) }
 
-  private def bodyStream(src: ConnBuf, headers: Headers): ZStream[Any, Throwable, Byte] =
-    val chunked =
-      headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked"))
-    headers.contentLength match
-      case Some(n) =>
-        ZStream.unwrap(Ref.make(n).map(left => src.takeBytes(left, 8192)))
-      case _ if chunked =>
-        src.chunkedBytes()
-      case None =>
-        ZStream.repeatZIOChunkOption {
-          src.takeUpTo(8192).mapError(e => Some(src.toThrowable(e))).flatMap { c =>
-            if c.isEmpty then ZIO.fail(None) else ZIO.succeed(c)
-          }
-        }
-    end match
-  end bodyStream
-
-  private def decodeSse(bytes: ZStream[Any, Throwable, Byte]): ZStream[Any, Throwable, ServerSentEvent] =
-    bytes.chunks
-      .mapAccum(Chunk.empty[Byte]) { (acc, chunk) =>
-        val (evs, rest) = SseCodec.decode(acc ++ chunk)
-        (rest, evs)
-      }
-      .flattenChunks
-
-  private def parseResponse(raw: Array[Byte]): Either[String, (Status, Headers)] =
-    val n = raw.length
-    var i = 0
-    while i + 1 < n && !(raw(i) == '\r' && raw(i + 1) == '\n') do i += 1
-    if i + 1 >= n then Left("Malformed status line")
-    else
-      val line = Ascii.string(raw, 0, i)
-      val sp1  = line.indexOf(' ')
-      val sp2  = if sp1 < 0 then -1 else line.indexOf(' ', sp1 + 1)
-      if sp1 < 0 then Left(s"Malformed status line: $line")
-      else
-        val codeStr = if sp2 < 0 then line.substring(sp1 + 1) else line.substring(sp1 + 1, sp2)
-        codeStr.toIntOption match
-          case None    => Left(s"Malformed status line: $line")
-          case Some(c) =>
-            val hdrs = scala.collection.mutable.ArrayBuffer.empty[Header]
-            var j    = i + 2
-            var ok   = true
-            var err  = ""
-            while ok && j + 1 < n do
-              if raw(j) == '\r' && raw(j + 1) == '\n' then j = n
-              else
-                var k = j
-                while k + 1 < n && !(raw(k) == '\r' && raw(k + 1) == '\n') do k += 1
-                if k + 1 >= n then
-                  ok = false
-                  err = "Truncated header"
-                else
-                  var colon = j
-                  while colon < k && raw(colon) != ':' do colon += 1
-                  if colon <= j || colon >= k then
-                    ok = false
-                    err = "Malformed header"
-                  else
-                    val (ns, ne) = Ascii.trim(raw, j, colon)
-                    hdrs += Header.slice(HeaderName.intern(raw, ns, ne), raw, colon + 1, k)
-                    j = k + 2
-                end if
-            end while
-            if !ok then Left(err) else Right((Status.fromCode(c), Headers(Chunk.fromIterable(hdrs))))
-        end match
-      end if
-    end if
-  end parseResponse
-
-  private def join(base: String, path: String): String =
-    val b = base.stripSuffix("/")
-    if path.startsWith("http://") || path.startsWith("https://") then path
-    else if path.startsWith("/") then b + path
-    else b + "/" + path
-
-  private final case class Target(scheme: String, host: String, port: Int, path: String, hostHeader: String):
-    def tls: Boolean = scheme == "https"
-
-  private object Target:
-    def parse(url: String): Target =
-      val u      = java.net.URI(url)
-      val scheme = Option(u.getScheme).getOrElse("http").toLowerCase
-      val host   = Option(u.getHost).getOrElse("127.0.0.1")
-      val port   =
-        if u.getPort > 0 then u.getPort
-        else if scheme == "https" then 443
-        else 80
-      val p    = Option(u.getRawPath).filter(_.nonEmpty).getOrElse("/")
-      val path = Option(u.getRawQuery).fold(p)(q => s"$p?$q")
-      val hh   = if u.getPort > 0 then s"$host:${u.getPort}" else host
-      Target(scheme, host, port, path, hh)
-    end parse
-  end Target
+    /** A failed handshake frees the session and closes the socket. */
+    private def secure(target: Target, fd: Int): IO[ClientError, NativeConn] =
+      val a = target.authority
+      ZIO
+        .acquireReleaseExitWith(
+          ZIO
+            .attempt(Ssl.connect(ctx, fd, a.host))
+            .tapError(_ => ZIO.succeed(Net.close(fd)))
+            .mapError(ClientError.Tls(a, _))
+        )((session: Ssl.Session, exit: Exit[ClientError, NativeConn]) =>
+          ZIO.succeed { session.close(); Net.close(fd) }.unless(exit.isSuccess).unit
+        )(session =>
+          SslIo.handshake(session, accept = false, fd).mapBoth(ClientError.Tls(a, _), _ => NativeConn.tls(fd, session))
+        )
+    end secure
+  end NativeConnector
 end ClientPlatform

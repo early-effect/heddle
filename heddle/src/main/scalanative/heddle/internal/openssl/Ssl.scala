@@ -67,6 +67,8 @@ private[heddle] object Ssl:
   ):
     private val scratch = new Array[Byte](16384)
 
+    private[openssl] def ptrOrNull: Ptr[Byte] = ptr
+
     def close(): Unit =
       this.synchronized {
         if ptr != null then
@@ -117,16 +119,65 @@ private[heddle] object Ssl:
         throw e
   end serverCtx
 
-  def clientCtx(): Ctx =
+  /** Verifies the peer against `trustPem` when given, otherwise against the system's default trust store. */
+  def clientCtx(trustPem: Option[String]): Ctx =
     init()
     val ctx = ssl.SSL_CTX_new(ssl.TLS_client_method())
     if ctx == null then throw fail("SSL_CTX_new")
-    ssl.SSL_CTX_set_verify(ctx, 0, null)
-    Ctx(ctx, Array.empty)
+    try
+      ssl.SSL_CTX_set_verify(ctx, VerifyPeer, null)
+      trustPem match
+        case None =>
+          if ssl.SSL_CTX_set_default_verify_paths(ctx) != 1 then throw fail("SSL_CTX_set_default_verify_paths")
+        case Some(pem) => trust(ctx, pem)
+      Ctx(ctx, Array.empty)
+    catch
+      case e: Throwable =>
+        ssl.SSL_CTX_free(ctx)
+        throw e
+    end try
+  end clientCtx
 
   def accept(ctx: Ctx, fd: Int): Session = attach(ctx, fd, host = None)
 
-  def connect(ctx: Ctx, fd: Int, host: String): Session = attach(ctx, fd, Some(host))
+  /** A client session that checks the peer certificate names `host` (a DNS name or an IP literal). */
+  def connect(ctx: Ctx, fd: Int, host: String): Session =
+    val session = attach(ctx, fd, Some(host))
+    try
+      Zone {
+        val ok =
+          if isIpLiteral(host) then
+            crypto.X509_VERIFY_PARAM_set1_ip_asc(ssl.SSL_get0_param(session.ptrOrNull), toCString(host))
+          else ssl.SSL_set1_host(session.ptrOrNull, toCString(host))
+        if ok != 1 then throw fail("set verify host")
+      }
+      session
+    catch
+      case e: Throwable =>
+        session.close()
+        throw e
+    end try
+  end connect
+
+  private def isIpLiteral(host: String): Boolean =
+    host.contains(':') || host.forall(c => c.isDigit || c == '.')
+
+  private def trust(ctx: Ptr[Byte], pem: String): Unit =
+    val store = ssl.SSL_CTX_get_cert_store(ctx)
+    val bio   = memBio(ascii(pem))
+    try
+      var added = 0
+      var cert  = crypto.PEM_read_bio_X509(bio, null, null, null)
+      while cert != null do
+        try if crypto.X509_STORE_add_cert(store, cert) == 1 then added += 1
+        finally crypto.X509_free(cert)
+        cert = crypto.PEM_read_bio_X509(bio, null, null, null)
+      crypto.ERR_clear_error()
+      if added == 0 then throw IOException("trust PEM holds no certificates")
+    finally
+      val _ = crypto.BIO_free(bio)
+    end try
+  end trust
 
   def handshake(session: Session, accept: Boolean): Int = session.handshake(accept)
 
@@ -135,7 +186,7 @@ private[heddle] object Ssl:
     if s == null then throw fail("SSL_new")
     try
       if ssl.SSL_set_fd(s, fd) != 1 then throw fail("SSL_set_fd")
-      host.filter(_.exists(c => c >= 'A' && c <= 'z')).foreach { name =>
+      host.filterNot(isIpLiteral).foreach { name =>
         Zone {
           val _ = ssl.SSL_ctrl(s, CtrlSetTlsextHostname, 0, toCString(name).asInstanceOf[Ptr[Byte]])
         }
@@ -298,7 +349,13 @@ private[heddle] object Ssl:
     @blocking def SSL_write(ssl: Ptr[Byte], buf: Ptr[Byte], num: CInt): CInt     = extern
     def SSL_get_error(ssl: Ptr[Byte], ret: CInt): CInt                           = extern
     def SSL_ctrl(ssl: Ptr[Byte], cmd: CInt, larg: CLong, parg: Ptr[Byte]): CLong = extern
+    def SSL_CTX_set_default_verify_paths(ctx: Ptr[Byte]): CInt                   = extern
+    def SSL_CTX_get_cert_store(ctx: Ptr[Byte]): Ptr[Byte]                        = extern
+    def SSL_set1_host(ssl: Ptr[Byte], hostname: CString): CInt                   = extern
+    def SSL_get0_param(ssl: Ptr[Byte]): Ptr[Byte]                                = extern
   end ssl
+
+  private val VerifyPeer = 1
 
   private val ErrorWantRead         = 2
   private val ErrorWantWrite        = 3
@@ -363,6 +420,9 @@ private[heddle] object Ssl:
     def PEM_read_bio_PrivateKey(bp: Ptr[Byte], x: Ptr[Ptr[Byte]], cb: Ptr[Byte], u: Ptr[Byte]): Ptr[Byte] =
       extern
     def X509_free(a: Ptr[Byte]): Unit                                        = extern
+    def X509_STORE_add_cert(store: Ptr[Byte], x: Ptr[Byte]): CInt            = extern
+    def X509_VERIFY_PARAM_set1_ip_asc(param: Ptr[Byte], ip: CString): CInt   = extern
+    def ERR_clear_error(): Unit                                              = extern
     def ERR_get_error(): CUnsignedLong                                       = extern
     def ERR_error_string_n(e: CUnsignedLong, buf: CString, len: CSize): Unit = extern
   end crypto
