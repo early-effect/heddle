@@ -2,66 +2,46 @@ package heddle.mcp.transport
 
 import heddle.LinePipe
 import heddle.http.header.Headers
-import heddle.mcp.protocol.{Engine, Legacy}
-import heddle.mcp.protocol.JsonRpc.*
-import zio.json.DecoderOps
-import zio.json.EncoderOps
+import heddle.mcp.protocol.{Message, Methods, ProtocolVersion, RequestMeta, RpcError}
+import heddle.mcp.server.{Engine, Era}
+import zio.json.*
 import zio.json.ast.Json
 import zio.ZIO
 
+/** Newline-delimited JSON-RPC on a pipe. `initialize` switches the pipe to a 2025-11-25 session; a request that names
+  * 2026-07-28, or `server/discover`, is answered statelessly either way.
+  */
 object Stdio:
-  private enum Era:
-    case Modern, Legacy
-
   def run[R](engine: Engine[R], pipe: LinePipe): ZIO[R, Throwable, Unit] =
-    def write(msg: Json.Obj): ZIO[Any, Throwable, Unit] =
-      pipe.writeLine(msg.toJson)
-
     def loop(era: Era): ZIO[R, Throwable, Unit] =
       pipe.readLine.flatMap {
         case None       => ZIO.unit
         case Some(line) =>
           dispatch(engine, line, era).flatMap { (next, reply) =>
-            reply match
-              case None      => loop(next)
-              case Some(msg) => write(msg) *> loop(next)
+            reply.fold(loop(next))(msg => pipe.writeLine(msg.json.toJson) *> loop(next))
           }
       }
-
-    loop(Era.Modern)
+    loop(Era.Stateless)
   end run
 
-  private def dispatch[R](
-      engine: Engine[R],
-      line: String,
-      era: Era,
-  ): ZIO[R, Nothing, (Era, Option[Json.Obj])] =
+  private def dispatch[R](engine: Engine[R], line: String, era: Era): ZIO[R, Nothing, (Era, Option[Message])] =
     if line.isBlank then ZIO.succeed((era, None))
     else
-      line.fromJson[Json] match
-        case Left(_)     => ZIO.succeed((era, Some(error(Json.Null, ParseError, "Parse error"))))
-        case Right(json) =>
-          json match
-            case msg: Json.Obj =>
-              methodOf(msg) match
-                case Some("initialize") =>
-                  val body =
-                    Legacy.initializeResult(
-                      parseId(msg),
-                      engine.serverName,
-                      engine.serverVersion,
-                      engine.instructions,
-                    )
-                  ZIO.succeed((Era.Legacy, Some(body)))
-                case Some(method) if isModern(msg, method) =>
-                  engine.handle(msg, Headers.empty).map(out => (Era.Modern, out))
-                case Some(_) if era == Era.Legacy =>
-                  engine.handleCompat(msg, Headers.empty).map(out => (era, out.map(Legacy.stripEnvelope)))
-                case _ =>
-                  engine.handle(msg, Headers.empty).map(out => (era, out))
-            case _ =>
-              ZIO.succeed((era, Some(error(Json.Null, ParseError, "Parse error"))))
+      line
+        .fromJson[Json]
+        .left
+        .map(_ => Message.Error(None, RpcError.ParseError("Parse error")))
+        .flatMap(Message.decode) match
+        case Left(err)  => ZIO.succeed((era, Some(err)))
+        case Right(msg) =>
+          val next = eraOf(msg, era)
+          engine.respond(msg, Headers.empty, next).map(out => (next, out))
 
-  private def isModern(msg: Json.Obj, method: String): Boolean =
-    method == "server/discover" || protocolVersion(paramsOf(msg)).contains(ProtocolVersion)
+  private def eraOf(msg: Message, current: Era): Era =
+    msg match
+      case Message.Request(_, Methods.Initialize, _) => Era.Session
+      case Message.Request(_, Methods.Discover, _)   => Era.Stateless
+      case Message.Request(_, _, p) if RequestMeta.of(p).protocolVersion.contains(ProtocolVersion.Current) =>
+        Era.Stateless
+      case _ => current
 end Stdio

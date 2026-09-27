@@ -83,7 +83,7 @@ lazy val commonSettings = Seq(
 lazy val root = project
   .in(file("."))
   .aggregate(
-    (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcp.projectRefs ++
+    (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
       Seq[sbt.ProjectReference](example, bench, docs, docsJS))*
   )
   .settings(
@@ -153,8 +153,22 @@ lazy val oauth = (projectMatrix in file("oauth"))
     ),
   )
 
+lazy val mcpProtocol = (projectMatrix in file("mcp-protocol"))
+  .settings(commonSettings)
+  .settings(MyVersions.coreLib)
+  .settings(MyVersions.coreTest)
+  .settings(
+    name                 := "heddle-mcp-protocol",
+    description          := "MCP wire types and codecs: JSON-RPC, tools, resources, capabilities",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(scalaVersions = scalaVersions, MyVersions.jsRuntime)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads)
+
 lazy val mcp = (projectMatrix in file("mcp"))
-  .dependsOn(heddle % "compile->compile;test->test")
+  .dependsOn(heddle % "compile->compile;test->test", mcpProtocol)
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -297,7 +311,10 @@ lazy val docs = project
 addCommandAlias("docsPreview", "~docs/specularPreview")
 addCommandAlias(
   "testJVM",
-  "heddle/testFull; brotli/testFull; oauth/testFull; mcp/testFull; example/testFull; docs/testFull; docs/specularSite",
+  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; example/testFull; docs/testFull; docs/specularSite",
 )
-addCommandAlias("testJS", "heddleJS/testFull; brotliJS/testFull; mcpJS/testFull; oauthJS/testFull")
-addCommandAlias("testNative", "heddleNative/testFull; brotliNative/testFull; mcpNative/testFull")
+addCommandAlias(
+  "testJS",
+  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; oauthJS/testFull",
+)
+addCommandAlias("testNative", "heddleNative/testFull; brotliNative/testFull; mcpProtocolNative/testFull; mcpNative/testFull")

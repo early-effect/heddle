@@ -1,11 +1,10 @@
 package heddle.mcp
 
 import heddle.*
-import heddle.mcp.protocol.Legacy
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.protocol.{CallToolResult, ContentBlock, ListToolsResult, RequestMeta}
 import heddle.mcp.transport.Http
 import zio.*
-import zio.json.EncoderOps
+import zio.json.*
 import zio.json.ast.Json
 import zio.test.*
 
@@ -18,6 +17,16 @@ enum ShopError derives Schema, zio.json.JsonCodec:
   case Closed
 
 object McpSpec extends ZIOSpecDefault:
+  private def obj(fields: (String, Json)*): Json.Obj = Json.Obj(fields*)
+
+  private val ProtocolVersion = heddle.mcp.protocol.ProtocolVersion.Current.value
+  private val MetaVersion     = RequestMeta.VersionKey
+  private val MetaClientCaps  = RequestMeta.ClientCapsKey
+
+  private object Legacy:
+    val ProtocolVersion = heddle.mcp.protocol.ProtocolVersion.Legacy.value
+    val SessionHeader   = Http.SessionHeader
+
   private val getItem =
     Endpoint.get("items" / int("id")).out[Item].summary("Get item").mcp.hints(Hint.ReadOnly)
   private val listItems =
@@ -39,6 +48,18 @@ object McpSpec extends ZIOSpecDefault:
   private def mcpOf(store: Ref[Map[Int, Item]]): Mcp[Any] =
     Mcp.from(api(store)).toOption.get
 
+  private val mcpOf0: Mcp[Any] = Mcp.from(Api("Shop", "1.0.0")).toOption.get
+
+  /** `tools/call` through the engine, read back as the typed result. */
+  private def callResult(mcp: Mcp[Any], tool: String, args: Json.Obj): UIO[CallToolResult] =
+    mcp.handle(req("tools/call", obj("name" -> Json.Str(tool), "arguments" -> args))).map { out =>
+      out
+        .flatMap(_.toJson.fromJson[Json.Obj].toOption)
+        .flatMap(_.get("result"))
+        .flatMap(_.toJson.fromJson[CallToolResult].toOption)
+        .getOrElse(CallToolResult(Chunk.empty))
+    }
+
   private def req(method: String, params: Json.Obj, id: Int = 1): Json.Obj =
     val meta = obj(
       MetaVersion    -> Json.Str(ProtocolVersion),
@@ -50,6 +71,10 @@ object McpSpec extends ZIOSpecDefault:
   private def legacyReq(method: String, params: Json.Obj, id: Int): Json.Obj =
     obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> params)
 
+  /** A notification has no id (JSON-RPC 2.0 §4.1). */
+  private def legacyNote(method: String): Json.Obj =
+    obj("jsonrpc" -> Json.Str("2.0"), "method" -> Json.Str(method), "params" -> obj())
+
   private def postLegacy(
       mcp: Mcp[Any],
       method: String,
@@ -58,11 +83,19 @@ object McpSpec extends ZIOSpecDefault:
       session: Option[String] = None,
       protocol: Option[String] = Some(Legacy.ProtocolVersion),
   ) =
-    val req0 = Request.post("/mcp", Body.json(legacyReq(method, params, id).toJson))
+    postLegacyJson(mcp, legacyReq(method, params, id), session, protocol)
+
+  private def postLegacyJson(
+      mcp: Mcp[Any],
+      msg: Json.Obj,
+      session: Option[String],
+      protocol: Option[String] = Some(Legacy.ProtocolVersion),
+  ) =
+    val req0 = Request.post("/mcp", Body.json(msg.toJson))
     val req1 = protocol.fold(req0)(v => req0.withHeader(Http.ProtocolHeader, v))
     val req  = session.fold(req1)(s => req1.withHeader(Legacy.SessionHeader, s))
     mcp.routes(req)
-  end postLegacy
+  end postLegacyJson
 
   def spec =
     suite("Mcp")(
@@ -170,9 +203,7 @@ object McpSpec extends ZIOSpecDefault:
       test("native tool is callable"):
         for
           store <- Ref.make(Map.empty[Int, Item])
-          mcp = mcpOf(store).tool("search_users", "Find users") { (in: Query) =>
-            ZIO.succeed(s"hit ${in.q}")
-          }
+          mcp = mcpOf(store).tool[Query]("search_users", "Find users")(in => ZIO.succeed(s"hit ${in.q}"))
           out <- mcp.handle(
             req("tools/call", obj("name" -> Json.Str("search_users"), "arguments" -> obj("q" -> Json.Str("ada"))))
           )
@@ -338,6 +369,77 @@ object McpSpec extends ZIOSpecDefault:
             assertTrue(json.contains("\"isError\":true"), json.contains("""{\"Missing\":{\"id\":9}}"""))
           }
       ,
+      test("a typed error travels as structuredContent a client can decode, beside its text"):
+        val lookup = Endpoint
+          .get("items" / int("id"))
+          .out[Item]
+          .outErrors[ShopError](
+            ErrorCase[ShopError.Missing](Status.NotFound),
+            ErrorCase[ShopError.Closed.type](Status.ServiceUnavailable),
+          )
+          .mcp
+        val api = Api("Shop", "1.0.0").bind(lookup)(id => ZIO.fail(ShopError.Missing(id)))
+        callResult(Mcp.from(api).toOption.get, "get_items_id", obj("id" -> Json.Num(9))).map { r =>
+          val back = r.structuredContent.flatMap(_.get("value")).flatMap(_.as[ShopError].toOption)
+          assertTrue(r.failed, back.contains(ShopError.Missing(9)))
+        }
+      ,
+      test("a non-object output is wrapped as value, and its outputSchema is an object"):
+        val greet = Endpoint.get("greet" / string("who")).out[String].mcp
+        val api   = Api("Shop", "1.0.0").bind(greet)(who => ZIO.succeed(s"hi $who"))
+        val mcp   = Mcp.from(api).toOption.get
+        for
+          r      <- callResult(mcp, "get_greet_who", obj("who" -> Json.Str("ada")))
+          listed <- mcp.handle(req("tools/list", obj()))
+        yield
+          val tools  = listed.get.toJson.fromJson[Json.Obj].toOption.flatMap(_.get("result"))
+          val schema = tools
+            .flatMap(_.toJson.fromJson[ListToolsResult].toOption)
+            .flatMap(_.tools.headOption)
+            .flatMap(_.outputSchema)
+          assertTrue(
+            r.structuredContent.contains(obj("value" -> Json.Str("hi ada"))),
+            r.content == Chunk(ContentBlock.Text("hi ada")),
+            schema.flatMap(_.get("type")).contains(Json.Str("object")),
+          )
+        end for
+      ,
+      test("a native tool's own error is typed; one that cannot fail needs no codec"):
+        val mcp = mcpOf0
+          .tool[Query]("strict_search", "Fails on empty")(q =>
+            if q.q.isEmpty then ZIO.fail(ShopError.Closed) else ZIO.succeed(List(q.q))
+          )
+          .tool[Query]("echo")(q => ZIO.succeed(q.q))
+        for
+          bad  <- callResult(mcp, "strict_search", obj("q" -> Json.Str("")))
+          good <- callResult(mcp, "echo", obj("q" -> Json.Str("ada")))
+        yield assertTrue(
+          bad.failed,
+          bad.structuredContent.flatMap(_.get("value")).flatMap(_.as[ShopError].toOption).contains(ShopError.Closed),
+          !good.failed,
+          good.structuredContent.contains(obj("value" -> Json.Str("ada"))),
+        )
+      ,
+      test("a message with an id is a request, even when its method looks like a notification"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          asReq <- mcpOf(store).handle(req("notifications/initialized", obj()))
+          note  <- mcpOf(store).handle(obj("jsonrpc" -> Json.Str("2.0"), "method" -> Json.Str("notifications/x")))
+        yield assertTrue(asReq.exists(_.toJson.contains("-32601")), note.isEmpty)
+      ,
+      test("a tool name outside the grammar is a build error, not a runtime surprise"):
+        val weird = Endpoint.get("items" / int("id")).out[Item].mcp("get item!")
+        val out   = Mcp.from(Api("Shop", "1.0.0").bind(weird)(id => ZIO.succeed(Item(id, "x"))))
+        assertTrue(out.left.exists(_.exists {
+          case McpBuildError.InvalidToolName("get item!", _) => true
+          case _                                             => false
+        }))
+      ,
+      test("a native tool name outside the grammar does not compile"):
+        typeCheck("""Mcp.from(Api("S", "1")).toOption.get.tool[Query]("no spaces")(q => ZIO.succeed(q.q))""").map { r =>
+          assertTrue(r.left.exists(_.contains("not a tool name")))
+        }
+      ,
       test("missing bearer on protected MCP is 401 with resource_metadata"):
         val meta = "http://localhost:8080/.well-known/oauth-protected-resource"
         Ref.make(Map.empty[Int, Item]).flatMap { store =>
@@ -392,7 +494,7 @@ object McpSpec extends ZIOSpecDefault:
             protocol = None,
           )
           sid = init.header(Legacy.SessionHeader)
-          ack  <- postLegacy(mcp, "notifications/initialized", obj(), 2, session = sid)
+          ack  <- postLegacyJson(mcp, legacyNote("notifications/initialized"), session = sid)
           list <- postLegacy(mcp, "tools/list", obj(), 3, session = sid)
           call <- postLegacy(
             mcp,
@@ -453,7 +555,7 @@ object McpSpec extends ZIOSpecDefault:
               obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
               1,
             ).toJson,
-            legacyReq("notifications/initialized", obj(), 2).toJson,
+            legacyNote("notifications/initialized").toJson,
             legacyReq("tools/list", obj(), 3).toJson,
             legacyReq(
               "tools/call",

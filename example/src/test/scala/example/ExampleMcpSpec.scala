@@ -3,15 +3,25 @@ package example
 import java.nio.charset.StandardCharsets
 import heddle.*
 import heddle.mcp.Mcp
-import heddle.mcp.protocol.Legacy
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.protocol.RequestMeta
 import heddle.mcp.transport.Http
 import zio.*
 import zio.json.EncoderOps
 import zio.json.ast.Json
 import zio.test.*
 
+/** Raw wire JSON on purpose: this spec checks what a real MCP host sends and reads. */
 object ExampleMcpSpec extends ZIOSpecDefault:
+  private def obj(fields: (String, Json)*): Json.Obj = Json.Obj(fields*)
+
+  private val ProtocolVersion = heddle.mcp.protocol.ProtocolVersion.Current.value
+  private val MetaVersion     = RequestMeta.VersionKey
+  private val MetaClientCaps  = RequestMeta.ClientCapsKey
+
+  private object Legacy:
+    val ProtocolVersion = heddle.mcp.protocol.ProtocolVersion.Legacy.value
+    val SessionHeader   = Http.SessionHeader
+
   private def mcpReq(method: String, params: Json.Obj, id: Int): Json.Obj =
     val meta = obj(MetaVersion -> Json.Str(ProtocolVersion), MetaClientCaps -> obj())
     val p    = obj((params.fields.toList :+ ("_meta" -> meta))*)
