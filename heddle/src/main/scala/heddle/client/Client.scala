@@ -123,14 +123,7 @@ object Client:
         _      <- ZIO
           .fail(ClientError.Protocol(target.authority, HttpError.Malformed(s"SSE needs 200, got ${res.status.code}")))
           .unless(res.status.code == 200)
-      yield res.body.toStream
-        .mapError(ClientError.Io(target.authority, _))
-        .chunks
-        .mapAccum(Chunk.empty[Byte]) { (acc, chunk) =>
-          val (events, rest) = SseCodec.decode(acc ++ chunk)
-          (rest, events)
-        }
-        .flattenChunks
+      yield SseCodec.stream(res.body.toStream.mapError(ClientError.Io(target.authority, _)))
     }
 
   def inMemory[R](routes: Routes[R, Response]): URLayer[R, Client] =
@@ -145,8 +138,8 @@ object Client:
       }
     )
 
-  /** Pins the endpoint; `apply` takes its typed input. */
-  def call[In, Err, Out](ep: Endpoint[In, Err, Out]): CallPartiallyApplied[In, Err, Out] =
+  /** Pins the endpoint; `apply` takes its typed input. A streaming output does not compile here: use `subscribe`. */
+  def call[In, Err, Out](ep: Endpoint[In, Err, Out])(using Strict[Out]): CallPartiallyApplied[In, Err, Out] =
     CallPartiallyApplied(ep)
 
   final class CallPartiallyApplied[In, Err, Out](ep: Endpoint[In, Err, Out]):
@@ -154,9 +147,34 @@ object Client:
       at(Url.root, in)
 
     def at(base: Url, in: In): ZIO[Client, CallFailure[Err], Out] =
-      ZIO.fromEither(ep.toRequest(in, base)).orDieWith(IllegalArgumentException(_)).flatMap { req =>
-        Client.batched(req).mapError(CallFailure.Transport(_)).flatMap(ep.fromResponse)
+      Client.batched(ep.toRequest(in, base)).mapError(CallFailure.Transport(_)).flatMap(ep.fromResponse)
+
+  /** Pins an `outSse` endpoint; `apply` streams its events. The connection lives as long as the stream. */
+  def subscribe[In, Err](
+      ep: Endpoint[In, Err, ZStream[Any, Throwable, ServerSentEvent]]
+  ): SubscribePartiallyApplied[In, Err] =
+    SubscribePartiallyApplied(ep)
+
+  final class SubscribePartiallyApplied[In, Err](ep: Endpoint[In, Err, ZStream[Any, Throwable, ServerSentEvent]]):
+    def apply(in: In): ZStream[Client, CallFailure[Err], ServerSentEvent] =
+      at(Url.root, in)
+
+    def at(base: Url, in: In): ZStream[Client, CallFailure[Err], ServerSentEvent] =
+      ZStream.unwrapScoped {
+        for
+          res    <- Client.streaming(ep.toRequest(in, base)).mapError(CallFailure.Transport(_))
+          events <- ep.fromResponse(res)
+        yield events.mapError(e => CallFailure.Transport(ClientError.BodyFailed(e)))
       }
+  end SubscribePartiallyApplied
+
+  /** Evidence that `A` is read whole. Streams have none, so `Client.call` on an `outSse` endpoint is a compile error.
+    */
+  @scala.annotation.implicitNotFound("${A} is a stream. Read it with Client.subscribe, not Client.call.")
+  sealed trait Strict[A]
+
+  object Strict:
+    given [A](using scala.util.NotGiven[A <:< ZStream[?, ?, ?]]): Strict[A] = new Strict[A] {}
 
   private def decoded(url: String): IO[ClientError, Url] =
     ZIO.fromEither(Url.decode(url)).mapError(ClientError.InvalidTarget(url, _))

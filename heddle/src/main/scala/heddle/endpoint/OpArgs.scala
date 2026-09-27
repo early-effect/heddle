@@ -1,6 +1,6 @@
 package heddle.endpoint
 
-import heddle.http.{Body, MediaType, QueryParams, Request, Url}
+import heddle.http.{Body, MediaType, QueryParams, Request, Url, UrlEncoding}
 import heddle.http.header.Headers
 import zio.Chunk
 import zio.json.*
@@ -73,7 +73,7 @@ object OpArgs:
           case Some(json)         =>
             atom(json) match
               case None    => Left(s"path argument '${p.name}' must be a scalar")
-              case Some(v) => Right(tpl.replace(s"{${p.name}}", v))
+              case Some(v) => Right(tpl.replace(s"{${p.name}}", UrlEncoding.encode(v)))
 
   private def fillQuery(doc: EndpointDoc, args: Json.Obj): Either[String, QueryParams] =
     doc.queries
@@ -113,8 +113,65 @@ object OpArgs:
   private def atom(json: Json): Option[String] =
     json match
       case Json.Str(s)  => Some(s)
-      case Json.Num(n)  => Some(n.toString)
+      case Json.Num(n)  => Some(n.stripTrailingZeros.toPlainString)
       case Json.Bool(b) => Some(b.toString)
       case Json.Null    => None
       case _            => None
+
+  /** The arguments `request` turns back into `req`. Headers never travel in arguments, so an endpoint whose input reads
+    * a header has no argument form for that piece.
+    */
+  def arguments(doc: EndpointDoc, req: Request): Either[String, Json.Obj] =
+    for
+      path  <- pathArgs(doc, req)
+      query <- queryArgs(doc, req)
+      body  <- bodyArgs(doc, req)
+    yield Json.Obj(Chunk.fromIterable(path ++ query ++ body))
+
+  private def pathArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
+    val template = doc.pathTemplate.split('/').toList.filter(_.nonEmpty)
+    val actual   = req.path.segments.toList
+    if template.length != actual.length then Left(s"${req.path.render} does not match ${doc.pathTemplate}")
+    else
+      val byName = doc.pathParams.map(p => p.name -> p.schema).toMap
+      Right(template.zip(actual).collect {
+        case (seg, value) if seg.startsWith("{") && seg.endsWith("}") =>
+          val name = seg.drop(1).dropRight(1)
+          name -> scalar(byName.getOrElse(name, SchemaDoc.Str(None)), value)
+      })
+  end pathArgs
+
+  private def queryArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
+    doc.queries.foldLeft[Either[String, List[(String, Json)]]](Right(Nil)) {
+      case (Left(err), _)  => Left(err)
+      case (Right(acc), p) =>
+        req.query.getAll(p.name).toList match
+          case Nil          => Right(acc)
+          case value :: Nil => Right(acc :+ (p.name -> scalar(p.schema.unwrapOptional._1, value)))
+          case _            => Left(s"query parameter '${p.name}' repeats; arguments hold one value")
+    }
+
+  private def bodyArgs(doc: EndpointDoc, req: Request): Either[String, List[(String, Json)]] =
+    doc.requestBody match
+      case None                                               => Right(Nil)
+      case Some(media) if media.contentType != MediaType.Json =>
+        Left(s"${doc.toolName}: non-JSON body has no argument form")
+      case Some(media) =>
+        val (inner, _) = media.schema.unwrapOptional
+        req.body match
+          case Body.Stream(_, _, _) => Left(s"${doc.toolName}: a streamed body has no argument form")
+          case other                =>
+            other.asString.fromJson[Json].map { json =>
+              (doc.nestBody, inner, json) match
+                case (false, SchemaDoc.Object(_, _, _), obj: Json.Obj) => obj.fields.toList
+                case _                                                 => List(bodyName(inner) -> json)
+            }
+
+  private def scalar(schema: SchemaDoc, value: String): Json =
+    schema match
+      case SchemaDoc.Integer(_) | SchemaDoc.Number(_) =>
+        scala.util.Try(java.math.BigDecimal(value)).toOption.fold[Json](Json.Str(value))(Json.Num(_))
+      case SchemaDoc.Boolean =>
+        value.toBooleanOption.fold[Json](Json.Str(value))(Json.Bool(_))
+      case _ => Json.Str(value)
 end OpArgs
