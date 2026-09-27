@@ -95,7 +95,7 @@ object EndpointSpec extends ZIOSpecDefault:
           path.matches(Path.decode("/echo/x")).isEmpty,
         )
       ,
-      test("specialized nested path params keep Combine nesting"):
+      test("a specialized path with two params is a flat pair, both ways"):
         val path = PathCodec.specialize("users" / int("id") / "posts" / int("post"))
         assertTrue(
           path.specialized,
@@ -106,7 +106,7 @@ object EndpointSpec extends ZIOSpecDefault:
       test("toRequest encodes path query header and json body"):
         val ep =
           Endpoint.post("echo" / int("n")).query[String]("name").header[String]("X-User").inJson[String].out[String]
-        val req = ep.toRequest((((4, "ada"), "russ"), "hi"), Url.root)
+        val req = ep.toRequest((4, "ada", "russ", "hi"), Url.root)
         assertTrue(
           req.method == Method.POST,
           req.path.render == "/echo/4",

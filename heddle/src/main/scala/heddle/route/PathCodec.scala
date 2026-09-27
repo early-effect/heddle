@@ -4,29 +4,6 @@ import heddle.http.Path
 import java.util.UUID
 import zio.Chunk
 
-type Combine[A, B] = A match
-  case Unit => B
-  case _    =>
-    B match
-      case Unit => A
-      case _    => (A, B)
-
-object Combine:
-  inline def apply[A, B](a: A, b: B): Combine[A, B] =
-    (a, b) match
-      case ((), bVal)   => bVal.asInstanceOf[Combine[A, B]]
-      case (aVal, ())   => aVal.asInstanceOf[Combine[A, B]]
-      case (aVal, bVal) => (aVal, bVal).asInstanceOf[Combine[A, B]]
-
-  inline def unapply[A, B](c: Combine[A, B]): (A, B) =
-    inline scala.compiletime.erasedValue[A] match
-      case _: Unit => (().asInstanceOf[A], c.asInstanceOf[B])
-      case _       =>
-        inline scala.compiletime.erasedValue[B] match
-          case _: Unit => (c.asInstanceOf[A], ().asInstanceOf[B])
-          case _       => c.asInstanceOf[(A, B)]
-end Combine
-
 enum PathKind:
   case Int32, Int64, Str, Uuid
 
@@ -48,45 +25,74 @@ enum Seg:
   case Var(name: String, kind: PathKind)
   case Rest
 
-final class PathCodec[A](
+/** A typed path. `segments` route and document it; `read` takes its value from a request path, and `write` puts one
+  * back, so a typed client builds the path a server matches.
+  */
+final class PathCodec[A] private[heddle] (
     val segments: Chunk[Seg],
-    private[heddle] val extractFn: Chunk[String] => Option[A],
-    private[heddle] val specialized: Boolean = false,
+    private[heddle] val read: PathCodec.Reader[A],
+    private[heddle] val write: A => Chunk[String],
+    fast: Option[Chunk[String] => Option[A]] = None,
 ):
-  private val len: Int = segments.length
+  /** How many request segments this path reads, or `None` when it ends in `trailing` and takes the rest. */
+  private[heddle] val width: Option[Int] =
+    if segments.contains(Seg.Rest) then None else Some(segments.length)
+
+  private val fixed: Int = segments.count(_ != Seg.Rest)
+
+  private val literalAt: Array[Int]       = segments.zipWithIndex.collect { case (Seg.Lit(_), i) => i }.toArray
+  private val literalValue: Array[String] = segments.collect { case Seg.Lit(v) => v }.toArray
+
+  private def literalsMatch(path: Chunk[String]): Boolean =
+    var i = 0
+    while i < literalAt.length && path(literalAt(i)) == literalValue(i) do i += 1
+    i == literalAt.length
+
+  /** True when `PathCodec.specialize` unrolled this path into a straight-line matcher. */
+  private[heddle] val specialized: Boolean = fast.isDefined
 
   private[heddle] val isLiteral: Boolean =
-    var i    = 0
-    var vars = false
-    while i < len && !vars do
-      segments(i) match
-        case Seg.Var(_, _) | Seg.Rest => vars = true
-        case _                        => ()
-      i += 1
-    !vars
+    segments.forall {
+      case Seg.Lit(_) => true
+      case _          => false
+    }
 
   /** A path with no captures matches exactly one request path, so its value is computed once. */
   private[heddle] val literalMatch: Option[A] =
-    if isLiteral then extractFn(segments.collect { case Seg.Lit(v) => v }) else None
-
-  def matchPath(parts: List[String]): Option[(A, List[String])] =
-    if parts.length < len then None
-    else
-      val (head, rest) = parts.splitAt(len)
-      extractFn(Chunk.fromIterable(head)).map(a => (a, rest))
+    if isLiteral then matches(Path(segments.collect { case Seg.Lit(v) => v })) else None
 
   def matches(path: Path): Option[A] =
-    extractFn(path.segments)
+    fast match
+      case Some(unrolled) => unrolled(path.segments)
+      case None           =>
+        val n = path.segments.length
+        if width.fold(n < fixed)(_ != n) || !literalsMatch(path.segments) then None else read(path.segments, 0)
 
   def encode(value: A): Path =
-    PathCodec.encodePath(segments, value)
+    Path(write(value))
 
+  /** A literal after this path: checked with the others, so the value reader is unchanged. */
   def /(lit: String): PathCodec[A] =
     PathLits.register(lit)
-    PathCodec.of(segments :+ Seg.Lit(lit))
+    PathCodec(segments :+ Seg.Lit(lit), read, a => write(a) :+ lit)
 
-  def /[B](that: PathCodec[B]): PathCodec[Combine[A, B]] =
-    PathCodec.of(segments ++ that.segments)
+  /** A literal before this path: the value readers move one segment along. */
+  def prefixed(lit: String): PathCodec[A] =
+    PathLits.register(lit)
+    PathCodec(Seg.Lit(lit) +: segments, (path, at) => read(path, at + 1), a => lit +: write(a))
+
+  def /[B](that: PathCodec[B])(using c: Combiner[A, B]): PathCodec[c.Out] =
+    PathCodec(
+      segments ++ that.segments,
+      PathCodec.Reader.andThen(read, width, that.read, c),
+      out =>
+        val (a, b) = c.separate(out)
+        write(a) ++ that.write(b),
+    )
+
+  /** The same codec, matched by `unrolled` instead of the composed reader. */
+  private[heddle] def withMatcher(unrolled: Chunk[String] => Option[A]): PathCodec[A] =
+    PathCodec(segments, read, write, Some(unrolled))
 
   def template: String =
     if segments.isEmpty then "/"
@@ -104,109 +110,68 @@ final class PathCodec[A](
 end PathCodec
 
 object PathCodec:
-  val empty: PathCodec[Unit] = of(Chunk.empty)
+  /** Reads a path's captures at a fixed offset. `matches` has already checked the length and every literal, and each
+    * reader still checks its own bounds, so a reader never throws.
+    */
+  type Reader[A] = (Chunk[String], Int) => Option[A]
+
+  object Reader:
+    private[PathCodec] val unit: Some[Unit] = Some(())
+
+    /** `left`, then `right` at `left`'s width; after `trailing` nothing more can match. */
+    def andThen[A, B](left: Reader[A], leftWidth: Option[Int], right: Reader[B], c: Combiner[A, B]): Reader[c.Out] =
+      leftWidth match
+        case None    => (_, _) => None
+        case Some(w) =>
+          (segments, at) =>
+            left(segments, at) match
+              case Some(a) =>
+                right(segments, at + w) match
+                  case Some(b) => Some(c.combine(a, b))
+                  case None    => None
+              case None => None
+  end Reader
+
+  val empty: PathCodec[Unit] =
+    PathCodec(Chunk.empty, (_, _) => Reader.unit, _ => Chunk.empty)
 
   /** Remaining path segments, including none (`/`). */
   val trailing: PathCodec[Path] =
-    PathCodec(Chunk(Seg.Rest), segs => Some(Path(segs)))
-
-  def of[A](segments: Chunk[Seg]): PathCodec[A] =
-    val steps = segments.toArray
-    PathCodec(segments, segs => extract(steps, segs))
+    PathCodec(
+      Chunk(Seg.Rest),
+      (segments, at) => Some(Path(segments.drop(at))),
+      _.segments,
+    )
 
   inline def specialize[A](inline path: PathCodec[A]): PathCodec[A] =
     ${ PathMacros.specializeImpl[A]('path) }
 
   def lit(value: String): PathCodec[Unit] =
     PathLits.register(value)
-    of(Chunk(Seg.Lit(value)))
+    literal(value)
 
-  def int(name: String): PathCodec[Int] =
-    of(Chunk(Seg.Var(name, PathKind.Int32)))
+  private def literal(value: String): PathCodec[Unit] =
+    PathCodec(
+      Chunk(Seg.Lit(value)),
+      (_, _) => Reader.unit,
+      _ => Chunk(value),
+    )
 
-  def long(name: String): PathCodec[Long] =
-    of(Chunk(Seg.Var(name, PathKind.Int64)))
+  def int(name: String): PathCodec[Int]       = variable(name, PathKind.Int32, _.toIntOption, _.toString)
+  def long(name: String): PathCodec[Long]     = variable(name, PathKind.Int64, _.toLongOption, _.toString)
+  def string(name: String): PathCodec[String] = variable(name, PathKind.Str, Some(_), identity)
+  def uuid(name: String): PathCodec[UUID]     = variable(name, PathKind.Uuid, parseUuid, _.toString)
 
-  def string(name: String): PathCodec[String] =
-    of(Chunk(Seg.Var(name, PathKind.Str)))
+  private def variable[A](name: String, kind: PathKind, parse: String => Option[A], render: A => String) =
+    PathCodec[A](
+      Chunk(Seg.Var(name, kind)),
+      (segments, at) => if at < segments.length then parse(segments(at)) else None,
+      a => Chunk(render(a)),
+    )
 
-  def uuid(name: String): PathCodec[UUID] =
-    of(Chunk(Seg.Var(name, PathKind.Uuid)))
-
-  private[heddle] def extract[A](steps: Array[Seg], segs: Chunk[String]): Option[A] =
-    val n        = steps.length
-    var i        = 0
-    var si       = 0
-    var acc: Any = ()
-    var hasRest  = false
-    while i < n do
-      steps(i) match
-        case Seg.Lit(value) =>
-          if si >= segs.length || segs(si) != value then return None
-          si += 1
-        case Seg.Var(_, kind) =>
-          if si >= segs.length then return None
-          val parsed: Option[Any] = kind match
-            case PathKind.Int32 => segs(si).toIntOption
-            case PathKind.Int64 => segs(si).toLongOption
-            case PathKind.Str   => Some(segs(si))
-            case PathKind.Uuid  =>
-              try Some(UUID.fromString(segs(si)))
-              catch case _: IllegalArgumentException => None
-          parsed match
-            case None    => return None
-            case Some(v) => acc = Combine(acc, v)
-          si += 1
-        case Seg.Rest =>
-          acc = Combine(acc, Path(segs.drop(si)))
-          si = segs.length
-          hasRest = true
-      end match
-      i += 1
-    end while
-    if !hasRest && si != segs.length then None
-    else Some(acc.asInstanceOf[A])
-  end extract
-
-  private[heddle] def encodePath[A](segments: Chunk[Seg], value: A): Path =
-    val steps = segments.toArray
-    val out   = Array.newBuilder[String]
-    var vals  = flatten(value)
-    var i     = 0
-    while i < steps.length do
-      steps(i) match
-        case Seg.Lit(v)    => out += v
-        case Seg.Var(_, _) =>
-          vals match
-            case h :: t =>
-              out += renderVal(h)
-              vals = t
-            case Nil => ()
-        case Seg.Rest =>
-          vals match
-            case (p: Path) :: t =>
-              p.segments.foreach(s => out += s)
-              vals = t
-            case h :: t =>
-              out += renderVal(h)
-              vals = t
-            case Nil => ()
-      end match
-      i += 1
-    end while
-    Path(Chunk.fromIterable(out.result()))
-  end encodePath
-
-  private def flatten(a: Any): List[Any] =
-    a match
-      case ()              => Nil
-      case t: Tuple2[?, ?] => flatten(t._1) ++ flatten(t._2)
-      case other           => other :: Nil
-
-  private def renderVal(v: Any): String =
-    v match
-      case u: UUID => u.toString
-      case other   => other.toString
+  private[heddle] def parseUuid(raw: String): Option[UUID] =
+    try Some(UUID.fromString(raw))
+    catch case _: IllegalArgumentException => None
 end PathCodec
 
 inline def int(inline name: String): PathCodec[Int]       = PathCodec.int(name)

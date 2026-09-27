@@ -53,7 +53,7 @@ export heddle.route.{
   HeaderCodec,
   PathKind,
   Seg,
-  Combine,
+  Combiner,
   int,
   long,
   string,

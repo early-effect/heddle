@@ -107,13 +107,19 @@ arguments; non-JSON bodies are not promotable.
       md"""
 An endpoint reads a request into `In` and writes `In` back into a request. Every builder records
 both halves, so `toRequest` is total and a typed client needs nothing but the endpoint value.
-`mapIn` names a tuple as a product and takes the way back too:
+
+Inputs are flat. Each builder adds its value to the end, and `Unit` (a literal segment) adds
+nothing, so a path id, a query, and a JSON body are an `(Int, Option[String], Seat)`, never nested
+pairs. `.as[B]` names that tuple as the case class with the same fields, both ways; `mapIn` takes
+any other pair of functions:
 
 ```scala
+final case class Lookup(id: Int, tag: Option[String])
+
 Endpoint
   .get("items" / int("id"))
   .query[Option[String]]("tag")
-  .mapIn(Lookup(_, _))(l => (l.id, l.tag))
+  .as[Lookup]
 ```
 
 The output side is the same. `.out[O]` reads JSON with `O`'s codec, `.outText` reads text,
@@ -122,6 +128,11 @@ The output side is the same. `.out[O]` reads JSON with `O`'s codec, `.outText` r
 suite checks both directions as laws over generated inputs, including path values like `a/b` and
 `50%`, which travel as one encoded segment and never change the route.
 """,
+      exampleValue {
+        final case class Lookup(id: Int, tag: Option[String])
+        val ep = Endpoint.get("items" / int("id")).query[Option[String]]("tag").as[Lookup]
+        ep.toRequest(Lookup(7, Some("new")), Url.root).url.render
+      }.assert(url => assertTrue(url == "/items/7?tag=new")),
       exampleZIO {
         val ep     = Endpoint.get("items" / int("id")).query[Option[String]]("tag").out[String]
         val routes = ep.implement((id, tag) => zio.ZIO.succeed(s"$id:${tag.getOrElse("-")}"))

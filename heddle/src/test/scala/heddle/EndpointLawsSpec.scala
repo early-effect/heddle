@@ -14,9 +14,7 @@ object EndpointLawsSpec extends ZIOSpecDefault:
       .query[Option[String]]("tag")
       .query[Int]("n")
       .inJson[Payload]
-      .mapIn { case ((((id, slug), tag), n), payload) => Probe(id, slug, tag, n, payload) }(p =>
-        ((((p.id, p.slug), p.tag), p.n), p.payload)
-      )
+      .as[Probe]
       .out[Probe]
 
   private val routes = echo.implement(ZIO.succeed(_))

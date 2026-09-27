@@ -1,11 +1,12 @@
 package heddle.endpoint
 
 import java.nio.charset.StandardCharsets
+import scala.deriving.Mirror
 import heddle.client.CallFailure
 import heddle.http.{Body, Form, MediaType, Method, Path, QueryParams, Request, Response, Status, Url}
 import heddle.http.header.Headers
 import heddle.http.header.TypedHeader
-import heddle.route.{Combine, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
+import heddle.route.{Combiner, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
 import heddle.sse.{ServerSentEvent, Sse, SseCodec}
 import zio.json.JsonCodec
 import zio.stream.ZStream
@@ -23,89 +24,70 @@ sealed abstract class Endpoint[In, Err, Out]:
   def errors: ErrorCodec[Err]
   def outputCodec: Option[JsonCodec[Out]]
   def doc: EndpointDoc
-  def slots: Chunk[Endpoint.InputSlot]
+
+  /** The inverse of `decodeIn`: the path value and the query, headers, and body that decode back to `in`. */
+  def encodeIn: In => (PathIn, Endpoint.Acc)
 
   def encodeErr(e: Err): Response = errors.encode(e)
 
-  inline def query[Q](name: String)(using codec: QueryCodec[Q]): Endpoint[Combine[In, Q], Err, Out] =
-    bindSync(
-      (in, req) => codec.decode(req.query.getAll(name)).left.map(Response.badRequest).map(q => zipIn(in, q)),
+  def query[Q](name: String)(using codec: QueryCodec[Q], c: Combiner[In, Q]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req => ZIO.fromEither(codec.decode(req.query.getAll(name))).mapError(Response.badRequest),
       doc.copy(queries = doc.queries :+ ParamDoc(name, ParamLocation.Query, codec.required, codec.schema)),
-      Endpoint.InputSlot.combine[In, Q] { (piece, acc) =>
-        acc.copy(query = acc.query.add(name, codec.encode(piece.asInstanceOf[Q])))
-      },
+      (q, acc) => acc.copy(query = acc.query.add(name, codec.encode(q))),
     )
 
-  inline def header[H](name: String)(using codec: HeaderCodec[H]): Endpoint[Combine[In, H], Err, Out] =
-    bindSync(
-      (in, req) => codec.decode(req.header(name)).left.map(Response.badRequest).map(h => zipIn(in, h)),
+  def header[H](name: String)(using codec: HeaderCodec[H], c: Combiner[In, H]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req => ZIO.fromEither(codec.decode(req.header(name))).mapError(Response.badRequest),
       doc.copy(headers = doc.headers :+ ParamDoc(name, ParamLocation.Header, codec.required, codec.schema)),
-      Endpoint.InputSlot.combine[In, H] { (piece, acc) =>
-        codec.encode(piece.asInstanceOf[H]) match
-          case None    => acc
-          case Some(v) => acc.copy(headers = acc.headers.add(name, v))
-      },
+      (h, acc) => codec.encode(h).fold(acc)(v => acc.copy(headers = acc.headers.add(name, v))),
     )
 
-  inline def header[A](using t: TypedHeader[A]): Endpoint[Combine[In, A], Err, Out] =
-    bindSync(
-      (in, req) =>
-        req.header(t.name) match
-          case None      => Left(Response.badRequest("missing header"))
-          case Some(raw) => t.decode(raw).left.map(Response.badRequest).map(a => zipIn(in, a))
-      ,
+  def header[A](using t: TypedHeader[A], c: Combiner[In, A]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req =>
+        ZIO
+          .fromOption(req.header(t.name))
+          .orElseFail(Response.badRequest("missing header"))
+          .flatMap(raw => ZIO.fromEither(t.decode(raw)).mapError(Response.badRequest)),
       doc.copy(headers =
         doc.headers :+ ParamDoc(t.name.render, ParamLocation.Header, required = true, SchemaDoc.Str(None))
       ),
-      Endpoint.InputSlot.combine[In, A] { (piece, acc) =>
-        acc.copy(headers = acc.headers.add(t.name, t.encode(piece.asInstanceOf[A])))
-      },
+      (a, acc) => acc.copy(headers = acc.headers.add(t.name, t.encode(a))),
     )
 
-  inline def inJson[B](using s: Schema[B], codec: JsonCodec[B]): Endpoint[Combine[In, B], Err, Out] =
-    bindNext(
-      (in, req) =>
+  def inJson[B](using s: Schema[B], codec: JsonCodec[B], c: Combiner[In, B]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req =>
         req.body.collect
           .mapError(e => Response.badRequest(e.getMessage))
-          .flatMap { raw =>
-            Endpoint.jsonDecode(raw) match
-              case Left(msg) => ZIO.fail(Response.badRequest(msg))
-              case Right(b)  => ZIO.succeed(zipIn(in, b))
-          },
+          .flatMap(raw => ZIO.fromEither(Endpoint.jsonDecode[B](raw)).mapError(Response.badRequest)),
       doc.copy(requestBody = Some(MediaDoc(s.doc, MediaType.Json))),
-      Endpoint.InputSlot.combine[In, B] { (piece, acc) =>
-        acc.copy(body = Body.fromBytes(Endpoint.jsonBytes(piece.asInstanceOf[B]), Some(MediaType.Json)))
-      },
+      (b, acc) => acc.copy(body = Body.fromBytes(Endpoint.jsonBytes(b), Some(MediaType.Json))),
     )
 
-  inline def inText: Endpoint[Combine[In, String], Err, Out] =
-    bindNext(
-      (in, req) =>
+  def inText(using c: Combiner[In, String]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req =>
         req.body.collect
-          .map(c => String(c.toArray, java.nio.charset.StandardCharsets.UTF_8))
-          .mapBoth(e => Response.badRequest(e.getMessage), raw => zipIn(in, raw)),
+          .mapBoth(e => Response.badRequest(e.getMessage), bytes => String(bytes.toArray, StandardCharsets.UTF_8)),
       doc.copy(requestBody = Some(MediaDoc(SchemaDoc.Str(None), MediaType.Text))),
-      Endpoint.InputSlot.combine[In, String] { (piece, acc) =>
-        acc.copy(body = Body.text(piece.asInstanceOf[String]))
-      },
+      (text, acc) => acc.copy(body = Body.text(text)),
     )
 
-  inline def inForm: Endpoint[Combine[In, Form], Err, Out] =
-    bindNext(
-      (in, req) => req.body.asForm.mapBoth(e => Response.badRequest(e.getMessage), form => zipIn(in, form)),
+  def inForm(using c: Combiner[In, Form]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req => req.body.asForm.mapError(e => Response.badRequest(e.getMessage)),
       doc.copy(requestBody = Some(MediaDoc(SchemaDoc.Str(None), MediaType.FormUrlEncoded))),
-      Endpoint.InputSlot.combine[In, Form] { (piece, acc) =>
-        acc.copy(body = Body.form(piece.asInstanceOf[Form]))
-      },
+      (form, acc) => acc.copy(body = Body.form(form)),
     )
 
-  inline def inBytes: Endpoint[Combine[In, Chunk[Byte]], Err, Out] =
-    bindNext(
-      (in, req) => req.body.collect.mapBoth(e => Response.badRequest(e.getMessage), b => zipIn(in, b)),
+  def inBytes(using c: Combiner[In, Chunk[Byte]]): Endpoint[c.Out, Err, Out] =
+    adding(c)(
+      req => req.body.collect.mapError(e => Response.badRequest(e.getMessage)),
       doc.copy(requestBody = Some(MediaDoc(SchemaDoc.Str(Some("binary")), MediaType.OctetStream))),
-      Endpoint.InputSlot.combine[In, Chunk[Byte]] { (piece, acc) =>
-        acc.copy(body = Body.fromBytes(piece.asInstanceOf[Chunk[Byte]], Some(MediaType.OctetStream)))
-      },
+      (bytes, acc) => acc.copy(body = Body.fromBytes(bytes, Some(MediaType.OctetStream))),
     )
 
   def out[O](using Schema[O], JsonCodec[O]): Endpoint[In, Err, O] =
@@ -214,22 +196,22 @@ sealed abstract class Endpoint[In, Err, Out]:
       method,
       path,
       (pathIn, req) => decodeIn(pathIn, req).map(to),
+      encodeIn.compose(from),
       encodeOut,
       decodeOut,
       errors,
       outputCodec,
       doc,
-      slots :+ Endpoint.InputSlot.mapped(from),
     )
+
+  /** Names the input as the case class whose fields are its values, in order, both ways. */
+  def as[B <: Product](using m: Mirror.ProductOf[B])(using same: m.MirroredElemTypes =:= In): Endpoint[B, Err, Out] =
+    mapIn(in => m.fromTuple(same.flip(in)))(b => same(Tuple.fromProductTyped(b)(using m)))
 
   /** The request `decodeIn` reads back as `in`. Total: every builder records how to put its piece back. */
   def toRequest(in: In, base: Url): Request =
-    val (pathIn, acc) = slots.foldRight[(Any, Endpoint.Acc)]((in, Endpoint.Acc.empty)) { case (slot, (cur, acc)) =>
-      val (prev, piece) = slot.peel(cur)
-      (prev, slot.put(piece, acc))
-    }
-    val encoded = path.encode(pathIn.asInstanceOf[PathIn])
-    val url     = base.copy(path = Path(base.path.segments ++ encoded.segments), query = acc.query)
+    val (pathIn, acc) = encodeIn(in)
+    val url           = base.copy(path = Path(base.path.segments ++ path.encode(pathIn).segments), query = acc.query)
     Request(method, url, acc.headers, acc.body)
 
   def fromResponse(res: Response): IO[CallFailure[Err], Out] =
@@ -245,45 +227,26 @@ sealed abstract class Endpoint[In, Err, Out]:
         case Some(Right(e))  => ZIO.fail(CallFailure.Domain(e))
     }
 
-  private def zipIn[P](in: In, piece: P): Combine[In, P] = Combine(in, piece)
-
-  private def bindSync[N](
-      next: (In, Request) => Either[Response, N],
+  /** Adds one input: `read` decodes it from the request, `c` joins it to what came before, and `put` writes it back. */
+  private def adding[P](c: Combiner[In, P])(
+      read: Request => IO[Response, P],
       nextDoc: EndpointDoc,
-      slot: Endpoint.InputSlot,
-  ): Endpoint[N, Err, Out] =
+      put: (P, Endpoint.Acc) => Endpoint.Acc,
+  ): Endpoint[c.Out, Err, Out] =
     Endpoint.Impl(
       method,
       path,
-      (pathIn, req) =>
-        decodeIn(pathIn, req).flatMap { in =>
-          next(in, req) match
-            case Left(res) => ZIO.fail(res)
-            case Right(n)  => ZIO.succeed(n)
-        },
+      (pathIn, req) => decodeIn(pathIn, req).flatMap(in => read(req).map(c.combine(in, _))),
+      out =>
+        val (in, piece)   = c.separate(out)
+        val (pathIn, acc) = encodeIn(in)
+        (pathIn, put(piece, acc))
+      ,
       encodeOut,
       decodeOut,
       errors,
       outputCodec,
       nextDoc,
-      slots :+ slot,
-    )
-
-  private def bindNext[N](
-      next: (In, Request) => IO[Response, N],
-      nextDoc: EndpointDoc,
-      slot: Endpoint.InputSlot,
-  ): Endpoint[N, Err, Out] =
-    Endpoint.Impl(
-      method,
-      path,
-      (pathIn, req) => decodeIn(pathIn, req).flatMap(in => next(in, req)),
-      encodeOut,
-      decodeOut,
-      errors,
-      outputCodec,
-      nextDoc,
-      slots :+ slot,
     )
 
   private def replace[E1, O1](
@@ -293,7 +256,7 @@ sealed abstract class Endpoint[In, Err, Out]:
       doc: EndpointDoc,
       outputCodec: Option[JsonCodec[O1]],
   ): Endpoint[In, E1, O1] =
-    Endpoint.Impl(method, path, decodeIn, encodeOut, decodeOut, errors, outputCodec, doc, slots)
+    Endpoint.Impl(method, path, decodeIn, encodeIn, encodeOut, decodeOut, errors, outputCodec, doc)
 
   private def replaceDoc(next: EndpointDoc): Endpoint[In, Err, Out] =
     replace(encodeOut, decodeOut, errors, next, outputCodec)
@@ -344,6 +307,7 @@ object Endpoint:
       method,
       path,
       (pathIn, _) => ZIO.succeed(pathIn),
+      pathIn => (pathIn, Acc.empty),
       _ => Response.empty(Status.NoContent),
       _ => ZIO.unit,
       ErrorCodec.none,
@@ -361,7 +325,6 @@ object Endpoint:
         description = None,
         tags = Nil,
       ),
-      Chunk.empty,
     )
 
   final class OutErrors[In, E, Out] private[endpoint] (endpoint: Endpoint[In, ?, Out]):
@@ -373,31 +336,16 @@ object Endpoint:
   object Acc:
     val empty: Acc = Acc(QueryParams.empty, Headers.empty, Body.empty)
 
-  /** How one builder step splits its input back apart (`peel`) and writes its piece into the request (`put`). */
-  final class InputSlot(val peel: Any => (Any, Any), val put: (Any, Acc) => Acc)
-
-  object InputSlot:
-    inline def combine[A, B](put: (Any, Acc) => Acc): InputSlot =
-      InputSlot(
-        n => Combine.unapply[A, B](n.asInstanceOf[Combine[A, B]]),
-        put,
-      )
-
-    /** A `mapIn` step: writes nothing, and hands `from(b)` to the steps before it. */
-    def mapped[A, B](from: B => A): InputSlot =
-      InputSlot(b => (from(b.asInstanceOf[B]), ()), (_, acc) => acc)
-  end InputSlot
-
   private final class Impl[P, In, Err, Out](
       val method: Method,
       val path: PathCodec[P],
       val decodeIn: (P, Request) => IO[Response, In],
+      val encodeIn: In => (P, Acc),
       val encodeOut: Out => Response,
       val decodeOut: Response => IO[String, Out],
       val errors: ErrorCodec[Err],
       val outputCodec: Option[JsonCodec[Out]],
       val doc: EndpointDoc,
-      val slots: Chunk[InputSlot],
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P
   end Impl

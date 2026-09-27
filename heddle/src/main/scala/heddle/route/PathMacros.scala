@@ -17,29 +17,37 @@ private[heddle] object PathMacros:
 
   def specializeImpl[A: Type](path: Expr[PathCodec[A]])(using Quotes): Expr[PathCodec[A]] =
     import quotes.reflect.*
-    partsOf(path.asTerm) match
+    partsOf(path.asTerm).filter(fitsFlat[A]) match
       case Some(parts) =>
-        val segs = '{ Chunk.fromIterable(${ Expr.ofList(parts.map(segExpr)) }) }
         '{
           ${ registerLits(parts) }
-          PathCodec($segs, ${ extractFn[A](parts) }, true)
+          $path.withMatcher(${ extractFn[A](parts) })
         }
       case None => path
   end specializeImpl
+
+  /** The unrolled matcher builds `()`, the one value, or a flat tuple; a path that groups its codecs keeps its reader.
+    */
+  private def fitsFlat[A: Type](parts: List[Part])(using Quotes): Boolean =
+    import quotes.reflect.*
+    val values = parts.collect {
+      case Part.I32(_)  => TypeRepr.of[Int]
+      case Part.I64(_)  => TypeRepr.of[Long]
+      case Part.Str(_)  => TypeRepr.of[String]
+      case Part.Uuid(_) => TypeRepr.of[UUID]
+    }
+    val shape = values match
+      case Nil        => TypeRepr.of[Unit]
+      case one :: Nil => one
+      case many       => defn.TupleClass(many.length).typeRef.appliedTo(many)
+    shape =:= TypeRepr.of[A]
+  end fitsFlat
 
   private def registerLits(parts: List[Part])(using Quotes): Expr[Unit] =
     val regs = parts.collect { case Part.Lit(v) => '{ PathLits.register(${ Expr(v) }) } }
     regs match
       case Nil          => '{ () }
       case first :: all => all.foldLeft(first)((a, b) => '{ $a; $b })
-
-  private def segExpr(part: Part)(using Quotes): Expr[Seg] =
-    part match
-      case Part.Lit(v)  => '{ Seg.Lit(${ Expr(v) }) }
-      case Part.I32(n)  => '{ Seg.Var(${ Expr(n) }, PathKind.Int32) }
-      case Part.I64(n)  => '{ Seg.Var(${ Expr(n) }, PathKind.Int64) }
-      case Part.Str(n)  => '{ Seg.Var(${ Expr(n) }, PathKind.Str) }
-      case Part.Uuid(n) => '{ Seg.Var(${ Expr(n) }, PathKind.Uuid) }
 
   private def extractFn[A: Type](parts: List[Part])(using Quotes): Expr[Chunk[String] => Option[A]] =
     val n = Expr(parts.length)
@@ -75,25 +83,21 @@ private[heddle] object PathMacros:
             }
           case Part.Uuid(_) =>
             '{
-              try
-                val x = UUID.fromString($path($idx))
-                ${ rec(i + 1, vars :+ '{ x }) }
-              catch case _: IllegalArgumentException => None
+              PathCodec.parseUuid($path($idx)) match
+                case None    => None
+                case Some(x) => ${ rec(i + 1, vars :+ '{ x }) }
             }
         end match
     rec(0, Nil)
   end unrolled
 
+  /** `fitsFlat` checked the shape before expanding, and `asExprOf` has the compiler check it again. */
   private def finish[A: Type](vars: List[Expr[Any]])(using Quotes): Expr[Option[A]] =
-    vars match
-      case Nil =>
-        '{ Some(()).asInstanceOf[Option[A]] }
-      case v :: Nil =>
-        '{ Some($v.asInstanceOf[A]) }
-      case v1 :: v2 :: rest =>
-        val tup: Expr[Any] =
-          rest.foldLeft[Expr[Any]]('{ ($v1, $v2) })((acc, v) => '{ ($acc, $v) })
-        '{ Some($tup.asInstanceOf[A]) }
+    val value = vars match
+      case Nil        => '{ () }
+      case one :: Nil => one
+      case many       => Expr.ofTupleFromSeq(many)
+    '{ Some(${ value.asExprOf[A] }) }
 
   private def strip(using Quotes)(term: quotes.reflect.Term): quotes.reflect.Term =
     import quotes.reflect.*
@@ -116,9 +120,12 @@ private[heddle] object PathMacros:
         case "uuid"   => Some(List(Part.Uuid(s)))
         case _        => None
 
+    def isCombiner(arg: Term): Boolean = arg.tpe.widen <:< TypeRepr.of[Combiner[?, ?]]
+
     def loop(t: Term): Option[List[Part]] =
       strip(t) match
-        case Apply(fun, args) =>
+        case Apply(fun, args) if args.nonEmpty && args.forall(isCombiner) => loop(fun)
+        case Apply(fun, args)                                             =>
           val core = fun match
             case TypeApply(c, _) => c
             case c               => c
@@ -126,6 +133,8 @@ private[heddle] object PathMacros:
           (name, core, args) match
             case ("/", Select(qual, "/"), List(Literal(StringConstant(s)))) =>
               loop(qual).map(_ :+ Part.Lit(s))
+            case ("prefixed", Select(qual, "prefixed"), List(Literal(StringConstant(s)))) =>
+              loop(qual).map(Part.Lit(s) :: _)
             case ("/", Select(qual, "/"), List(arg)) =>
               for
                 a <- loop(qual)
