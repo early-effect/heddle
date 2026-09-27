@@ -98,7 +98,8 @@ object H2ConformanceSpec extends ZIOSpecDefault:
         started     <- Promise.make[Nothing, Unit]
         interrupted <- Promise.make[Nothing, Unit]
         routes = Routes(
-          Method.GET / "hold" -> handler(started.succeed(()) *> ZIO.never.onInterrupt(interrupted.succeed(())))
+          // The hook wraps the whole body: installed after `started`, an interrupt could land before it and skip it.
+          Method.GET / "hold" -> handler((started.succeed(()) *> ZIO.never).onInterrupt(interrupted.succeed(())))
         )
         out <- LiveServer(routes, LiveServer.local) { base =>
           H2Wire(java.net.URI.create(base).getPort) { w =>
