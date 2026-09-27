@@ -90,10 +90,10 @@ object BrotliSpec extends ZIOSpecDefault:
           Routes(Method.GET / "j" -> Handler.text("n" * 2048)) @@
             Middleware.compress(minBytes = 16, compressors = Chunk(Brotli.compressor))
         routes(Request.get("/j").withHeader("Accept-Encoding", "br")).map { res =>
-          val dec = oracle(res.body.asBytes)
+          val dec = res.body.strict.map(oracle)
           assertTrue(
             res.header("Content-Encoding").contains("br"),
-            dec.toArray.toSeq == ("n" * 2048).getBytes.toSeq,
+            dec.map(_.toArray.toSeq).contains(("n" * 2048).getBytes.toSeq),
           )
         }
       ,
@@ -102,14 +102,12 @@ object BrotliSpec extends ZIOSpecDefault:
         val enc    = Brotli.encode(Chunk.fromArray(raw))
         val routes =
           Routes(
-            Method.POST / "echo" -> Handler.fromFunctionZIO((req: Request) =>
-              ZIO.succeed(Response.text(req.body.asString))
-            )
+            Method.POST / "echo" -> Handler.fromFunctionZIO((req: Request) => req.body.utf8.orDie.map(Response.text(_)))
           ) @@
             Middleware.decompress(decompressors = Chunk(Brotli.decompressor))
         val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "br")
         routes(req).map { res =>
-          assertTrue(res.body.asString == "hello heddle brotli")
+          assertTrue(res.body.text.contains("hello heddle brotli"))
         },
     ) @@ TestAspect.timeout(60.seconds)
 

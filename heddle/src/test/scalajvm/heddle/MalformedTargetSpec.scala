@@ -31,5 +31,5 @@ object MalformedTargetSpec extends ZIOSpecDefault:
         }
         .map(reply => assertTrue(reply.startsWith("HTTP/1.1 404")))
     }
-  )
+  ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(20.seconds)
 end MalformedTargetSpec

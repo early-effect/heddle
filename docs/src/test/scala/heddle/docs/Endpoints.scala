@@ -24,7 +24,7 @@ then [Docs and HTTP fall out](docs-and-http-fall-out.html).
 """,
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
-          BoxOffice.api(store).routes(Request.get("/shows/1")).map(res => (res.status, res.body.asString))
+          BoxOffice.api(store).routes(Request.get("/shows/1")).flatMap(res => res.body.utf8.map((res.status, _)))
         }
       }.assert { case (status, body) =>
         assertTrue(status == Status.Ok, body.contains("Evening bill"))
@@ -78,9 +78,11 @@ zio-json's default sum encoding; `@jsonDiscriminator`, `@jsonHint`, or a custom
           val routes              = BoxOffice.api(store).routes
           def seat(party: String) = routes(Request.post("/parties", Body.json(party)))
           for
-            soldOut <- seat("""{"showId":1,"size":13}""")
-            noBlock <- seat("""{"showId":3,"size":2}""")
-          yield (soldOut.status, soldOut.body.asString, noBlock.status, noBlock.body.asString)
+            soldOut     <- seat("""{"showId":1,"size":13}""")
+            soldOutBody <- soldOut.body.utf8
+            noBlock     <- seat("""{"showId":3,"size":2}""")
+            noBlockBody <- noBlock.body.utf8
+          yield (soldOut.status, soldOutBody, noBlock.status, noBlockBody)
         }
       }.assert { case (soldOut, soldOutBody, noBlock, noBlockBody) =>
         assertTrue(

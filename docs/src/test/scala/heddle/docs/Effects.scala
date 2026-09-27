@@ -45,7 +45,7 @@ not a parallel effect system.
     ),
     section("Streams are streams")(
       md"""
-Bodies on the wire are streams. `Body.asString` / `asBytes` are for in-memory bodies.
+Bodies on the wire are streams. `body.utf8` reads any body; `body.text` is `None` for a stream.
 SSE is a `ZStream` of `ServerSentEvent`. Do not pretend a stream is a `List`. Interrupt the
 client, the stream fiber stops.
 """

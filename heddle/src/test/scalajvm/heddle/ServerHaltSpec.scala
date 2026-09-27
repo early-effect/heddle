@@ -11,7 +11,7 @@ object ServerHaltSpec extends ZIOSpecDefault:
   private val sse = Routes(
     Method.GET / "sse" -> Handler { (_: Request) =>
       heddle.sse.Sse.session[Any] { w =>
-        w.send(heddle.sse.ServerSentEvent("x", Some("x"))) *> ZIO.never
+        w.send(heddle.sse.ServerSentEvent("x", Some(heddle.sse.SseField("x")))) *> ZIO.never
       }
     }
   )

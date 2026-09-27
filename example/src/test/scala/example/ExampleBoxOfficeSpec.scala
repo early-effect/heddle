@@ -36,9 +36,9 @@ object ExampleBoxOfficeSpec extends ZIOSpecDefault:
           noBlock <- seat(office, Party(3, 2))
         yield assertTrue(
           soldOut.status == Status.Conflict,
-          soldOut.body.asString == """{"SoldOut":{"showId":1}}""",
+          soldOut.body.text.is(_.some) == """{"SoldOut":{"showId":1}}""",
           noBlock.status == Status.UnprocessableContent,
-          noBlock.body.asString == """{"NoBlock":{"showId":3,"size":2}}""",
+          noBlock.body.text.is(_.some) == """{"NoBlock":{"showId":3,"size":2}}""",
         ),
     ) @@ TestAspect.timeout(5.seconds)
 end ExampleBoxOfficeSpec

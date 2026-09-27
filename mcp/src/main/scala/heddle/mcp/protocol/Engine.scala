@@ -197,7 +197,7 @@ object Engine:
       case Right(req) =>
         op.input(req)
           .foldZIO(
-            res => ZIO.succeed(CallResult.Failed(res.body.asString)),
+            res => res.body.utf8.orElseSucceed(res.status.text).map(CallResult.Failed(_)),
             in =>
               op.run(in)
                 .fold(

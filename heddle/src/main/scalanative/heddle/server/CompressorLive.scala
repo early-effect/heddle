@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
 import heddle.error.HttpError
 import heddle.http.ContentEncoding
+import heddle.internal.zlib.GzipStream
 import zio.Chunk
 import zio.stream.ZStream
 
@@ -40,24 +41,5 @@ private object GzipCompressor extends Compressor:
     Chunk.fromArray(bos.toByteArray)
 
   def stream(in: ZStream[Any, Throwable, Byte]): ZStream[Any, Throwable, Byte] =
-    ZStream.unwrap {
-      zio.ZIO.succeed {
-        val bos = ByteArrayOutputStream(512)
-        val gz  = GZIPOutputStream(bos, 512, true)
-        in.mapChunks { c =>
-          if c.nonEmpty then gz.write(c.toArray)
-          gz.flush()
-          val out = bos.toByteArray
-          bos.reset()
-          Chunk.fromArray(out)
-        } ++ ZStream.fromZIO {
-          zio.ZIO.succeed {
-            gz.finish()
-            val out = bos.toByteArray
-            gz.close()
-            Chunk.fromArray(out)
-          }
-        }.flattenChunks
-      }
-    }
+    GzipStream.stream(in)
 end GzipCompressor

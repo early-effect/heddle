@@ -65,5 +65,5 @@ object UrlLawsSpec extends ZIOSpecDefault:
         Url.decode("http://example.com:8o/").isLeft,
         Url.decode("http:///nohost").isLeft,
       ),
-  )
+  ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end UrlLawsSpec

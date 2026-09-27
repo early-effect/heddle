@@ -49,5 +49,5 @@ object SumJsonShapeSpec extends ZIOSpecDefault:
       ,
       test("nested all-singleton hierarchies are plain leaf strings"):
         assertTrue((North: Dir).toJson == "\"North\"", (East: Dir).toJson == "\"East\""),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end SumJsonShapeSpec

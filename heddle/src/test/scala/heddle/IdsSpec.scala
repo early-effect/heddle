@@ -17,5 +17,5 @@ object IdsSpec extends ZIOSpecDefault:
         val a = Ids.uuid()
         val b = Ids.uuid()
         assertTrue(a != b),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end IdsSpec

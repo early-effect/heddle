@@ -46,7 +46,7 @@ object FormSpec extends ZIOSpecDefault:
         val ep     = Endpoint.post("f").inForm.outText()
         val routes = ep.implement(form => ZIO.succeed(form.get("n").getOrElse("")))
         routes(Request.post("/f", Body.form(Form("n" -> "ada")))).map { res =>
-          assertTrue(res.body.asString == "ada")
+          assertTrue(res.body.text.is(_.some) == "ada")
         }
       ,
       test("RangeSpec parses suffix and open end"):

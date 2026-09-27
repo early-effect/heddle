@@ -32,7 +32,7 @@ object Scala3ProofSpec extends ZIOSpecDefault:
         val ep     = Endpoint.get("x").out[Show].outError[Boom](Status.Conflict)
         val routes = ep.implement(_ => ZIO.fail(Boom.Out(1)))
         routes(Request.get("/x")).map { res =>
-          assertTrue(res.status == Status.Conflict, res.body.asString.contains("Out"))
+          assertTrue(res.status == Status.Conflict, res.body.text.is(_.some).contains("Out"))
         }
       ,
       test("job eta-expands a method without ascription"):

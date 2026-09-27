@@ -15,7 +15,7 @@ object JsLiveSpec extends ZIOSpecDefault:
           Server.install(routes, local).flatMap { server =>
             server.port.flatMap { port =>
               Client.get(s"http://127.0.0.1:$port/health").map { res =>
-                assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+                assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
               }
             }
           }
@@ -32,7 +32,7 @@ object JsLiveSpec extends ZIOSpecDefault:
             server.port.flatMap { port =>
               Client
                 .request(Method.POST, s"http://127.0.0.1:$port/echo", body = Body.text("ping"))
-                .map(res => assertTrue(res.body.asString == "ping"))
+                .map(res => assertTrue(res.body.text.is(_.some) == "ping"))
             }
           }
         }
@@ -72,7 +72,7 @@ object JsLiveSpec extends ZIOSpecDefault:
         val path = "target/heddle-js-files-test.txt"
         val _    = Fs.writeFileSync(path, Buffers.toU8(Chunk.fromArray("hello-js".getBytes)))
         Files.fromPath(path).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString == "hello-js")
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "hello-js")
         }
       ,
       test("HTTPS Server.install answers HTTP/1.1"):

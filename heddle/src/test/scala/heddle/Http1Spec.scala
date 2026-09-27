@@ -4,7 +4,7 @@ import BytesLength.*
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import heddle.internal.engine.Http1
-import heddle.sse.{ServerSentEvent, Sse, SseCodec}
+import heddle.sse.{ServerSentEvent, Sse, SseCodec, SseField}
 import zio.*
 import zio.stream.ZStream
 import zio.test.*
@@ -58,12 +58,15 @@ object Http1Spec extends ZIOSpecDefault:
         val routes = Routes(
           Method.GET / "sse" -> handler(
             ZIO.succeed(
-              Sse.response(ZStream(ServerSentEvent("a", event = Some("tick")), ServerSentEvent("b")))
+              Sse.response(ZStream(ServerSentEvent("a", event = Some(SseField("tick"))), ServerSentEvent("b")))
             )
           )
         )
         runWire(routes, get("/sse")).map { wire =>
-          val a = String(SseCodec.encode(ServerSentEvent("a", event = Some("tick"))).toArray, StandardCharsets.UTF_8)
+          val a = String(
+            SseCodec.encode(ServerSentEvent("a", event = Some(SseField("tick")))).toArray,
+            StandardCharsets.UTF_8,
+          )
           val b = String(SseCodec.encode(ServerSentEvent("b")).toArray, StandardCharsets.UTF_8)
           assertTrue(
             wire.contains("Content-Type: text/event-stream"),

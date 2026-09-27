@@ -195,7 +195,11 @@ object McpSpec extends ZIOSpecDefault:
           http <- api(store).routes(Request.get("/items/1"))
         yield
           val json = out.get.toJson
-          assertTrue(json.contains("ada"), http.body.asString.contains("ada"), !json.contains("\"isError\":true"))
+          assertTrue(
+            json.contains("ada"),
+            http.body.text.is(_.some).contains("ada"),
+            !json.contains("\"isError\":true"),
+          )
       ,
       test("HTTP Mcp-Name mismatch is 400 / -32020"):
         for
@@ -214,7 +218,7 @@ object McpSpec extends ZIOSpecDefault:
           )
         yield assertTrue(
           res.status == Status.BadRequest,
-          res.body.asString.contains("-32020") || res.body.asString.contains("\"code\":-32020"),
+          res.body.text.is(_.some).contains("-32020") || res.body.text.is(_.some).contains("\"code\":-32020"),
         )
       ,
       test("GET /mcp is 405"):
@@ -261,7 +265,7 @@ object McpSpec extends ZIOSpecDefault:
           )
         yield assertTrue(
           res.status == Status.BadRequest,
-          res.body.asString.contains("-32020") || res.body.asString.contains("\"code\":-32020"),
+          res.body.text.is(_.some).contains("-32020") || res.body.text.is(_.some).contains("\"code\":-32020"),
         )
       ,
       test("HTTP discover with matching headers is 200"):
@@ -275,7 +279,7 @@ object McpSpec extends ZIOSpecDefault:
               .withHeader(Http.ProtocolHeader, ProtocolVersion)
               .withHeader(Http.MethodHeader, "server/discover")
           )
-        yield assertTrue(res.status == Status.Ok, res.body.asString.contains("2026-07-28"))
+        yield assertTrue(res.status == Status.Ok, res.body.text.is(_.some).contains("2026-07-28"))
       ,
       test("stdio framing round-trips ping"):
         val inBytes = (req("ping", obj()).toJson + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -291,8 +295,8 @@ object McpSpec extends ZIOSpecDefault:
         routes(Request.get("/.well-known/oauth-protected-resource")).map { res =>
           assertTrue(
             res.status == Status.Ok,
-            res.body.asString.contains("authorization_servers"),
-            res.body.asString.contains("/mcp"),
+            res.body.text.is(_.some).contains("authorization_servers"),
+            res.body.text.is(_.some).contains("/mcp"),
           )
         }
       ,
@@ -367,12 +371,12 @@ object McpSpec extends ZIOSpecDefault:
             protocol = None,
           )
         yield
-          val body = res.body.asString
+          val body = res.body.text
           assertTrue(
             res.status == Status.Ok,
-            body.contains("2025-11-25"),
-            body.contains("Shop"),
-            !body.contains("resultType"),
+            body.is(_.some).contains("2025-11-25"),
+            body.is(_.some).contains("Shop"),
+            !body.is(_.some).contains("resultType"),
             res.header(Legacy.SessionHeader).exists(_.nonEmpty),
           )
       ,
@@ -399,19 +403,19 @@ object McpSpec extends ZIOSpecDefault:
           )
           http <- api(store).routes(Request.get("/items/1"))
         yield
-          val listed = list.body.asString
-          val called = call.body.asString
+          val listed = list.body.text
+          val called = call.body.text
           assertTrue(
             ack.status == Status.Accepted,
             list.status == Status.Ok,
-            listed.contains("get_items_id"),
-            listed.contains("get_items"),
-            !listed.contains("resultType"),
-            !listed.contains("ttlMs"),
+            listed.is(_.some).contains("get_items_id"),
+            listed.is(_.some).contains("get_items"),
+            !listed.is(_.some).contains("resultType"),
+            !listed.is(_.some).contains("ttlMs"),
             call.status == Status.Ok,
-            called.contains("ada"),
-            !called.contains("resultType"),
-            http.body.asString.contains("ada"),
+            called.is(_.some).contains("ada"),
+            !called.is(_.some).contains("resultType"),
+            http.body.text.is(_.some).contains("ada"),
             list.header(Legacy.SessionHeader) == sid,
           )
       ,
@@ -439,7 +443,7 @@ object McpSpec extends ZIOSpecDefault:
               .withHeader(Http.ProtocolHeader, ProtocolVersion)
               .withHeader(Http.MethodHeader, "server/discover")
           )
-        yield assertTrue(res.status == Status.Ok, res.body.asString.contains("2026-07-28"))
+        yield assertTrue(res.status == Status.Ok, res.body.text.is(_.some).contains("2026-07-28"))
       ,
       test("stdio initialize then list and call without _meta"):
         val lines =

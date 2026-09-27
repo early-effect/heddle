@@ -15,7 +15,7 @@ object StoryProofs extends ZIOSpecDefault:
   def spec = suite("Story proofs")(
     test("GET /health is 200 ok"):
       val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-      routes(Request.get("/health")).map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+      routes(Request.get("/health")).map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
     ,
     test("a one-file server answers GET /users/7"):
       val routes = Routes(
@@ -25,7 +25,7 @@ object StoryProofs extends ZIOSpecDefault:
         },
       )
       val app = routes @@ (Middleware.requestId() ++ Middleware.cors())
-      app(Request.get("/users/7")).map(res => assertTrue(res.status == Status.Ok, res.body.asString == "7"))
+      app(Request.get("/users/7")).map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "7"))
     ,
     test("Show schema is named"):
       assertTrue(summon[Schema[Show]].named.contains("Show"))
@@ -42,14 +42,14 @@ object StoryProofs extends ZIOSpecDefault:
     test("HTTP GET /shows/1 is Evening bill"):
       BoxOffice.seed.flatMap { store =>
         BoxOffice.api(store).routes(Request.get("/shows/1")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString.contains("Evening bill"))
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some).contains("Evening bill"))
         }
       }
     ,
     test("HTTP GET /shows lists Evening bill"):
       BoxOffice.seed.flatMap { store =>
         BoxOffice.api(store).routes(Request.get("/shows")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString.contains("Evening bill"))
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some).contains("Evening bill"))
         }
       }
     ,
@@ -61,7 +61,7 @@ object StoryProofs extends ZIOSpecDefault:
           miss <- api.routes(Request.get("/shows/99"))
         yield assertTrue(
           ok.status == Status.Ok,
-          ok.body.asString.contains("Evening bill"),
+          ok.body.text.is(_.some).contains("Evening bill"),
           miss.status == Status.NotFound,
         )
       }

@@ -51,21 +51,21 @@ object ExampleMcpSpec extends ZIOSpecDefault:
             Some("get_show"),
           )
         yield
-          val listed = list.body.asString
+          val listed = list.body.text
           assertTrue(
             http.status == Status.Ok,
-            http.body.asString.contains("Evening bill"),
+            http.body.text.is(_.some).contains("Evening bill"),
             disc.status == Status.Ok,
-            disc.body.asString.contains("2026-07-28"),
-            listed.contains("get_show"),
-            listed.contains("seat_the_party"),
-            listed.contains("list_shows"),
-            listed.contains("pickup"),
-            !listed.contains("create_hold"),
-            !listed.contains("create_order"),
+            disc.body.text.is(_.some).contains("2026-07-28"),
+            listed.is(_.some).contains("get_show"),
+            listed.is(_.some).contains("seat_the_party"),
+            listed.is(_.some).contains("list_shows"),
+            listed.is(_.some).contains("pickup"),
+            !listed.is(_.some).contains("create_hold"),
+            !listed.is(_.some).contains("create_order"),
             call.status == Status.Ok,
-            call.body.asString.contains("Evening bill"),
-            !call.body.asString.contains("\"isError\":true"),
+            call.body.text.is(_.some).contains("Evening bill"),
+            !call.body.text.is(_.some).contains("\"isError\":true"),
           )
       ,
       test("HTTP 2025 initialize list and get_show"):
@@ -110,12 +110,12 @@ object ExampleMcpSpec extends ZIOSpecDefault:
           )
         yield assertTrue(
           init.status == Status.Ok,
-          init.body.asString.contains("2025-11-25"),
+          init.body.text.is(_.some).contains("2025-11-25"),
           list.status == Status.Ok,
-          list.body.asString.contains("get_show"),
-          !list.body.asString.contains("resultType"),
+          list.body.text.is(_.some).contains("get_show"),
+          !list.body.text.is(_.some).contains("resultType"),
           call.status == Status.Ok,
-          call.body.asString.contains("Evening bill"),
+          call.body.text.is(_.some).contains("Evening bill"),
         )
         end for
       ,

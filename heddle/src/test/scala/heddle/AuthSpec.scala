@@ -13,7 +13,7 @@ object AuthSpec extends ZIOSpecDefault:
       test("basicAuth accepts matching credentials"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.basicAuth("ada", "pw")
         val req    = Request.get("/x").copy(headers = Headers.empty.set(Authorization.basic("ada", "pw")))
-        routes(req).map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+        routes(req).map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
       ,
       test("basicAuth rejects missing credentials with 401"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.basicAuth("ada", "pw")
@@ -27,7 +27,7 @@ object AuthSpec extends ZIOSpecDefault:
       test("bearerAuth accepts a valid token"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.bearerAuth(_ == "secret")
         val req    = Request.get("/x").addHeader("Authorization", "Bearer secret")
-        routes(req).map(res => assertTrue(res.body.asString == "ok"))
+        routes(req).map(res => assertTrue(res.body.text.is(_.some) == "ok"))
       ,
       test("provided injects User while keeping another service"):
         val ping = ZLayer.succeed(new Ping:
@@ -42,7 +42,7 @@ object AuthSpec extends ZIOSpecDefault:
             )
           )
         val routes: Routes[Ping, Nothing] = authed.provided[User, Ping](_ => ZIO.succeed(User("ada")))
-        routes(Request.get("/me")).provide(ping).map(res => assertTrue(res.body.asString == "adapong"))
+        routes(Request.get("/me")).provide(ping).map(res => assertTrue(res.body.text.is(_.some) == "adapong"))
       ,
       test("Auth.bearer lookup feeds provided"):
         val authed =
@@ -51,7 +51,7 @@ object AuthSpec extends ZIOSpecDefault:
           Auth.bearer(t => if t == "t1" then ZIO.succeed(User("ada")) else ZIO.fail(Auth.unauthorizedBearer))
         )
         val req = Request.get("/me").addHeader("Authorization", "Bearer t1")
-        routes(req).map(res => assertTrue(res.body.asString == "ada"))
+        routes(req).map(res => assertTrue(res.body.text.is(_.some) == "ada"))
       ,
       test("OpenAPI emits securitySchemes and operation security"):
         val ep   = Endpoint.get("me").outText().auth(SecurityScheme.HttpBearer())

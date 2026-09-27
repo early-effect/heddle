@@ -29,7 +29,7 @@ object ClientSpec extends ZIOSpecDefault:
         )
         LiveServer(routes) { base =>
           Client.get(s"$base/h").map { res =>
-            assertTrue(res.body.asString == "ok", seen.get().isEmpty)
+            assertTrue(res.body.text.is(_.some) == "ok", seen.get().isEmpty)
           }
         }
       ,

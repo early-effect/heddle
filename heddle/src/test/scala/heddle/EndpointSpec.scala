@@ -14,21 +14,21 @@ object EndpointSpec extends ZIOSpecDefault:
         val ep     = Endpoint.get("hello").outText()
         val routes = ep.implement(_ => ZIO.succeed("world"))
         routes(Request.get("/hello")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString == "world")
+          assertTrue(res.status == Status.Ok, res.body.text.contains("world"))
         }
       ,
       test("path parameter is the implement input"):
         val ep     = Endpoint.get("echo" / int("n")).outText()
         val routes = ep.implement(n => ZIO.succeed(n.toString))
         routes(Request.get("/echo/4")).map { res =>
-          assertTrue(res.body.asString == "4")
+          assertTrue(res.body.text.contains("4"))
         }
       ,
       test("query parameter is combined with the path input"):
         val ep     = Endpoint.get("echo" / int("n")).query[String]("name").outText()
         val routes = ep.implement { case (n, name) => ZIO.succeed(s"$name:$n") }
         routes(Request.get("/echo/2?name=ada")).map { res =>
-          assertTrue(res.body.asString == "ada:2")
+          assertTrue(res.body.text.contains("ada:2"))
         }
       ,
       test("json output uses the provided JsonCodec"):
@@ -36,7 +36,7 @@ object EndpointSpec extends ZIOSpecDefault:
         val routes = ep.implement(_ => ZIO.succeed("hi"))
         routes(Request.get("/msg")).map { res =>
           assertTrue(
-            res.body.asString == "\"hi\"",
+            res.body.text.contains("\"hi\""),
             res.header("Content-Type").exists(_.contains("application/json")),
           )
         }
@@ -45,28 +45,28 @@ object EndpointSpec extends ZIOSpecDefault:
         val ep     = Endpoint.post("echo").inJson[String].out[String]
         val routes = ep.implement(body => ZIO.succeed(body))
         routes(Request.post("/echo", Body.json("\"ping\""))).map { res =>
-          assertTrue(res.body.asString == "\"ping\"")
+          assertTrue(res.body.text.contains("\"ping\""))
         }
       ,
       test("outError maps a typed error to a status"):
         val ep     = Endpoint.get("boom").out[String].outError[String](Status.BadRequest)
         val routes = ep.implement(_ => ZIO.fail("nope"))
         routes(Request.get("/boom")).map { res =>
-          assertTrue(res.status == Status.BadRequest, res.body.asString == "\"nope\"")
+          assertTrue(res.status == Status.BadRequest, res.body.text.contains("\"nope\""))
         }
       ,
       test("header input is combined into implement"):
         val ep     = Endpoint.get("who").header[String]("X-User").outText()
         val routes = ep.implement(name => ZIO.succeed(name))
         routes(Request.get("/who").withHeader("X-User", "ada")).map { res =>
-          assertTrue(res.body.asString == "ada")
+          assertTrue(res.body.text.contains("ada"))
         }
       ,
       test("inText passes the raw body"):
         val ep     = Endpoint.post("echo").inText.outText()
         val routes = ep.implement(body => ZIO.succeed(body))
         routes(Request.post("/echo", Body.text("ping"))).map { res =>
-          assertTrue(res.body.asString == "ping")
+          assertTrue(res.body.text.contains("ping"))
         }
       ,
       test("mapIn names a tuple as a product"):
@@ -77,7 +77,7 @@ object EndpointSpec extends ZIOSpecDefault:
           .outText()
         val routes = ep.implement(g => ZIO.succeed(s"${g.name}:${g.n}"))
         routes(Request.get("/echo/2?name=ada")).map { res =>
-          assertTrue(res.body.asString == "ada:2")
+          assertTrue(res.body.text.contains("ada:2"))
         }
       ,
       test("missing required query is 400"):
@@ -112,7 +112,7 @@ object EndpointSpec extends ZIOSpecDefault:
           req.path.render == "/echo/4",
           req.query.get("name").contains("ada"),
           req.header("X-User").contains("russ"),
-          req.body.asString == "\"hi\"",
+          req.body.text.contains("\"hi\""),
         )
       ,
       test("inMemory Client.call roundtrips an endpoint"):
@@ -234,7 +234,7 @@ object EndpointSpec extends ZIOSpecDefault:
         ep.fromResponse(res).flip.map { back =>
           assertTrue(
             res.status == Status.Forbidden,
-            res.body.asString == "\"Red\"",
+            res.body.text.contains("\"Red\""),
             back == CallFailure.Domain(Light.Red),
           )
         }
@@ -267,7 +267,7 @@ object EndpointSpec extends ZIOSpecDefault:
           ep.encodeErr(Lookup.NoUser(1)).status == Status.NotFound,
           ep.encodeErr(Lookup.NoOrg(2)).status == Status.NotFound,
           ep.encodeErr(Lookup.Throttled).status == Status.TooManyRequests,
-          ep.encodeErr(Lookup.NoOrg(2)).body.asString == """{"NoOrg":{"id":2}}""",
+          ep.encodeErr(Lookup.NoOrg(2)).body.text.contains("""{"NoOrg":{"id":2}}"""),
         )
       ,
       test("outErrors replaces an earlier outError"):

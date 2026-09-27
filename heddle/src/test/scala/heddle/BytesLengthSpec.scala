@@ -20,5 +20,5 @@ object BytesLengthSpec extends ZIOSpecDefault:
       ,
       test("64.K minus 1.B is the HTTP/2 default window"):
         assertTrue((64.K - 1.B).toInt == 65535),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end BytesLengthSpec

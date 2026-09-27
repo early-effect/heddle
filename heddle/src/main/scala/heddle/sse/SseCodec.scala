@@ -13,7 +13,7 @@ object SseCodec:
       val b = Array.newBuilder[Byte]
       event.event.foreach { name =>
         putAscii(b, "event: ")
-        putUtf8(b, name)
+        putUtf8(b, name.value)
         b += '\n'
       }
       splitData(event.data).foreach { line =>
@@ -23,7 +23,7 @@ object SseCodec:
       }
       event.id.foreach { id =>
         putAscii(b, "id: ")
-        putUtf8(b, id)
+        putUtf8(b, id.value)
         b += '\n'
       }
       event.retry.foreach { d =>
@@ -130,8 +130,9 @@ object SseCodec:
       end if
       i = eol
     end while
+    // A parsed value ends at the first CR or LF, so it is always a valid field.
     if data.isEmpty && event.isEmpty && id.isEmpty && retry.isEmpty then None
-    else Some(ServerSentEvent(data.getOrElse(""), event, id, retry))
+    else Some(ServerSentEvent(data.getOrElse(""), event.map(new SseField(_)), id.map(new SseField(_)), retry))
   end parseEvent
 
   private def putAscii(b: scala.collection.mutable.ArrayBuilder[Byte], s: String): Unit =

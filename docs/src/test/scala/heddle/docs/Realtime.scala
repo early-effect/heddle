@@ -21,16 +21,20 @@ They are HTTP hosts for streams. They are not MCP tools. `OpArgs.promotable` wil
       md"""
 `Sse.response` wraps a `ZStream` of `ServerSentEvent`. Each event is flushed as its own HTTP
 chunk. `Sse.session` is a writer you `send` / `heartbeat` into. JSON in `data` is `JsonCodec.encode`.
+`data` may span lines. `event` and `id` are `SseField`s, which never hold a CR or LF, so a value
+cannot end its field and forge another: `SseField("tick")` checks a literal at compile time,
+`SseField.from(raw)` returns an `Either`, and `SseField.of(n)` takes a number.
 """,
       exampleZIO {
+        val tick   = SseField("tick")
         val routes = Routes(
           Method.GET / "ticks" -> handler(
             ZIO.succeed(
               Sse.response(
                 ZStream.fromIterable(
                   List(
-                    ServerSentEvent(data = "0", event = Some("tick"), id = Some("0")),
-                    ServerSentEvent(data = "1", event = Some("tick"), id = Some("1")),
+                    ServerSentEvent(data = "0", event = Some(tick), id = Some(SseField.of(0))),
+                    ServerSentEvent(data = "1", event = Some(tick), id = Some(SseField.of(1))),
                   )
                 )
               )
@@ -41,6 +45,9 @@ chunk. `Sse.session` is a writer you `send` / `heartbeat` into. JSON in `data` i
           raw.contains("event: tick") && raw.contains("data: 0") && raw.contains("data: 1")
         }
       }.assert(ok => assertTrue(ok)),
+      expectFail("""SseField("tick\ndata: forged")""").assert { errors =>
+        assertTrue(errors.exists(_.message.contains("CR or LF")))
+      },
       illustrationIO(Hub.Lives.sseTape).live.withMountKey(InteractiveRegistry.SseTape),
     ),
     section("Datastar")(

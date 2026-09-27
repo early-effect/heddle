@@ -110,10 +110,10 @@ object FilesSpec extends ZIOSpecDefault:
               slash   <- routes(Request.get("/static/..\\secret.txt"))
               direct  <- Files.fromDirectory(pub, "/static", Request.get("/static/../secret.txt"), indexHtml = true)
             yield assertTrue(
-              escaped.body.asString == "fallback",
-              encoded.body.asString == "fallback",
-              nested.body.asString == "fallback",
-              slash.body.asString == "fallback",
+              escaped.body.text.is(_.some) == "fallback",
+              encoded.body.text.is(_.some) == "fallback",
+              nested.body.text.is(_.some) == "fallback",
+              slash.body.text.is(_.some) == "fallback",
               direct.isEmpty,
             )
             end for
@@ -132,7 +132,7 @@ object FilesSpec extends ZIOSpecDefault:
       ,
       test("requestLog still returns the handler response"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.requestLog
-        routes(Request.get("/x")).map(res => assertTrue(res.body.asString == "ok")),
+        routes(Request.get("/x")).map(res => assertTrue(res.body.text.is(_.some) == "ok")),
     ) @@ TestAspect.timeout(5.seconds)
 
   private def withTempFile[A](content: String, suffix: String)(use: Path => Task[A]): Task[A] =

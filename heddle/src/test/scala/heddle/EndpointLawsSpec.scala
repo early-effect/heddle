@@ -65,5 +65,5 @@ object EndpointLawsSpec extends ZIOSpecDefault:
         req.map(_.path.segments) == Right(Chunk("items", "1", "../../admin?x=1")),
         req.map(_.query.get("x")) == Right(None),
       ),
-  )
+  ) @@ TestAspect.timeout(60.seconds)
 end EndpointLawsSpec

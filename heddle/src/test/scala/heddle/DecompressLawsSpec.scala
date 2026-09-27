@@ -27,5 +27,5 @@ object DecompressLawsSpec extends ZIOSpecDefault:
       val routes = Routes(Method.POST / "in" -> Handler.text("reached")) @@ Middleware.decompress(maxBytes = 64.K)
       val req    = Request.post("/in", Body.fromBytes(bomb)).withHeader("Content-Encoding", "gzip")
       routes(req).map(res => assertTrue(bomb.length < 64 * 1024, res.status == Status.ContentTooLarge)),
-  )
+  ) @@ TestAspect.timeout(60.seconds)
 end DecompressLawsSpec

@@ -31,7 +31,8 @@ that need a subject. API keys are `Auth.apiKey` / `Middleware.apiKey`.
         for
           denied <- locked(Request.get("/secret"))
           ok     <- locked(authed)
-        yield (denied.status, ok.status, ok.body.asString)
+          body   <- ok.body.utf8
+        yield (denied.status, ok.status, body)
       }.assert { case (denied, ok, body) =>
         assertTrue(denied == Status.Unauthorized, ok == Status.Ok, body == "ok")
       },

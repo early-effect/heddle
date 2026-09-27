@@ -74,5 +74,5 @@ object OutErrorsCompileSpec extends ZIOSpecDefault:
           """),
           "ErrorCase needs a concrete case of heddle.Light",
         ),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end OutErrorsCompileSpec
