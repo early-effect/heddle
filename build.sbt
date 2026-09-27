@@ -36,12 +36,12 @@ Global / concurrentRestrictions ++= Seq(
 
 organization         := "rocks.earlyeffect"
 organizationName     := "Early Effect"
-organizationHomepage := Some(url("https://www.earlyeffect.rocks"))
-licenses             := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt"))
-homepage             := Some(url("https://github.com/early-effect/heddle"))
+organizationHomepage := Some(uri("https://www.earlyeffect.rocks"))
+licenses             := List("Apache-2.0" -> uri("http://www.apache.org/licenses/LICENSE-2.0.txt"))
+homepage             := Some(uri("https://github.com/early-effect/heddle"))
 scmInfo              := Some(
   ScmInfo(
-    url("https://github.com/early-effect/heddle"),
+    uri("https://github.com/early-effect/heddle"),
     "scm:git@github.com:early-effect/heddle.git",
   )
 )
@@ -50,7 +50,7 @@ developers := List(
     id = "russwyte",
     name = "Russ White",
     email = "356303+russwyte@users.noreply.github.com",
-    url = url("https://github.com/russwyte"),
+    url = uri("https://github.com/russwyte"),
   )
 )
 versionScheme := Some("early-semver")
