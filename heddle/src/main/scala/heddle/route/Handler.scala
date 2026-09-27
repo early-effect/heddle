@@ -1,5 +1,6 @@
 package heddle.route
 
+import heddle.error.FileError
 import heddle.http.{Method, Request, Response, Status}
 import heddle.http.header.{HeaderName, Headers}
 import zio.*
@@ -34,10 +35,10 @@ object Handler:
 
   val notFound: Handler[Any, Nothing] = succeed(Response.notFound())
 
-  def fromFile(path: String): Handler[Any, Throwable] =
+  def fromFile(path: String): Handler[Any, FileError] =
     Handler(_ => heddle.server.Files.fromPath(path))
 
-  def fromFile(file: java.io.File): Handler[Any, Throwable] =
+  def fromFile(file: java.io.File): Handler[Any, FileError] =
     fromFile(file.getPath)
 
   def websocket[R](run: heddle.ws.WebSocket => ZIO[R, Throwable, Unit]): Handler[R, Nothing] =
@@ -64,20 +65,21 @@ object Handler:
     else
       val upgrade = req.header(HeaderName.Upgrade).exists(_.equalsIgnoreCase("websocket"))
       val conn    = req.header(HeaderName.Connection).exists(_.toLowerCase.contains("upgrade"))
-      val key     = req.header(HeaderName.SecWebSocketKey)
-      if req.method != Method.GET then Left(Response.methodNotAllowed("GET"))
-      else if !upgrade || !conn || key.isEmpty then Left(Response.badRequest("Expected WebSocket upgrade"))
-      else
-        Right(
-          WsHandshake(
-            Status.SwitchingProtocols,
-            Headers.empty
-              .add(HeaderName.Upgrade, "websocket")
-              .add(HeaderName.Connection, "Upgrade")
-              .add(HeaderName.SecWebSocketAccept, heddle.ws.WsCodec.acceptKey(key.get)),
+      val key     = req.header(HeaderName.SecWebSocketKey).filter(_ => upgrade && conn)
+      (req.method, key) match
+        case (Method.GET, Some(k)) =>
+          Right(
+            WsHandshake(
+              Status.SwitchingProtocols,
+              Headers.empty
+                .add(HeaderName.Upgrade, "websocket")
+                .add(HeaderName.Connection, "Upgrade")
+                .add(HeaderName.SecWebSocketAccept, heddle.ws.WsCodec.acceptKey(k)),
+            )
           )
-        )
-      end if
+        case (Method.GET, None) => Left(Response.badRequest("Expected WebSocket upgrade"))
+        case _                  => Left(Response.methodNotAllowed("GET"))
+      end match
 end Handler
 
 def handler[R, E](f: Request => ZIO[R, E, Response]): Handler[R, E] = Handler(f)

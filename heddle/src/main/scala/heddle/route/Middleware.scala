@@ -69,7 +69,7 @@ object Middleware:
     interceptZIO(req => ZIO.succeed(f(req)))
 
   def interceptZIO[R](f: Request => ZIO[R, Response, Request]): Middleware[R] =
-    wrap[R] { [E] => (handler: Handler[R, E]) =>
+    wrap[R] { [R1 <: R, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         f(req).foldZIO(res => ZIO.succeed(res), handler.run)
       }
@@ -79,14 +79,14 @@ object Middleware:
     mapResponseZIO(res => ZIO.succeed(f(res)))
 
   def mapResponseZIO[R](f: Response => ZIO[R, Nothing, Response]): Middleware[R] =
-    wrap[R] { [E] => (handler: Handler[R, E]) =>
+    wrap[R] { [R1 <: R, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         handler.run(req).flatMap(f)
       }
     }
 
   def debug: Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         Clock.nanoTime.flatMap { start =>
           handler.run(req).tap { res =>
@@ -100,7 +100,7 @@ object Middleware:
     }
 
   def timeout(duration: Duration): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         handler.run(req).timeout(duration).map {
           case Some(res) => res
@@ -110,7 +110,7 @@ object Middleware:
     }
 
   def requestLog: Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         Clock.nanoTime.flatMap { start =>
           handler.run(req).tap { res =>
@@ -134,7 +134,7 @@ object Middleware:
     }
 
   def serveDirectory(urlPrefix: String, root: String, indexHtml: Boolean): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         if req.method == Method.GET || req.method == Method.HEAD then
           heddle.server.Files
@@ -151,7 +151,7 @@ object Middleware:
     }
 
   def serveResources(urlPrefix: String, resourceRoot: String = ""): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         if req.method == Method.GET || req.method == Method.HEAD then
           SafePath.remainder(urlPrefix, req.path).flatMap { rest =>
@@ -175,7 +175,7 @@ object Middleware:
   def requestId(): Middleware[Any] = requestId("X-Request-Id")
 
   def requestId(headerName: String): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         val id     = req.header(headerName).getOrElse(newRequestId)
         val tagged = req.withHeader(headerName, id)
@@ -187,7 +187,7 @@ object Middleware:
       minBytes: Int = 1024,
       compressors: Chunk[Compressor] = Chunk(Compressor.gzip),
   ): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         handler.run(req).map(res => applyCompress(req, res, minBytes, compressors))
       }
@@ -222,7 +222,7 @@ object Middleware:
     }
 
   def requireTls: Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         if req.secure then handler.run(req)
         else ZIO.succeed(Response.empty(Status.Forbidden).withHeader("Connection", "close"))
@@ -235,7 +235,7 @@ object Middleware:
   def cors(): Middleware[Any] = cors(CorsConfig())
 
   def cors(config: CorsConfig): Middleware[Any] =
-    wrap[Any] { [E] => (handler: Handler[Any, E]) =>
+    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
         val origin = req.header("Origin")
         if req.method == Method.OPTIONS then ZIO.succeed(preflight(origin, config))
@@ -306,12 +306,10 @@ object Middleware:
     private def removeLength: Response =
       res.copy(headers = res.headers.remove(HeaderName.ContentLength))
 
-  private def wrap[R](f: [E] => Handler[R, E] => Handler[R, E]): Middleware[R] =
+  private def wrap[R](f: [R1 <: R, E] => Handler[R1, E] => Handler[R1, E]): Middleware[R] =
     new Middleware[R]:
       def apply[R1 <: R, E](routes: Routes[R1, E]): Routes[R1, E] =
-        Routes.wrap(routes) { handler =>
-          f[E](handler.asInstanceOf[Handler[R, E]]).asInstanceOf[Handler[R1, E]]
-        }
+        Routes.wrap(routes)(f[R1, E])
 
   private def preflight(origin: Option[String], config: CorsConfig): Response =
     addCors(Response.empty(Status.NoContent), origin, config)

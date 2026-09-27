@@ -235,20 +235,16 @@ private[heddle] final class ConnBuf(
     val off = buf.arrayOffset() + buf.position()
     val end = buf.arrayOffset() + buf.limit()
     var i   = off
-    while i + 3 < end do
-      if a(i) == '\r' && a(i + 1) == '\n' && a(i + 2) == '\r' && a(i + 3) == '\n' then return i - off
-      i += 1
-    -1
+    while i + 3 < end && !(a(i) == '\r' && a(i + 1) == '\n' && a(i + 2) == '\r' && a(i + 3) == '\n') do i += 1
+    if i + 3 < end then i - off else -1
 
   private def indexOfCrlf: Int =
     val a   = buf.array()
     val off = buf.arrayOffset() + buf.position()
     val end = buf.arrayOffset() + buf.limit()
     var i   = off
-    while i + 1 < end do
-      if a(i) == '\r' && a(i + 1) == '\n' then return i - off
-      i += 1
-    -1
+    while i + 1 < end && !(a(i) == '\r' && a(i + 1) == '\n') do i += 1
+    if i + 1 < end then i - off else -1
 end ConnBuf
 
 private[heddle] object ConnBuf:

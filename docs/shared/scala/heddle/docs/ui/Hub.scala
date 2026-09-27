@@ -25,7 +25,7 @@ object Hub:
 
   final case class Bill(id: Int, title: String, remaining: Int)
 
-  val bills: List[Bill] = List(
+  val bills: NonEmptyChunk[Bill] = NonEmptyChunk(
     Bill(1, "Evening bill", 12),
     Bill(2, "Matinee", 8),
     Bill(3, "Late bill", 2),
@@ -646,7 +646,7 @@ content-type: application/json
 
   final case class OpField(id: String, label: String, value: String, readers: String)
 
-  val getShowFields: List[OpField] = List(
+  val getShowFields: NonEmptyChunk[OpField] = NonEmptyChunk(
     OpField("method", "method", "GET", "HTTP, OpenAPI, derived tool name"),
     OpField("path", "path", "/shows/{id}", "HTTP route, OpenAPI path, OpArgs path fill"),
     OpField("in", "in", "id: Int", "decodeIn, MCP argument, future CLI flag"),
@@ -666,7 +666,7 @@ content-type: application/json
           E.div(Kicker, f.label),
           E.div(f.value),
         )
-      },
+      }.toList,
     )
   end opAnatomy
 

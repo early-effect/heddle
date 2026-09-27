@@ -14,7 +14,7 @@ object LiveServer:
 
   def https[E, A](
       routes: Routes[Any, Response],
-      tls: ZLayer[Any, HttpError, Tls],
+      tls: ZLayer[Any, TlsError, Tls],
       config: Server.Config = local,
   )(f: String => IO[E, A]): ZIO[Any, E | HeddleError, A] =
     ZIO.scoped {

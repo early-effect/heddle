@@ -1,6 +1,7 @@
 package heddle
 
-import heddle.internal.duplex.TlsListener
+import heddle.error.HttpError
+import heddle.internal.duplex.AcceptError
 import heddle.internal.openssl.Ssl
 import heddle.internal.posix.Net
 import heddle.server.Tls
@@ -16,14 +17,14 @@ object NativeHttpsSpec extends ZIOSpecDefault:
         ZIO.scoped {
           ZIO
             .environmentWith[Any](_.getDynamic[Tls])
-            .provideSomeLayer[Scope](Tls.pem(NativeTls.certPem, NativeTls.keyPem))
+            .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .map(got => assertTrue(got.isDefined))
         }
       ,
-      test("TlsListener plus raw TLS GET"):
+      test("a plain accept then Tls.server answers a raw TLS GET"):
         ZIO.scoped {
           for
-            listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+            listener <- NativeTls.listener(local)
             port     <- listener.localPort
             server   <- serveOne(listener).fork
             body     <- rawTlsGet(port, "/health")
@@ -31,10 +32,10 @@ object NativeHttpsSpec extends ZIOSpecDefault:
           yield assertTrue(body.contains("200"), body.contains("ok"))
         }
       ,
-      test("TlsListener plus a client that trusts the test certificate"):
+      test("a plain accept then Tls.server answers a client that trusts the test certificate"):
         ZIO.scoped {
           for
-            listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+            listener <- NativeTls.listener(local)
             port     <- listener.localPort
             server   <- serveOne(listener).fork
             res      <- Client.batched(Request.get(s"https://127.0.0.1:$port/health")).provideLayer(trusted)
@@ -48,7 +49,7 @@ object NativeHttpsSpec extends ZIOSpecDefault:
         ZIO.scoped {
           Server
             .install(routes, local)
-            .provideSomeLayer[Scope](Tls.pem(NativeTls.certPem, NativeTls.keyPem))
+            .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap { server =>
               server.port.flatMap { port =>
                 Client.batched(Request.get(s"https://127.0.0.1:$port/health")).provideLayer(trusted).flatMap { res =>
@@ -65,7 +66,7 @@ object NativeHttpsSpec extends ZIOSpecDefault:
         ZIO.scoped {
           Server
             .install(routes, local)
-            .provideSomeLayer[Scope](Tls.pem(NativeTls.certPem, NativeTls.keyPem))
+            .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap(_.port)
             .flatMap(port => Client.get(s"https://127.0.0.1:$port/health").either)
             .map(out =>
@@ -78,12 +79,12 @@ object NativeHttpsSpec extends ZIOSpecDefault:
       test("a trusted certificate that names another host fails the handshake"):
         ZIO.scoped {
           for
-            listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+            listener <- NativeTls.listener(local)
             port     <- listener.localPort
             server   <- listener.accept.fork
             fd       <- ZIO.attempt(Net.connect("127.0.0.1", port))
             _        <- heddle.internal.posix.AsyncFd.writable(fd)
-            session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(NativeTls.certPem)), fd, "not-this-host.test"))
+            session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(TestTls.certPem)), fd, "not-this-host.test"))
             shake    <- heddle.internal.posix.SslIo.handshake(session, accept = false, fd).either
             _        <- ZIO.succeed { session.close(); Net.close(fd) }
             _        <- server.interrupt
@@ -95,14 +96,13 @@ object NativeHttpsSpec extends ZIOSpecDefault:
     Server.Config.default.copy(host = "127.0.0.1", port = 0, http2 = false)
 
   private val trusted: Layer[ClientError, Client] =
-    ZLayer.succeed(Client.Config.default) >>> heddle.client.ClientTls.trusting(NativeTls.certPem)
+    ZLayer.succeed(Client.Config.default) >>> heddle.client.ClientTls.trusting(TestTls.certPem)
 
-  private def serveOne(listener: heddle.internal.duplex.Listener): Task[Unit] =
+  private def serveOne(listener: NativeTls.Listener): IO[AcceptError | HttpError | Throwable, Unit] =
     listener.accept.flatMap { conn =>
       val buf = ByteBuffer.allocate(1024)
       conn
         .read(buf)
-        .mapError(e => java.io.IOException(e.message))
         .flatMap { _ =>
           val res = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
           conn.write(Chunk.fromArray(res.getBytes(StandardCharsets.US_ASCII)))
@@ -110,12 +110,12 @@ object NativeHttpsSpec extends ZIOSpecDefault:
         .ensuring(conn.close)
     }
 
-  private def rawTlsGet(port: Int, path: String): Task[String] =
+  private def rawTlsGet(port: Int, path: String): IO[HttpError | Throwable, String] =
     ZIO.attempt(Net.connect("127.0.0.1", port)).flatMap { fd =>
       heddle.internal.posix.AsyncFd.writable(fd) *>
         ZIO
           .attempt {
-            val ctx = Ssl.clientCtx(Some(NativeTls.certPem))
+            val ctx = Ssl.clientCtx(Some(TestTls.certPem))
             Ssl.connect(ctx, fd, "localhost")
           }
           .flatMap { s =>
@@ -127,7 +127,7 @@ object NativeHttpsSpec extends ZIOSpecDefault:
               )
               val buf = java.nio.ByteBuffer.allocate(4096)
               (conn.write(req) *>
-                conn.read(buf).mapError(e => java.io.IOException(e.message)).map { n =>
+                conn.read(buf).map { n =>
                   buf.flip()
                   val arr = Array.ofDim[Byte](math.max(0, n))
                   buf.get(arr)

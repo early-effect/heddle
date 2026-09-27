@@ -44,6 +44,6 @@ object Scala3ProofSpec extends ZIOSpecDefault:
         def get(id: Int): IO[NotFound, Show] =
           ZIO.fail(NotFound(s"nope $id"))
         val api = Api("t", "1").job(ep)(get)
-        assertTrue(api.openApi.endpoints.head.promoted, api.openApi.endpoints.head.toolName == "get_show"),
+        assertTrue(api.openApi.endpoints.map(d => (d.promoted, d.toolName)).toList == List((true, "get_show"))),
     ) @@ TestAspect.timeout(5.seconds)
 end Scala3ProofSpec

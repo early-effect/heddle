@@ -32,9 +32,9 @@ object FilesSpec extends ZIOSpecDefault:
           css.contains("text/css; charset=utf-8"),
         )
       ,
-      test("missing path fails"):
-        Files.fromPath(Path.of("/no/such/heddle-file-xyz")).either.map { e =>
-          assertTrue(e.isLeft)
+      test("a missing path is NotFound"):
+        Files.fromPath(Path.of("/no/such/heddle-file-xyz")).flip.map { e =>
+          assertTrue(e == FileError.NotFound("/no/such/heddle-file-xyz"), e.toResponse.status == Status.NotFound)
         }
       ,
       test("Handler.fromFile serves the file"):
@@ -47,21 +47,24 @@ object FilesSpec extends ZIOSpecDefault:
           }
         }
       ,
-      test("directory fails"):
-        ZIO
-          .attemptBlocking(JFiles.createTempDirectory("heddle-files"))
-          .flatMap { dir =>
-            Files.fromPath(dir).either.ensuring(ZIO.attemptBlocking(JFiles.deleteIfExists(dir)).orDie)
-          }
-          .map(e => assertTrue(e.isLeft))
+      test("a directory is IsDirectory"):
+        withTempDir { dir =>
+          Files
+            .fromPath(dir)
+            .flip
+            .map(e => assertTrue(e == FileError.IsDirectory(dir.toAbsolutePath.normalize.toString)))
+        }
       ,
       test("If-None-Match matching etag is 304"):
         withTempFile("cache-me", ".txt") { path =>
           Files.fromPath(path).flatMap { first =>
-            val tag = first.header("ETag").get
-            Files.fromPath(path, Request.get("/x").withHeader("If-None-Match", tag)).map { res =>
-              assertTrue(res.status == Status.NotModified, res.body.isEmpty)
-            }
+            ZIO
+              .foreach(first.header("ETag")) { tag =>
+                Files.fromPath(path, Request.get("/x").withHeader("If-None-Match", tag))
+              }
+              .map { again =>
+                assertTrue(again.map(_.status).contains(Status.NotModified), again.exists(_.body.isEmpty))
+              }
           }
         }
       ,
@@ -135,7 +138,7 @@ object FilesSpec extends ZIOSpecDefault:
         routes(Request.get("/x")).map(res => assertTrue(res.body.text.is(_.some) == "ok")),
     ) @@ TestAspect.timeout(5.seconds)
 
-  private def withTempFile[A](content: String, suffix: String)(use: Path => Task[A]): Task[A] =
+  private def withTempFile[E, A](content: String, suffix: String)(use: Path => IO[E, A]): IO[E | Throwable, A] =
     ZIO.acquireReleaseWith(
       ZIO.attemptBlocking {
         val p = JFiles.createTempFile("heddle-files", suffix)
@@ -144,7 +147,7 @@ object FilesSpec extends ZIOSpecDefault:
       }
     )(p => ZIO.attemptBlocking(JFiles.deleteIfExists(p)).orDie)(use)
 
-  private def withTempDir[A](use: Path => Task[A]): Task[A] =
+  private def withTempDir[E, A](use: Path => IO[E, A]): IO[E | Throwable, A] =
     ZIO.acquireReleaseWith(
       ZIO.attemptBlocking(JFiles.createTempDirectory("heddle-dir"))
     )(dir =>

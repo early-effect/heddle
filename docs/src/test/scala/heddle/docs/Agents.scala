@@ -37,8 +37,8 @@ The wire types live in `heddle-mcp-protocol`, which depends only on zio-json. A 
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store).flatMap(_.withCatalog)).flatMap { mcp =>
-            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
-              val json = out.get.toJson
+            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).some.map { out =>
+              val json = out.toJson
               json.contains("search_operations") && json.contains("invoke")
             }
           }
@@ -56,7 +56,7 @@ The live catalog toggle is on [Agents fall out](agents-fall-out.html).
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
             val call = BoxOffice.rpc(ClientRequest.CallTool(ToolName("get_show"), Json.Obj("id" -> Json.Num(1))))
-            mcp.handle(call).map(_.get.toJson.contains("Evening bill"))
+            mcp.handle(call).some.map(_.toJson.contains("Evening bill"))
           }
         }
       }.assert(ok => assertTrue(ok)),

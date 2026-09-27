@@ -4,7 +4,7 @@ import BytesLength.*
 import heddle.error.ServerError
 import heddle.http.Response
 import heddle.route.Routes
-import heddle.server.Http2Config
+import heddle.server.{Http2Config, OutOfRange, Setting}
 import zio.*
 
 final class Server private[heddle] (val port: UIO[Int], val shutdown: UIO[Unit])
@@ -29,6 +29,22 @@ object Server:
       http2Config: Http2Config = Http2Config(),
   ):
     def port(n: Int): Config = copy(port = n)
+
+    /** Every setting heddle cannot serve with, or this config. Buffers are allocated from these sizes, so they must fit
+      * an `Int`.
+      */
+    def validate: Either[NonEmptyChunk[OutOfRange], Config] =
+      val problems = List(
+        OutOfRange.check(Setting.Port, port.toLong, 0, 65535),
+        OutOfRange.check(Setting.MaxHeaderBytes, maxHeaderBytes.toLong, 1, Int.MaxValue),
+        OutOfRange.check(Setting.MaxBodyBytes, maxBodyBytes.toLong, 0, Long.MaxValue),
+        OutOfRange.check(Setting.ChunkSize, chunkSize.toLong, 1, Int.MaxValue),
+        OutOfRange.check(Setting.MaxConnections, maxConnections.toLong, 1, Int.MaxValue),
+        OutOfRange.check(Setting.MaxRequestsPerConnection, maxRequestsPerConnection.toLong, 1, Int.MaxValue),
+        OutOfRange.check(Setting.SoBacklog, soBacklog.toLong, 0, Int.MaxValue),
+      ).flatten ++ http2Config.outOfRange
+      NonEmptyChunk.fromIterableOption(problems).toLeft(this)
+    end validate
   end Config
 
   object Config:
@@ -68,7 +84,7 @@ object Server:
           zio.Config.boolean("soKeepAlive").withDefault(defaultSoKeepAlive) ++
           zio.Config.boolean("http2").withDefault(defaultHttp2) ++
           Http2Config.descriptor
-      ).nested("heddle", "server").map {
+      ).nested("heddle", "server").mapOrFail {
         (
             host,
             port,
@@ -104,7 +120,8 @@ object Server:
             soKeepAlive = soKeepAlive,
             http2 = http2,
             http2Config = http2Config,
-          )
+          ).validate.left
+            .map(problems => zio.Config.Error.InvalidData(message = problems.map(_.message).mkString("; ")))
       }
 
     val layer: ZLayer[Any, zio.Config.Error, Config] =
@@ -142,7 +159,8 @@ object Server:
       config: Config,
       scheduler: JvmScheduler,
   ): ZIO[R & Scope, ServerError, Server] =
-    ServerPlatform.install(routes, config, scheduler)
+    ZIO.fromEither(config.validate).mapError(ServerError.InvalidConfig(_)) *>
+      ServerPlatform.install(routes, config, scheduler)
 
   def run[R](routes: Routes[R, Response])(req: heddle.http.Request): ZIO[R, Nothing, Response] =
     routes(req).merge

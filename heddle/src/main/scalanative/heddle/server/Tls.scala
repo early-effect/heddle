@@ -1,22 +1,13 @@
 package heddle.server
 
-import heddle.error.HttpError
+import heddle.error.{HttpError, TlsError}
+import heddle.internal.Pem
 import heddle.internal.duplex.{ByteConn, NativeConn}
 import heddle.internal.openssl.Ssl
 import heddle.internal.posix.SslIo
 import zio.*
 
 final class Tls private (ctx: Ssl.Ctx):
-  private[heddle] def listener(
-      config: heddle.Server.Config
-  ): ZIO[Scope, heddle.error.ServerError, heddle.internal.duplex.Listener] =
-    heddle.internal.duplex.NativeListener.bind(config).map { plain =>
-      new heddle.internal.duplex.Listener:
-        def localPort = plain.localPort
-        def accept    = plain.acceptFd.map(fd => NativeConn.of(fd))
-        def close     = plain.close
-    }
-
   private[heddle] def server(conn: ByteConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
     val _ = alpn
     conn match
@@ -36,7 +27,8 @@ end Tls
 object Tls:
   private[heddle] final class Session(val conn: ByteConn, val applicationProtocol: String)
 
-  def pem(certPem: String, keyPem: String): ZLayer[Any, HttpError, Tls] =
+  def pem(certPem: String, keyPem: String): ZLayer[Any, TlsError, Tls] =
     ZLayer.fromZIO(
-      ZIO.attempt(Tls(Ssl.serverCtx(certPem, keyPem))).mapError(HttpError.Io(_))
+      (ZIO.fromEither(Pem.body(certPem, "CERTIFICATE")) *> ZIO.fromEither(Pem.body(keyPem, "PRIVATE KEY"))) *>
+        ZIO.attempt(Tls(Ssl.serverCtx(certPem, keyPem))).mapError(TlsError.Unusable(_))
     )

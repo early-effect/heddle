@@ -11,10 +11,9 @@ object BytesLength:
 
   extension (self: BytesLength)
     def toLong: Long = self
-    def toInt: Int   =
-      if self > Int.MaxValue || self < Int.MinValue then
-        throw IllegalArgumentException(s"BytesLength $self does not fit in Int")
-      else self.toInt
+
+    /** Saturates at the `Int` range. `Server.Config.validate` keeps every buffer size inside it. */
+    def toInt: Int                           = math.max(Int.MinValue.toLong, math.min(Int.MaxValue.toLong, self)).toInt
     def <(other: BytesLength): Boolean       = self < other
     def >(other: BytesLength): Boolean       = self > other
     def +(other: BytesLength): BytesLength   = self + other

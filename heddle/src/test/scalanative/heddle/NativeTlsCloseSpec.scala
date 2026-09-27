@@ -1,6 +1,6 @@
 package heddle
 
-import heddle.internal.duplex.{NativeConn, TlsListener}
+import heddle.internal.duplex.NativeConn
 import heddle.internal.openssl.Ssl
 import heddle.internal.posix.{AsyncFd, Net, SslIo}
 import scala.scalanative.posix.fcntl
@@ -17,12 +17,12 @@ object NativeTlsCloseSpec extends ZIOSpecDefault:
     test("closing a TLS connection releases its socket") {
       ZIO.scoped {
         for
-          listener <- TlsListener.bind(local, NativeTls.certPem, NativeTls.keyPem)
+          listener <- NativeTls.listener(local)
           port     <- listener.localPort
           accepted <- listener.accept.fork
           fd       <- ZIO.attempt(Net.connect("127.0.0.1", port))
           _        <- AsyncFd.writable(fd)
-          session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(NativeTls.certPem)), fd, "localhost"))
+          session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(TestTls.certPem)), fd, "localhost"))
           _        <- SslIo.handshake(session, accept = false, fd)
           conn = NativeConn.tls(fd, session)
           before <- ZIO.succeed(open(fd))

@@ -40,20 +40,16 @@ private[heddle] object Ascii:
     if n != s.length then false
     else
       var i = 0
-      while i < n do
-        if lower(raw(from + i) & 0xff) != lower(s.charAt(i) & 0xff) then return false
-        i += 1
-      true
+      while i < n && lower(raw(from + i) & 0xff) == lower(s.charAt(i) & 0xff) do i += 1
+      i == n
 
   def eqIgnoreCase(raw: Chunk[Byte], from: Int, until: Int, s: String): Boolean =
     val n = until - from
     if n != s.length then false
     else
       var i = 0
-      while i < n do
-        if lower(raw(from + i) & 0xff) != lower(s.charAt(i) & 0xff) then return false
-        i += 1
-      true
+      while i < n && lower(raw(from + i) & 0xff) == lower(s.charAt(i) & 0xff) do i += 1
+      i == n
 
   def internName(raw: Array[Byte], from: Int, until: Int): String =
     if eqIgnoreCase(raw, from, until, Connection) then Connection

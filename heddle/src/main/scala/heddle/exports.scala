@@ -89,7 +89,7 @@ export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}
 export BytesLength.*
 export heddle.server.{Compressor, Decompressor, Files, Http2Config, Tls}
 export heddle.client.{Authority, CallFailure, Client, ClientError}
-export heddle.error.{HeddleError, HttpError, ServerError}
+export heddle.error.{FileError, HeddleError, HttpError, ServerError, TlsError}
 export heddle.route.QueryCodec.given
 export heddle.route.HeaderCodec.given
 export heddle.endpoint.Schema.given

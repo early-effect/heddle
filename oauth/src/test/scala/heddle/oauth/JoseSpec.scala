@@ -26,7 +26,7 @@ object JoseSpec extends ZIOSpecDefault:
         ZIO.serviceWith[SigningKey] { key =>
           Jose.parseJwks(key.publicJwksJson) match
             case Left(err)   => assertTrue(err.isEmpty)
-            case Right(jwks) => assertTrue(jwks.keys.map(_.kid) == List(key.kid), jwks.keys.head.n.nonEmpty)
+            case Right(jwks) => assertTrue(jwks.keys.map(k => (k.kid, k.n.nonEmpty)) == List((key.kid, true)))
         }
       ,
       test("verify rejects an expired token"):

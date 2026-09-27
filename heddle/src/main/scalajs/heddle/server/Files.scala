@@ -1,12 +1,13 @@
 package heddle.server
 
+import heddle.error.FileError
 import heddle.http.{Body, MediaType, Request, Response, Status}
 import heddle.http.header.{ByteRange, ContentRange, EntityTag, HeaderName}
-import heddle.internal.node.{Buffers, Fs, NodePath}
+import heddle.internal.node.{Buffers, Fs, FsStats, NodePath, StatOptions}
 import zio.*
 
 object Files:
-  def fromPath(path: String): Task[Response] =
+  def fromPath(path: String): IO[FileError, Response] =
     serveFile(path, None)
 
   def fromDirectory(
@@ -14,65 +15,67 @@ object Files:
       urlPrefix: String,
       request: Request,
       indexHtml: Boolean,
-  ): Task[Option[Response]] =
-    ZIO
-      .attempt {
-        SafePath.remainder(urlPrefix, request.path).flatMap { rest =>
-          SafePath.resolveUnder(root, rest).flatMap { joined =>
+  ): IO[FileError, Option[Response]] =
+    SafePath.remainder(urlPrefix, request.path).flatMap(SafePath.resolveUnder(root, _)) match
+      case None         => ZIO.none
+      case Some(joined) =>
+        ZIO
+          .suspendSucceed {
             val base = NodePath.resolve(root)
             val abs  = NodePath.resolve(joined)
-            if !jailed(base, abs) then None
+            if !jailed(base, abs) then ZIO.none
             else
-              val st = Fs.statSync(abs)
-              if st.isDirectory() then
-                if indexHtml then
+              stat(abs).flatMap {
+                case Some(st) if st.isFile()                   => ZIO.some(abs)
+                case Some(st) if st.isDirectory() && indexHtml =>
                   val index = NodePath.resolve(NodePath.join(abs, "index.html"))
-                  if jailed(base, index) && Fs.statSync(index).isFile() then Some(index) else None
-                else None
-              else if st.isFile() then Some(abs)
-              else None
+                  if !jailed(base, index) then ZIO.none
+                  else stat(index).map(_.filter(_.isFile()).map(_ => index))
+                case _ => ZIO.none
+              }
             end if
           }
-        }
-      }
-      .flatMap {
-        case None    => ZIO.succeed(None)
-        case Some(p) => serveFile(p, Some(request)).map(Some(_))
-      }
-      .catchAll(_ => ZIO.succeed(None))
+          .flatMap {
+            case None       => ZIO.none
+            case Some(file) => serveFile(file, Some(request)).asSome
+          }
 
-  def fromResource(name: String, request: Request): Task[Option[Response]] =
+  def fromResource(name: String, request: Request): IO[FileError, Option[Response]] =
     val _ = (name, request)
-    ZIO.succeed(None)
+    ZIO.none
 
-  private def serveFile(path: String, request: Option[Request]): Task[Response] =
+  private def stat(path: String): IO[FileError, Option[FsStats]] =
     ZIO
-      .attempt {
-        val st = Fs.statSync(path)
-        if st.isDirectory() then throw java.io.IOException(s"is a directory: $path")
-        if !st.isFile() then throw java.io.IOException(s"missing path: $path")
-        val n     = st.size.toLong
-        val mtime = java.time.Instant.ofEpochMilli(st.mtimeMs.toLong)
-        val ct    = MediaType.fromExtension(extension(path))
-        val etag  = EntityTag(s"$n-${mtime.toEpochMilli}", weak = true)
-        val bytes = Buffers.fromU8(Fs.readFileSync(path))
-        (n, mtime, ct, etag, bytes)
-      }
-      .map { (n, mtime, ct, etag, bytes) =>
-        val base = Response(Status.Ok)
-          .withHeader(HeaderName.ETag, etag.render)
-          .withHeader(HeaderName.LastModified, heddle.http.header.HttpDate.render(mtime))
-          .withHeader(HeaderName.AcceptRanges, "bytes")
-        request match
-          case Some(req) if notModified(req, etag, mtime) =>
-            base.copy(status = Status.NotModified)
-          case Some(req) =>
-            req.headers.range.filter(_.unit.equalsIgnoreCase("bytes")).flatMap(_.ranges.headOption) match
-              case Some(range) => ranged(base, bytes, n, ct, range)
-              case None        => base.withBody(Body.fromBytes(bytes, Some(ct)))
-          case None =>
-            base.withBody(Body.fromBytes(bytes, Some(ct)))
-      }
+      .attempt(Fs.statSync(path, StatOptions(throwIfNoEntry = false)).toOption)
+      .mapError(FileError.Unreadable(path, _))
+
+  private def serveFile(path: String, request: Option[Request]): IO[FileError, Response] =
+    stat(path).flatMap {
+      case None                         => ZIO.fail(FileError.NotFound(path))
+      case Some(st) if st.isDirectory() => ZIO.fail(FileError.IsDirectory(path))
+      case Some(st) if !st.isFile()     => ZIO.fail(FileError.NotFound(path))
+      case Some(st)                     =>
+        ZIO.attempt(Buffers.fromU8(Fs.readFileSync(path))).mapError(FileError.Unreadable(path, _)).map { bytes =>
+          val n     = st.size.toLong
+          val mtime = java.time.Instant.ofEpochMilli(st.mtimeMs.toLong)
+          val ct    = MediaType.fromExtension(extension(path))
+          val etag  = EntityTag(s"$n-${mtime.toEpochMilli}", weak = true)
+          val base  = Response(Status.Ok)
+            .withHeader(HeaderName.ETag, etag.render)
+            .withHeader(HeaderName.LastModified, heddle.http.header.HttpDate.render(mtime))
+            .withHeader(HeaderName.AcceptRanges, "bytes")
+          request match
+            case Some(req) if notModified(req, etag, mtime) =>
+              base.copy(status = Status.NotModified)
+            case Some(req) =>
+              req.headers.range.filter(_.unit.equalsIgnoreCase("bytes")).flatMap(_.ranges.headOption) match
+                case Some(range) => ranged(base, bytes, n, ct, range)
+                case None        => base.withBody(Body.fromBytes(bytes, Some(ct)))
+            case None =>
+              base.withBody(Body.fromBytes(bytes, Some(ct)))
+          end match
+        }
+    }
 
   private def notModified(req: Request, etag: EntityTag, mtime: java.time.Instant): Boolean =
     val inm = req.headers.ifNoneMatch

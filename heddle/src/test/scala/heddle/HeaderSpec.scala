@@ -70,14 +70,14 @@ object HeaderSpec extends ZIOSpecDefault:
         ,
         test("Set-Cookie ignores unknown attrs and fails dates open"):
           val raw = """id=x; Partitioned; Expires=not-a-date; Max-Age=nope; Secure; SameSite=Lax"""
-          val sc  = SetCookie.parse(raw).get
+          val sc  = SetCookie.parse(raw)
           assertTrue(
-            sc.name == "id",
-            sc.value == "x",
-            sc.secure,
-            sc.sameSite.contains(SameSite.Lax),
-            sc.expires.isEmpty,
-            sc.maxAge.isEmpty,
+            sc.is(_.some).name == "id",
+            sc.is(_.some).value == "x",
+            sc.is(_.some).secure,
+            sc.is(_.some).sameSite.contains(SameSite.Lax),
+            sc.is(_.some).expires.isEmpty,
+            sc.is(_.some).maxAge.isEmpty,
           )
         ,
         test("Authorization Bearer Basic Other and missing space"):
@@ -112,13 +112,13 @@ object HeaderSpec extends ZIOSpecDefault:
           val sc =
             SetCookie("sid", "abc", path = Some("/"), secure = true, httpOnly = true, sameSite = Some(SameSite.Lax))
           val raw  = SetCookie.render(sc)
-          val back = SetCookie.parse(raw).get
+          val back = SetCookie.parse(raw)
           assertTrue(
             raw.contains("sid=abc"),
             raw.contains("Secure"),
             raw.contains("HttpOnly"),
             raw.contains("SameSite=Lax"),
-            back == sc.copy(path = Some("/")),
+            back.contains(sc.copy(path = Some("/"))),
           )
         ,
         test("BasicCredentials round-trip and reject junk"):

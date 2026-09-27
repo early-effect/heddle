@@ -3,8 +3,10 @@ package heddle
 import heddle.client.ClientTls
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.io.ByteArrayInputStream
+import java.nio.charset.StandardCharsets
 import java.security.KeyStore
-import java.security.cert.X509Certificate
+import java.security.cert.CertificateFactory
 import javax.net.ssl.{SSLContext, TrustManagerFactory}
 import zio.*
 import zio.test.*
@@ -14,59 +16,44 @@ object TlsSpec extends ZIOSpecDefault:
     suite("Tls")(
       test("HTTP/1.1 over TLS returns the handler body"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
-          ZIO
-            .attempt {
-              val res = TlsFixture
-                .client(HttpClient.Version.HTTP_1_1)
-                .send(
-                  HttpRequest.newBuilder(URI.create(s"$base/health")).GET().build(),
-                  HttpResponse.BodyHandlers.ofString(),
-                )
-              (res.statusCode(), res.body())
-            }
-            .map((code, body) => assertTrue(code == 200, body == "ok"))
+        LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
+          TlsFixture
+            .get(HttpClient.Version.HTTP_1_1, s"$base/health")
+            .map(res => assertTrue(res.statusCode() == 200, res.body() == "ok"))
         }
       ,
       test("ALPN h2 returns the handler body"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
-          ZIO
-            .attempt {
-              val res = TlsFixture
-                .client(HttpClient.Version.HTTP_2)
-                .send(
-                  HttpRequest.newBuilder(URI.create(s"$base/health")).GET().build(),
-                  HttpResponse.BodyHandlers.ofString(),
-                )
-              (res.statusCode(), res.body(), res.version())
-            }
-            .map { (code, body, ver) =>
-              assertTrue(code == 200, body == "ok", ver == HttpClient.Version.HTTP_2)
-            }
+        LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
+          TlsFixture.get(HttpClient.Version.HTTP_2, s"$base/health").map { res =>
+            assertTrue(res.statusCode() == 200, res.body() == "ok", res.version() == HttpClient.Version.HTTP_2)
+          }
         }
       ,
       test("heddle Client GETs HTTPS with a custom trust store"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
-          Client
-            .batched(Request.get(s"$base/health"))
-            .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.context(TlsFixture.ssl))
+        LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
+          TlsFixture.ssl
+            .flatMap { ctx =>
+              Client
+                .batched(Request.get(s"$base/health"))
+                .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.context(ctx))
+            }
             .map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
         }
       ,
       test("ClientTls.trusting pins the PEM it is given"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
+        LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
           Client
             .batched(Request.get(s"$base/health"))
-            .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting(TlsFixture.certPem))
+            .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting(TestTls.certPem))
             .map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
         }
       ,
       test("the default trust store rejects a self-signed peer with Tls"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
+        LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
           Client
             .get(s"$base/health")
             .either
@@ -78,10 +65,10 @@ object TlsSpec extends ZIOSpecDefault:
         }
       ,
       test("a PEM with no certificate is InvalidTrust"):
-        ZIO.scoped((ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting("not a pem")).build).exit.map { exit =>
-          assertTrue(exit match
-            case Exit.Failure(c) => c.failureOption.exists(_.isInstanceOf[ClientError.InvalidTrust])
-            case _               => false)
+        ZIO.scoped((ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting("not a pem")).build).flip.map { e =>
+          assertTrue(e match
+            case ClientError.InvalidTrust(_) => true
+            case _                           => false)
         }
       ,
       test("requireTls forbids cleartext and allows HTTPS"):
@@ -91,82 +78,40 @@ object TlsSpec extends ZIOSpecDefault:
             clear <- LiveServer(routes) { base =>
               Client.get(s"$base/s").map(res => res.status.code)
             }
-            tls <- LiveServer.https(routes, Tls.pem(TlsFixture.certPem, TlsFixture.keyPem)) { base =>
-              ZIO.attempt {
-                TlsFixture
-                  .client(HttpClient.Version.HTTP_1_1)
-                  .send(
-                    HttpRequest.newBuilder(URI.create(s"$base/s")).GET().build(),
-                    HttpResponse.BodyHandlers.ofString(),
-                  )
-                  .body()
-              }
+            tls <- LiveServer.https(routes, Tls.pem(TestTls.certPem, TestTls.keyPem)) { base =>
+              TlsFixture.get(HttpClient.Version.HTTP_1_1, s"$base/s").map(_.body())
             }
           yield assertTrue(clear == 403, tls == "sec")
         got,
     ) @@ TestAspect.sequential @@ TestAspect.timeout(15.seconds) @@ TestAspect.withLiveClock
 end TlsSpec
 
+/** The JDK's view of [[TestTls]]: a trust context that accepts only it, and an `HttpClient` over that context. */
 object TlsFixture:
-  private lazy val generated: (String, String, SSLContext) = generate()
+  val ssl: Task[SSLContext] =
+    ZIO.attempt {
+      val cert = CertificateFactory
+        .getInstance("X.509")
+        .generateCertificate(ByteArrayInputStream(TestTls.certPem.getBytes(StandardCharsets.US_ASCII)))
+      val ts = KeyStore.getInstance("PKCS12")
+      ts.load(null, null)
+      ts.setCertificateEntry("heddle", cert)
+      val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
+      tmf.init(ts)
+      val ctx = SSLContext.getInstance("TLS")
+      ctx.init(null, tmf.getTrustManagers, null)
+      ctx
+    }
 
-  def certPem: String               = generated._1
-  def keyPem: String                = generated._2
-  def ssl: javax.net.ssl.SSLContext = generated._3
-
-  def client(version: HttpClient.Version): HttpClient =
-    HttpClient.newBuilder().sslContext(generated._3).version(version).build()
-
-  private def generate(): (String, String, SSLContext) =
-    val dir = java.nio.file.Files.createTempDirectory("heddle-tls")
-    val p12 = dir.resolve("ks.p12")
-    val pb  = ProcessBuilder(
-      "keytool",
-      "-genkeypair",
-      "-alias",
-      "heddle",
-      "-keyalg",
-      "RSA",
-      "-keysize",
-      "2048",
-      "-validity",
-      "2",
-      "-storetype",
-      "PKCS12",
-      "-keystore",
-      p12.toString,
-      "-storepass",
-      "changeit",
-      "-dname",
-      "CN=localhost",
-      "-ext",
-      "SAN=DNS:localhost,IP:127.0.0.1",
-      "-noprompt",
-    )
-    pb.redirectErrorStream(true)
-    val proc = pb.start()
-    val log  = String(proc.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-    if proc.waitFor() != 0 then throw RuntimeException(s"keytool failed: $log")
-    val ks   = KeyStore.getInstance("PKCS12")
-    val pass = "changeit".toCharArray
-    ks.load(java.nio.file.Files.newInputStream(p12), pass)
-    val cert    = ks.getCertificate("heddle").asInstanceOf[X509Certificate]
-    val key     = ks.getKey("heddle", pass)
-    val certPem =
-      "-----BEGIN CERTIFICATE-----\n" +
-        java.util.Base64.getMimeEncoder(64, Array('\n'.toByte)).encodeToString(cert.getEncoded) +
-        "\n-----END CERTIFICATE-----\n"
-    val keyPem =
-      "-----BEGIN PRIVATE KEY-----\n" +
-        java.util.Base64.getMimeEncoder(64, Array('\n'.toByte)).encodeToString(key.getEncoded) +
-        "\n-----END PRIVATE KEY-----\n"
-    val ts = KeyStore.getInstance("PKCS12")
-    ts.load(null, pass)
-    ts.setCertificateEntry("heddle", cert)
-    val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
-    tmf.init(ts)
-    val ctx = SSLContext.getInstance("TLS")
-    ctx.init(null, tmf.getTrustManagers, null)
-    (certPem, keyPem, ctx)
-  end generate
+  def get(version: HttpClient.Version, url: String): Task[HttpResponse[String]] =
+    ssl.flatMap { ctx =>
+      ZIO.attemptBlocking(
+        HttpClient
+          .newBuilder()
+          .sslContext(ctx)
+          .version(version)
+          .build()
+          .send(HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofString())
+      )
+    }
 end TlsFixture

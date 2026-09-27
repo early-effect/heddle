@@ -1,7 +1,7 @@
 package heddle.internal.duplex
 
 import java.nio.ByteBuffer
-import java.nio.channels.{ServerSocketChannel, SocketChannel}
+import java.nio.channels.{ClosedChannelException, ServerSocketChannel, SocketChannel}
 import java.net.StandardSocketOptions
 import heddle.Server
 import heddle.error.{HttpError, ServerError}
@@ -24,11 +24,7 @@ private[heddle] final class ChannelConn(val ch: SocketChannel) extends ByteConn:
   def write(chunk: Chunk[Byte]): Task[Unit] =
     Nio.writeChunk(ch, chunk, scratch)
 
-  def closeNow(): Unit =
-    try ch.close()
-    catch case _: Throwable => ()
-
-  def close: UIO[Unit] = ZIO.succeed(closeNow())
+  def close: UIO[Unit] = ZIO.attempt(ch.close()).ignore
 
   def setReadTimeout(d: Duration): UIO[Unit] =
     ZIO.succeed(ConnBufPlatform.soTimeout(ch.socket, d))
@@ -48,11 +44,7 @@ private[heddle] final class SslConn(ssl: javax.net.ssl.SSLSocket) extends ByteCo
   def write(chunk: Chunk[Byte]): Task[Unit] =
     heddle.server.Tls.writer(ssl.getOutputStream)(chunk)
 
-  def closeNow(): Unit =
-    try ssl.close()
-    catch case _: Throwable => ()
-
-  def close: UIO[Unit] = ZIO.succeed(closeNow())
+  def close: UIO[Unit] = ZIO.attempt(ssl.close()).ignore
 
   def setReadTimeout(d: Duration): UIO[Unit] =
     ZIO.succeed(ConnBufPlatform.soTimeout(ssl, d))
@@ -62,18 +54,20 @@ private[heddle] final class ChannelListener(ss: ServerSocketChannel, tcpNoDelay:
     extends Listener:
   def localPort: UIO[Int] = ZIO.succeed(Nio.localPort(ss))
 
-  def accept: Task[ByteConn] =
-    Nio.accept(ss).flatMap { ch =>
-      ZIO.attempt(ch.setOption(StandardSocketOptions.TCP_NODELAY, tcpNoDelay)).ignore *>
-        ZIO.attempt(ch.setOption(StandardSocketOptions.SO_KEEPALIVE, soKeepAlive)).ignore *>
-        ZIO.succeed(ChannelConn(ch))
-    }
+  def accept: IO[AcceptError, ByteConn] =
+    Nio
+      .accept(ss)
+      .mapError {
+        case _: ClosedChannelException => AcceptError.Closed
+        case other                     => AcceptError.Failed(other)
+      }
+      .flatMap { ch =>
+        ZIO.attempt(ch.setOption(StandardSocketOptions.TCP_NODELAY, tcpNoDelay)).ignore *>
+          ZIO.attempt(ch.setOption(StandardSocketOptions.SO_KEEPALIVE, soKeepAlive)).ignore *>
+          ZIO.succeed(ChannelConn(ch))
+      }
 
-  def close: UIO[Unit] =
-    ZIO.succeed {
-      try ss.close()
-      catch case _: Throwable => ()
-    }
+  def close: UIO[Unit] = ZIO.attempt(ss.close()).ignore
 end ChannelListener
 
 private[heddle] object ChannelListener:

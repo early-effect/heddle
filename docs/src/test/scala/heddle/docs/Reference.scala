@@ -110,6 +110,21 @@ exits 0 on Ctrl-C under sbt 2.
       }.assert { case (port, idle, max) =>
         assertTrue(port == 8080, idle == 60.seconds, max == 1024)
       },
+      md"""
+A config is checked once, before anything binds. `Server.install` fails with
+`ServerError.InvalidConfig` naming every setting it cannot serve with (a port outside
+0..65535, a buffer size that does not fit an `Int`, a frame size outside RFC 9113's range),
+and `Server.Config.layer` refuses the same values while it loads. `Server.Config#validate`
+is the check itself.
+""",
+      exampleZIO {
+        val config = Server.Config.default.copy(port = 70_000, chunkSize = 0.B)
+        ZIO.scoped(Server.install(Routes.empty, config)).flip
+      }.assert { err =>
+        assertTrue(err match
+          case ServerError.InvalidConfig(problems) => problems.map(_.setting.key).toList == List("port", "chunkSize")
+          case _                                   => false)
+      },
     ),
     section("Client config")(
       md"""

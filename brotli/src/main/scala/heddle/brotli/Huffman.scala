@@ -6,35 +6,36 @@ private[brotli] object Huffman:
     val n   = freq.length
     val len = Array.fill(n)(0)
     val idx = freq.indices.filter(i => freq(i) > 0)
-    if idx.isEmpty then len
-    else if idx.length == 1 then
-      len(idx.head) = 1
-      len
-    else
-      val nodes = scala.collection.mutable.PriorityQueue.empty[(Int, Int)](using
-        Ordering.by[(Int, Int), Int](_._1).reverse
-      )
-      idx.foreach(i => nodes.enqueue(freq(i) -> i))
-      val parent = Array.fill(n + idx.length)(-1)
-      var next   = n
-      while nodes.size > 1 do
-        val (fa, a) = nodes.dequeue()
-        val (fb, b) = nodes.dequeue()
-        parent(a) = next
-        parent(b) = next
-        nodes.enqueue((fa + fb) -> next)
-        next += 1
-      def depth(i: Int): Int =
-        var d = 0
-        var x = i
-        while x < parent.length && parent(x) >= 0 do
-          d += 1
-          x = parent(x)
-        d
-      idx.foreach(i => len(i) = depth(i).max(1))
-      limit(len, maxBits)
-      len
-    end if
+    idx match
+      case Seq()     => len
+      case Seq(only) =>
+        len(only) = 1
+        len
+      case _ =>
+        val nodes = scala.collection.mutable.PriorityQueue.empty[(Int, Int)](using
+          Ordering.by[(Int, Int), Int](_._1).reverse
+        )
+        idx.foreach(i => nodes.enqueue(freq(i) -> i))
+        val parent = Array.fill(n + idx.length)(-1)
+        var next   = n
+        while nodes.size > 1 do
+          val (fa, a) = nodes.dequeue()
+          val (fb, b) = nodes.dequeue()
+          parent(a) = next
+          parent(b) = next
+          nodes.enqueue((fa + fb) -> next)
+          next += 1
+        def depth(i: Int): Int =
+          var d = 0
+          var x = i
+          while x < parent.length && parent(x) >= 0 do
+            d += 1
+            x = parent(x)
+          d
+        idx.foreach(i => len(i) = depth(i).max(1))
+        limit(len, maxBits)
+        len
+    end match
   end lengths
 
   def prefixFree(len: Array[Int], code: Array[Int]): Boolean =
@@ -47,7 +48,7 @@ private[brotli] object Huffman:
     }
 
   def codes(len: Array[Int]): Array[Int] =
-    val max = len.max
+    val max = len.maxOption.getOrElse(0)
     val bl  = Array.fill(max + 1)(0)
     len.foreach(l => if l > 0 then bl(l) += 1)
     val next = Array.fill(max + 1)(0)

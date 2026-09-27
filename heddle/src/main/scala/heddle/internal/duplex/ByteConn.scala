@@ -10,7 +10,12 @@ private[heddle] trait ByteConn:
   def close: UIO[Unit]
   def setReadTimeout(d: Duration): UIO[Unit]
 
+/** Why `accept` returned no connection. `Closed` is the listener shutting down, which ends the accept loop. */
+private[heddle] enum AcceptError:
+  case Closed
+  case Failed(cause: Throwable)
+
 private[heddle] trait Listener:
   def localPort: UIO[Int]
-  def accept: Task[ByteConn]
+  def accept: IO[AcceptError, ByteConn]
   def close: UIO[Unit]

@@ -133,16 +133,16 @@ object BuildSite extends DocsSite:
     val marker = clientJsMarker
     if !Files.isRegularFile(marker) then None
     else
-      val line = Files.readString(marker).nn.trim
+      val line = Files.readString(marker).trim
       if line.isEmpty then None
       else
         val path = Paths.get(line)
         Option.when(Files.isRegularFile(path))(path)
 
   private def repoRoot: Path =
+    val here = Paths.get("").toAbsolutePath
     Iterator
-      .iterate(Paths.get("").toAbsolutePath.nn)(p => Option(p.getParent).orNull)
-      .takeWhile(_ != null)
+      .unfold(Option(here))(_.map(p => (p, Option(p.getParent))))
       .find(p => Files.exists(p.resolve("build.sbt")))
-      .getOrElse(Paths.get("").toAbsolutePath.nn)
+      .getOrElse(here)
 end BuildSite

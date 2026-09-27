@@ -133,9 +133,7 @@ object Http1Spec extends ZIOSpecDefault:
             )
           )
           out <- Ref.make(Chunk.empty[Byte])
-          pull = remaining.modify { c =>
-            if c.isEmpty then (None, c) else (Some(c.head), c.drop(1))
-          }
+          pull = remaining.modify(c => (c.headOption, c.drop(1)))
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
           _     <- Http1.serveConnection(routes, pull, send, Server.Config.default, taking, busy)
           bytes <- out.get
