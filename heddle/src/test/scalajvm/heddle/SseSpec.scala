@@ -13,8 +13,8 @@ object SseSpec extends ZIOSpecDefault:
         val bytes = SseCodec.encode(
           ServerSentEvent(
             data = "hello\nworld",
-            event = Some("tick"),
-            id = Some("7"),
+            event = Some(SseField("tick")),
+            id = Some(SseField.of(7)),
             retry = Some(2.seconds),
           )
         )
@@ -29,13 +29,11 @@ object SseSpec extends ZIOSpecDefault:
         )
       ,
       test("decode round-trips a complete event and keeps leftover"):
-        val first       = SseCodec.encode(ServerSentEvent("a", event = Some("tick"), id = Some("1")))
+        val a           = ServerSentEvent("a", event = Some(SseField("tick")), id = Some(SseField("1")))
+        val first       = SseCodec.encode(a)
         val second      = SseCodec.encode(ServerSentEvent("b"))
         val (evs, rest) = SseCodec.decode(first ++ second.take(4))
-        assertTrue(
-          evs == Chunk(ServerSentEvent("a", event = Some("tick"), id = Some("1"))),
-          rest == second.take(4),
-        )
+        assertTrue(evs == Chunk(a), rest == second.take(4))
       ,
       test("decode ignores heartbeat comments"):
         val (evs, rest) = SseCodec.decode(SseCodec.heartbeat)
@@ -47,20 +45,29 @@ object SseSpec extends ZIOSpecDefault:
         val (evs, rest) = SseCodec.decode(bytes)
         assertTrue(evs == Chunk(ServerSentEvent("one"), ServerSentEvent("two")), rest.isEmpty)
       ,
-      test("construction rejects CR or LF in event and id"):
-        val event = try
-          ServerSentEvent("x", event = Some("a\nb"))
-          false
-        catch case _: IllegalArgumentException => true
-        val id = try
-          ServerSentEvent("x", id = Some("a\r"))
-          false
-        catch case _: IllegalArgumentException => true
-        assertTrue(event, id)
+      test("a field with CR or LF is a value at run time and a compile error as a literal"):
+        typeCheck("""SseField("a\nb")""").map { literal =>
+          assertTrue(
+            SseField.from("a\nb").isLeft,
+            SseField.from("a\r").isLeft,
+            SseField.from("tick").map(_.value) == Right("tick"),
+            literal.left.exists(_.contains("CR or LF")),
+          )
+        }
+      ,
+      test("encode then decode is the identity for any data and fields"):
+        val text  = Gen.string.map(_.filterNot(_ == '\r'))
+        val field = Gen.string.map(_.filterNot(c => c == '\r' || c == '\n'))
+        check(text, Gen.option(field), Gen.option(field)) { (data, event, id) =>
+          val ev =
+            ServerSentEvent(data, event.flatMap(SseField.from(_).toOption), id.flatMap(SseField.from(_).toOption))
+          val (evs, rest) = SseCodec.decode(SseCodec.encode(ev))
+          assertTrue(evs == Chunk(ev), rest.isEmpty)
+        }
       ,
       test("Endpoint.outSse documents text/event-stream"):
         val ep     = Endpoint.get("ticks").outSse
-        val routes = ep.implement(_ => ZIO.succeed(ZStream(ServerSentEvent("n", event = Some("tick")))))
+        val routes = ep.implement(_ => ZIO.succeed(ZStream(ServerSentEvent("n", event = Some(SseField("tick"))))))
         routes(Request.get("/ticks")).map { res =>
           assertTrue(
             res.status == Status.Ok,
@@ -85,9 +92,9 @@ object SseSpec extends ZIOSpecDefault:
               ZIO.succeed(
                 Sse.response(
                   ZStream(
-                    ServerSentEvent("0", event = Some("tick")),
-                    ServerSentEvent("1", event = Some("tick")),
-                    ServerSentEvent("2", event = Some("tick")),
+                    ServerSentEvent("0", event = Some(SseField("tick"))),
+                    ServerSentEvent("1", event = Some(SseField("tick"))),
+                    ServerSentEvent("2", event = Some(SseField("tick"))),
                   )
                 )
               )
@@ -95,10 +102,10 @@ object SseSpec extends ZIOSpecDefault:
           )
           LiveServer(routes) { base =>
             Client.get(s"$base/ticks").map { res =>
-              val (evs, _) = SseCodec.decode(res.body.asBytes)
+              val evs = res.body.strict.map(SseCodec.decode(_)._1)
               assertTrue(
                 res.header("Content-Type").exists(_.startsWith("text/event-stream")),
-                evs.map(_.data) == Chunk("0", "1", "2"),
+                evs.map(_.map(_.data)).contains(Chunk("0", "1", "2")),
               )
             }
           }
@@ -113,8 +120,8 @@ object SseSpec extends ZIOSpecDefault:
           )
           LiveServer(routes) { base =>
             Client.get(s"$base/s").map { res =>
-              val (evs, _) = SseCodec.decode(res.body.asBytes)
-              assertTrue(evs == Chunk(ServerSentEvent("one"), ServerSentEvent("two")))
+              val evs = res.body.strict.map(SseCodec.decode(_)._1)
+              assertTrue(evs.contains(Chunk(ServerSentEvent("one"), ServerSentEvent("two"))))
             }
           }
         ,

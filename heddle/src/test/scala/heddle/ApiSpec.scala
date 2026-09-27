@@ -26,7 +26,7 @@ object ApiSpec extends ZIOSpecDefault:
         val ep     = Endpoint.get("hello").outText()
         val routes = ep.implement(_ => ZIO.succeed("world"))
         routes(Request.get("/hello")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString == "world")
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "world")
         }
       ,
       test("mcp name and hints land on EndpointDoc"):

@@ -52,7 +52,7 @@ object TlsSpec extends ZIOSpecDefault:
           Client
             .batched(Request.get(s"$base/health"))
             .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.context(TlsFixture.ssl))
-            .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+            .map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
         }
       ,
       test("ClientTls.trusting pins the PEM it is given"):
@@ -61,7 +61,7 @@ object TlsSpec extends ZIOSpecDefault:
           Client
             .batched(Request.get(s"$base/health"))
             .provide(ZLayer.succeed(Client.Config.default) >>> ClientTls.trusting(TlsFixture.certPem))
-            .map(res => assertTrue(res.status == Status.Ok, res.body.asString == "ok"))
+            .map(res => assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok"))
         }
       ,
       test("the default trust store rejects a self-signed peer with Tls"):

@@ -13,9 +13,9 @@ object Http extends DocSpecSuite:
   def doc = page("HTTP")(
     md"""
 The HTTP surface is the one you already know how to hold: `Request`, `Response`, `Routes`,
-`Handler`, `Middleware`, `Server`, `Client`. Bodies on the wire are streams.
-`Body.asString` / `asBytes` are for in-memory bodies; use `collect` otherwise. `maxBodyBytes` is a
-cap, not a buffer.
+`Handler`, `Middleware`, `Server`, `Client`. Bodies on the wire are streams. `body.utf8` and
+`body.collect` read any body. `body.text` and `body.strict` are `Some` only for a body already in
+memory, and `None` for a stream, never a throw. `maxBodyBytes` is a cap, not a buffer.
 
 If you are building a hub, start at [The hub](the-hub.html) and come back here for the knobs.
 """,
@@ -32,8 +32,9 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
         )
         for
           ok   <- routes(Request.get("/users/3"))
+          body <- ok.body.utf8
           miss <- routes(Request.get("/users/ada"))
-        yield (ok.body.asString, miss.status)
+        yield (body, miss.status)
       }.assert { case (body, miss) =>
         assertTrue(body == "3", miss == Status.NotFound)
       },
@@ -74,8 +75,8 @@ value. Idle, header, and connection caps live on `Server.Config`. See
             .install(routes, Server.Config.default.copy(host = "127.0.0.1", port = 0))
             .flatMap { server =>
               server.port.flatMap { port =>
-                Client.get(s"http://127.0.0.1:$port/health").map { res =>
-                  (res.status, res.body.asString)
+                Client.get(s"http://127.0.0.1:$port/health").flatMap { res =>
+                  res.body.utf8.map((res.status, _))
                 }
               }
             }

@@ -14,5 +14,5 @@ object StatusSpec extends ZIOSpecDefault:
       ,
       test("fromCode synthesizes Unknown off catalog"):
         assertTrue(Status.fromCode(599) == Status(599, "Unknown")),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end StatusSpec

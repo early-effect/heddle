@@ -46,5 +46,5 @@ object SafePathSpec extends ZIOSpecDefault:
       test("resolveUnder treats empty relative as the root"):
         val got = SafePath.resolveUnder("/var/www", "")
         assertTrue(got.contains("/var/www")),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end SafePathSpec

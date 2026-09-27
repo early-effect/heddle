@@ -11,7 +11,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
         test("leaves the handler response unchanged"):
           val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.identity
           routes(Request.get("/x")).map { res =>
-            assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+            assertTrue(res.status == Status.Ok, res.body.text.contains("ok"))
           }
       ),
       suite("requestId")(
@@ -41,7 +41,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
               }
             ) @@ Middleware.requestId()
           routes(Request.get("/x").withHeader("X-Request-Id", "abc")).map { res =>
-            assertTrue(res.body.asString == "abc")
+            assertTrue(res.body.text.contains("abc"))
           },
       ),
       suite("cors")(
@@ -82,7 +82,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
             Routes(Method.GET / "b" -> Handler.text("b")) @@
               Middleware.intercept(req => req.copy(url = Url.parse("/b")))
           routes(Request.get("/a")).map { res =>
-            assertTrue(res.body.asString == "b")
+            assertTrue(res.body.text.contains("b"))
           }
         ,
         test("interceptZIO can reject with a response"):
@@ -90,7 +90,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
             Routes(Method.GET / "x" -> Handler.text("ok")) @@
               Middleware.interceptZIO(_ => ZIO.fail(Response.badRequest("no")))
           routes(Request.get("/x")).map { res =>
-            assertTrue(res.status == Status.BadRequest, res.body.asString == "no")
+            assertTrue(res.status == Status.BadRequest, res.body.text.contains("no"))
           },
       ),
       suite("mapResponse")(
@@ -123,7 +123,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
         test("does not fire when the handler completes in time"):
           val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.timeout(1.second)
           routes(Request.get("/x")).map { res =>
-            assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+            assertTrue(res.status == Status.Ok, res.body.text.contains("ok"))
           },
       ),
       suite("provided")(
@@ -132,7 +132,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
             Routes(Method.GET / "me" -> handler(ZIO.serviceWith[User](u => Response.text(u.name))))
           val routes = authed.provided(_ => ZIO.succeed(User("ada")))
           routes(Request.get("/me")).map { res =>
-            assertTrue(res.body.asString == "ada")
+            assertTrue(res.body.text.contains("ada"))
           }
         ,
         test("turns extraction failure into the error response"):
@@ -147,7 +147,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
         test("still returns the handler response"):
           val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.debug
           routes(Request.get("/x")).map { res =>
-            assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+            assertTrue(res.status == Status.Ok, res.body.text.contains("ok"))
           }
       ),
       suite("composition")(
@@ -177,7 +177,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
           val routes =
             Routes(
               Method.POST / "echo" -> Handler.fromFunctionZIO((req: Request) =>
-                ZIO.succeed(Response.text(req.body.asString))
+                req.body.utf8.orDie.map(Response.text(_))
               )
             ) @@ Middleware.decompress(maxBytes = 8.B)
           val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "gzip")
@@ -189,22 +189,21 @@ object MiddlewareSpec extends ZIOSpecDefault:
           val routes =
             Routes(
               Method.POST / "echo" -> Handler.fromFunctionZIO((req: Request) =>
-                ZIO.succeed(Response.text(req.body.asString))
+                req.body.utf8.orDie.map(Response.text(_))
               )
             ) @@ Middleware.decompress()
           val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "gzip")
-          routes(req).map(res => assertTrue(res.body.asString == raw))
+          routes(req).map(res => assertTrue(res.body.text.contains(raw)))
         ,
         test("gzip JSON when Accept-Encoding offers gzip"):
           val body   = "n" * 2048
           val routes =
             Routes(Method.GET / "j" -> Handler.text(body)) @@ Middleware.compress(minBytes = 16)
           routes(Request.get("/j").withHeader("Accept-Encoding", "gzip")).map { res =>
-            val raw = res.body.asBytes
-            val out = Compressor.gunzip(raw, 1.M)
+            val out = res.body.strict.map(Compressor.gunzip(_, 1.M))
             assertTrue(
               res.header("Content-Encoding").contains("gzip"),
-              out.map(_.toArray.toSeq) == Right(body.getBytes.toSeq),
+              out.map(_.map(_.toArray.toSeq)) == Some(Right(body.getBytes.toSeq)),
             )
           }
         ,
@@ -212,7 +211,7 @@ object MiddlewareSpec extends ZIOSpecDefault:
           val routes =
             Routes(Method.GET / "j" -> Handler.text("n" * 2048)) @@ Middleware.compress(minBytes = 16)
           routes(Request.get("/j").withHeader("Accept-Encoding", "identity")).map { res =>
-            assertTrue(res.header("Content-Encoding").isEmpty, res.body.asString == "n" * 2048)
+            assertTrue(res.header("Content-Encoding").isEmpty, res.body.text.contains("n" * 2048))
           }
         ,
         test("no Accept-Encoding stays uncompressed"):

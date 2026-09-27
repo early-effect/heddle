@@ -34,8 +34,8 @@ object OpenApiSpec extends ZIOSpecDefault:
           json <- app(Request.get("/docs/openapi.json"))
         yield assertTrue(
           html.header("Content-Type").exists(_.contains("text/html")),
-          html.body.asString.contains("swagger-ui"),
-          json.body.asString.contains("\"/ping\""),
+          html.body.text.is(_.some).contains("swagger-ui"),
+          json.body.text.is(_.some).contains("\"/ping\""),
         )
       ,
       test("documents query params, json bodies, tags, and errors"):

@@ -52,8 +52,8 @@ api
       }.assert(listed => assertTrue(listed)),
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
-          BoxOffice.api(store).routes(Request.post("/parties", Body.json("""{"showId":1,"size":2}"""))).map { res =>
-            res.status == Status.Created && res.body.asString.contains("P1001")
+          BoxOffice.api(store).routes(Request.post("/parties", Body.json("""{"showId":1,"size":2}"""))).flatMap { res =>
+            res.body.utf8.map(body => res.status == Status.Created && body.contains("P1001"))
           }
         }
       }.assert(ok => assertTrue(ok)),

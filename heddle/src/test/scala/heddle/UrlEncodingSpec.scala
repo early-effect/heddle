@@ -38,5 +38,5 @@ object UrlEncodingSpec extends ZIOSpecDefault:
           back.get("x").contains("1&2"),
           back.get("c").contains("€"),
         ),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end UrlEncodingSpec

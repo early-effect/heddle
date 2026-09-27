@@ -45,7 +45,7 @@ object H2Spec extends ZIOSpecDefault:
       test("same port still serves HTTP/1.1"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>
-          Client.get(s"$base/health").map(res => assertTrue(res.body.asString == "ok"))
+          Client.get(s"$base/health").map(res => assertTrue(res.body.text.is(_.some) == "ok"))
         }
       ,
       test("prior-knowledge h2c GET hits the same routes"):

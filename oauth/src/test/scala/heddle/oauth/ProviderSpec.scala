@@ -14,12 +14,12 @@ object ProviderSpec extends ZIOSpecDefault:
       test("discovery advertises code PKCE and token endpoint"):
         withOp { (base, _, _) =>
           Client.get(s"$base/.well-known/openid-configuration").map { res =>
-            val json = res.body.asString
+            val json = res.body.text
             assertTrue(
-              json.contains("authorization_endpoint"),
-              json.contains("code_challenge_methods_supported"),
-              json.contains("S256"),
-              json.contains("token_endpoint"),
+              json.is(_.some).contains("authorization_endpoint"),
+              json.is(_.some).contains("code_challenge_methods_supported"),
+              json.is(_.some).contains("S256"),
+              json.is(_.some).contains("token_endpoint"),
             )
           }
         }

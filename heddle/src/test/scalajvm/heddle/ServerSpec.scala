@@ -18,7 +18,7 @@ object ServerSpec extends ZIOSpecDefault:
             Server.install(routes).flatMap { server =>
               server.port.flatMap { p =>
                 Client.get(s"http://127.0.0.1:$p/health").map { res =>
-                  assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+                  assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
                 }
               }
             }
@@ -29,7 +29,7 @@ object ServerSpec extends ZIOSpecDefault:
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>
           Client.batched(Request.get(s"$base/health")).provide(Client.live).map { res =>
-            assertTrue(res.body.asString == "ok")
+            assertTrue(res.body.text.is(_.some) == "ok")
           }
         }
       ,
@@ -37,7 +37,7 @@ object ServerSpec extends ZIOSpecDefault:
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>
           Client.get(s"$base/health").map { res =>
-            assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+            assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
           }
         }
       ,
@@ -49,7 +49,7 @@ object ServerSpec extends ZIOSpecDefault:
         )
         LiveServer(routes) { base =>
           Client.get(s"$base/vt").map { res =>
-            assertTrue(res.body.asString == "true")
+            assertTrue(res.body.text.is(_.some) == "true")
           }
         }
       ,
@@ -59,7 +59,7 @@ object ServerSpec extends ZIOSpecDefault:
           Server.install(routes, LiveServer.local, JvmScheduler.Default).flatMap { server =>
             server.port.flatMap { p =>
               Client.get(s"http://127.0.0.1:$p/health").map { res =>
-                assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+                assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
               }
             }
           }
@@ -77,7 +77,7 @@ object ServerSpec extends ZIOSpecDefault:
         val routes = Routes(Method.GET / "n" -> handler(ZIO.sleep(20.millis).as(Response.text("ok"))))
         LiveServer(routes) { base =>
           ZIO.foreachPar(0 until 32)(_ => Client.get(s"$base/n")).map { rs =>
-            assertTrue(rs.size == 32, rs.forall(r => r.status == Status.Ok && r.body.asString == "ok"))
+            assertTrue(rs.size == 32, rs.forall(r => r.status == Status.Ok && r.body.text.contains("ok")))
           }
         }
       @@ TestAspect.timeout(5.seconds),
@@ -178,7 +178,7 @@ object ServerSpec extends ZIOSpecDefault:
         )
         LiveServer(routes) { base =>
           Client.request(Method.POST, s"$base/echo", body = Body.text("ping")).map { res =>
-            assertTrue(res.body.asString == "ping")
+            assertTrue(res.body.text.is(_.some) == "ping")
           }
         }
       ,
@@ -207,7 +207,7 @@ object ServerSpec extends ZIOSpecDefault:
             Server.install(routes).flatMap { server =>
               server.port.flatMap { port =>
                 Client.get(s"http://127.0.0.1:$port/health").map { res =>
-                  assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+                  assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
                 }
               }
             }

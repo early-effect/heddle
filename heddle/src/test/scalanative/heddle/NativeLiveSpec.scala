@@ -56,7 +56,7 @@ object NativeLiveSpec extends ZIOSpecDefault:
           Server.install(routes, local).flatMap { server =>
             server.port.flatMap { port =>
               Client.get(s"http://127.0.0.1:$port/health").map { res =>
-                assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+                assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
               }
             }
           }

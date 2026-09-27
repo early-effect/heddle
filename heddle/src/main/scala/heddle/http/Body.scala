@@ -15,15 +15,15 @@ enum Body:
       case Bytes(bytes, _)      => ZStream.fromChunk(bytes)
       case Stream(stream, _, _) => stream
 
-  /** In-memory bodies only. Stream bodies must use [[toStream]] or [[collect]]. */
-  def asBytes: Chunk[Byte] =
+  /** The bytes of an in-memory body. A stream has none until read: use [[collect]] or [[toStream]]. */
+  def strict: Option[Chunk[Byte]] =
     this match
-      case Empty           => Chunk.empty
-      case Bytes(bytes, _) => bytes
-      case Stream(_, _, _) =>
-        throw IllegalStateException("stream body: use Body.collect or Body.toStream")
+      case Empty           => Some(Chunk.empty)
+      case Bytes(bytes, _) => Some(bytes)
+      case Stream(_, _, _) => None
 
-  def asString: String = String(asBytes.toArray, StandardCharsets.UTF_8)
+  /** [[strict]] as UTF-8. */
+  def text: Option[String] = strict.map(b => String(b.toArray, StandardCharsets.UTF_8))
 
   /** Collects any body (including streams) as UTF-8. */
   def utf8: Task[String] =

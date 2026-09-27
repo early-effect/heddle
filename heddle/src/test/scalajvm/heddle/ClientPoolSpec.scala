@@ -23,7 +23,7 @@ object ClientPoolSpec extends ZIOSpecDefault:
         (for
           hung <- Client.batched(Request.get(s"$base/hang")).timeout(200.millis)
           ok   <- Client.batched(Request.get(s"$base/ok"))
-        yield assertTrue(hung.isEmpty, ok.body.asString == "ok")).provideLayer(pool())
+        yield assertTrue(hung.isEmpty, ok.body.text.is(_.some) == "ok")).provideLayer(pool())
       }
     },
     test("a close-delimited body never goes back to the pool") {
@@ -33,7 +33,8 @@ object ClientPoolSpec extends ZIOSpecDefault:
             a <- Client.batched(Request.get(s"$base/a"))
             b <- Client.batched(Request.get(s"$base/b"))
             n <- seen.accepted.get
-          yield assertTrue(a.body.asString == "hello", b.body.asString == "hello", n == 2)).provideLayer(pool())
+          yield assertTrue(a.body.text.is(_.some) == "hello", b.body.text.is(_.some) == "hello", n == 2))
+            .provideLayer(pool())
         }
       }
     },
@@ -55,7 +56,7 @@ object ClientPoolSpec extends ZIOSpecDefault:
             _ <- ZIO.sleep(50.millis)
             b <- Client.batched(Request.get(s"$base/b"))
             n <- seen.accepted.get
-          yield assertTrue(a.body.asString == "ok", b.body.asString == "ok", n == 2)).provideLayer(pool())
+          yield assertTrue(a.body.text.is(_.some) == "ok", b.body.text.is(_.some) == "ok", n == 2)).provideLayer(pool())
         }
       }
     },
@@ -101,7 +102,10 @@ object ClientPoolSpec extends ZIOSpecDefault:
       val big    = "x" * (3 * 1024 * 1024 + 17)
       val routes = Routes(Method.GET / "big" -> Handler.text(big))
       LiveServer(routes) { base =>
-        Client.batched(Request.get(s"$base/big")).provideLayer(pool()).map(res => assertTrue(res.body.asString == big))
+        Client
+          .batched(Request.get(s"$base/big"))
+          .provideLayer(pool())
+          .map(res => assertTrue(res.body.text.is(_.some) == big))
       }
     },
     test("a peer that never answers is ReadTimeout after idleTimeout") {

@@ -64,7 +64,7 @@ object OpArgsSpec extends ZIOSpecDefault:
               req.method == Method.POST,
               req.path.render == "/items/7",
               req.query.get("q").contains("x"),
-              req.body.asString.contains("ada"),
+              req.body.text.is(_.some).contains("ada"),
             )
       ,
       test("GET with JSON out is promotable; SSE is not"):

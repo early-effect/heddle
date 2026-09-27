@@ -158,10 +158,10 @@ object OpArgs:
         Left(s"${doc.toolName}: non-JSON body has no argument form")
       case Some(media) =>
         val (inner, _) = media.schema.unwrapOptional
-        req.body match
-          case Body.Stream(_, _, _) => Left(s"${doc.toolName}: a streamed body has no argument form")
-          case other                =>
-            other.asString.fromJson[Json].map { json =>
+        req.body.text match
+          case None      => Left(s"${doc.toolName}: a streamed body has no argument form")
+          case Some(raw) =>
+            raw.fromJson[Json].map { json =>
               (doc.nestBody, inner, json) match
                 case (false, SchemaDoc.Object(_, _, _), obj: Json.Obj) => obj.fields.toList
                 case _                                                 => List(bodyName(inner) -> json)

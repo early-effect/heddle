@@ -85,7 +85,7 @@ object Main extends ZIOAppDefault:
       Method.GET / "preview" / "preview.css" -> handler(file(dir.resolve("preview.css"))),
       Method.GET / "__preview" / "reload"    -> handler {
         Sse.session { w =>
-          w.send(ServerSentEvent("ok", event = Some("reload"))) *> ZIO.never
+          w.send(ServerSentEvent("ok", event = Some(SseField("reload")))) *> ZIO.never
         }
       },
       Method.GET / "session" -> handler {

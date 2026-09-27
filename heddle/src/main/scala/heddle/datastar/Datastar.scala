@@ -1,7 +1,7 @@
 package heddle.datastar
 
 import heddle.*
-import heddle.sse.{ServerSentEvent, Sse}
+import heddle.sse.{ServerSentEvent, Sse, SseField}
 import zio.*
 
 enum ElementPatchMode:
@@ -61,8 +61,8 @@ object ServerSentEventGenerator:
     opt.selector.foreach(s => lines += s"selector $s")
     if opt.mode != ElementPatchMode.Outer then lines += s"mode ${opt.mode.wire}"
     html.split("\n", -1).foreach(line => lines += s"elements $line")
-    ServerSentEvent(lines.result().mkString("\n"), Some("datastar-patch-elements"))
+    ServerSentEvent(lines.result().mkString("\n"), Some(SseField("datastar-patch-elements")))
 
   private def encodeSignals(json: String): ServerSentEvent =
-    ServerSentEvent(s"signals $json", Some("datastar-patch-signals"))
+    ServerSentEvent(s"signals $json", Some(SseField("datastar-patch-signals")))
 end ServerSentEventGenerator

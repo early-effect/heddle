@@ -13,12 +13,12 @@ object RouteSpec extends ZIOSpecDefault:
         for
           root   <- routes.runZIO(Request.get(Url.root))
           nested <- routes.runZIO(Request.get(Url.root / "assets" / "theme.css"))
-        yield assertTrue(root.body.asString == "/", nested.body.asString == "/assets/theme.css")
+        yield assertTrue(root.body.text.is(_.some) == "/", nested.body.text.is(_.some) == "/assets/theme.css")
       ,
       test("Server.run merges a matching GET into a response"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok"))
         Server.run(routes)(Request.get("/x")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
         }
       ,
       test("literal route wins over trailing"):
@@ -29,12 +29,12 @@ object RouteSpec extends ZIOSpecDefault:
         for
           sse  <- routes.runZIO(Request.get("/sse"))
           file <- routes.runZIO(Request.get("/index.html"))
-        yield assertTrue(sse.body.asString == "sse", file.body.asString == "file")
+        yield assertTrue(sse.body.text.is(_.some) == "sse", file.body.text.is(_.some) == "file")
       ,
       test("literal GET returns the handler response"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         routes(Request.get("/health")).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.asString == "ok")
+          assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
         }
       ,
       test("typed path parameter is decoded and passed to the handler"):
@@ -42,7 +42,7 @@ object RouteSpec extends ZIOSpecDefault:
           Method.GET / "users" / int("id") -> { (id: Int) => ZIO.succeed(Response.text(id.toString)) }
         )
         routes(Request.get("/users/7")).map { res =>
-          assertTrue(res.body.asString == "7")
+          assertTrue(res.body.text.is(_.some) == "7")
         }
       ,
       test("unknown path is 404"):
@@ -64,7 +64,7 @@ object RouteSpec extends ZIOSpecDefault:
         for
           a <- routes(Request.get("/a"))
           b <- routes(Request.get("/b"))
-        yield assertTrue(a.body.asString == "A", b.body.asString == "B")
+        yield assertTrue(a.body.text.is(_.some) == "A", b.body.text.is(_.some) == "B")
       ,
       test("GET and POST on the same path both match after ++"):
         val routes =
@@ -73,7 +73,7 @@ object RouteSpec extends ZIOSpecDefault:
         for
           g <- routes(Request.get("/users"))
           p <- routes(Request(Method.POST, Url.parse("/users")))
-        yield assertTrue(g.body.asString == "list", p.body.asString == "created", g.status == Status.Ok)
+        yield assertTrue(g.body.text.is(_.some) == "list", p.body.text.is(_.some) == "created", g.status == Status.Ok)
       ,
       test("++ merges Allow when neither method matches"):
         val routes =
@@ -96,7 +96,7 @@ object RouteSpec extends ZIOSpecDefault:
           }
         )
         routes(Request.get("/users/3/posts/9")).map { res =>
-          assertTrue(res.body.asString == "3:9")
+          assertTrue(res.body.text.is(_.some) == "3:9")
         }
       ,
       test("string, long, and uuid path codecs decode"):
@@ -111,7 +111,11 @@ object RouteSpec extends ZIOSpecDefault:
           s <- routes(Request.get("/s/ada"))
           n <- routes(Request.get("/n/99"))
           u <- routes(Request.get(s"/u/$id"))
-        yield assertTrue(s.body.asString == "ada", n.body.asString == "99", u.body.asString == id.toString)
+        yield assertTrue(
+          s.body.text.is(_.some) == "ada",
+          n.body.text.is(_.some) == "99",
+          u.body.text.is(_.some) == id.toString,
+        )
       ,
       test("handler receives path params and the request"):
         val routes = Routes(
@@ -121,7 +125,7 @@ object RouteSpec extends ZIOSpecDefault:
           }
         )
         routes(Request.get("/users/8?q=hi")).map { res =>
-          assertTrue(res.body.asString == "8:hi")
+          assertTrue(res.body.text.is(_.some) == "8:hi")
         }
       ,
       test("handleError turns route errors into responses"):
@@ -129,7 +133,7 @@ object RouteSpec extends ZIOSpecDefault:
           Method.GET / "x" -> { (_: Unit) => ZIO.fail("nope") }
         ).handleError(msg => Response.badRequest(msg))
         routes(Request.get("/x")).map { res =>
-          assertTrue(res.status == Status.BadRequest, res.body.asString == "nope")
+          assertTrue(res.status == Status.BadRequest, res.body.text.is(_.some) == "nope")
         }
       ,
       test("compiled path codec matches nested params in one pass"):

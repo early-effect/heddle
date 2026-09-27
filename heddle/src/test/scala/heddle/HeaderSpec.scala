@@ -134,5 +134,5 @@ object HeaderSpec extends ZIOSpecDefault:
           val bad = Headers.empty.add(HeaderName.Date, "not-a-date")
           assertTrue(ok.date.isDefined, bad.date.isEmpty),
       ),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end HeaderSpec

@@ -21,5 +21,5 @@ object UrlEncodingJvmSpec extends ZIOSpecDefault:
             UrlEncoding.decodeForm(s) == URLDecoder.decode(s, "UTF-8")
           }
         ),
-    )
+    ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
 end UrlEncodingJvmSpec
