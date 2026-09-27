@@ -1,6 +1,7 @@
 package heddle.server
 
-import heddle.error.HttpError
+import heddle.error.{HttpError, TlsError}
+import heddle.internal.Pem
 import heddle.internal.duplex.{ByteConn, NodeConn}
 import heddle.internal.node.{NodeTlsSocket, TlsOptions}
 import scala.scalajs.js
@@ -10,7 +11,7 @@ final class Tls private (private[heddle] val certPem: String, private[heddle] va
   private[heddle] def listener(
       config: heddle.Server.Config
   ): IO[heddle.error.ServerError, heddle.internal.duplex.Listener] =
-    heddle.internal.duplex.TlsListener.bind(config, certPem, keyPem)
+    heddle.internal.duplex.NodeListener.tls(config, certPem, keyPem)
 
   private[heddle] def server(conn: ByteConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
     conn match
@@ -48,5 +49,9 @@ end Tls
 object Tls:
   private[heddle] final class Session(val conn: ByteConn, val applicationProtocol: String)
 
-  def pem(certPem: String, keyPem: String): ZLayer[Any, HttpError, Tls] =
-    ZLayer.succeed(Tls(certPem, keyPem))
+  /** Node parses the PEM at handshake time, so the blocks are checked here to fail at startup instead. */
+  def pem(certPem: String, keyPem: String): ZLayer[Any, TlsError, Tls] =
+    ZLayer.fromZIO(
+      (ZIO.fromEither(Pem.body(certPem, "CERTIFICATE")) *> ZIO.fromEither(Pem.body(keyPem, "PRIVATE KEY")))
+        .as(Tls(certPem, keyPem))
+    )

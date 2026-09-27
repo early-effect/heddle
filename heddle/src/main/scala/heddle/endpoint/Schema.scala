@@ -121,7 +121,7 @@ object Schema:
   private inline def leafLabels[H, L]: List[String] =
     summonFrom {
       case m: Mirror.SumOf[H] => leafLabelsOf[m.MirroredElemTypes, m.MirroredElemLabels].flatten
-      case _                  => List(constValue[L].asInstanceOf[String])
+      case _                  => List(constValue[L].toString)
     }
 
   private inline def wrappedOf[T <: Tuple, L <: Tuple]: List[SchemaDoc] =
@@ -133,14 +133,14 @@ object Schema:
     summonFrom {
       case m: Mirror.SumOf[H] => SchemaDoc.OneOf(None, wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels])
       case _                  =>
-        val label = constValue[L].asInstanceOf[String]
+        val label = constValue[L].toString
         SchemaDoc.Object(None, List(SchemaField(label, schemaOf[H].doc, optional = false)), List(label))
     }
 
   private inline def labelsOf[T <: Tuple]: List[String] =
     inline erasedValue[T] match
       case _: EmptyTuple => Nil
-      case _: (h *: t)   => constValue[h].asInstanceOf[String] :: labelsOf[t]
+      case _: (h *: t)   => constValue[h].toString :: labelsOf[t]
 
   private inline def schemasOf[T <: Tuple]: List[Schema[?]] =
     inline erasedValue[T] match

@@ -12,6 +12,9 @@ trait FsStats extends js.Object:
   val mtimeMs: Double        = js.native
 end FsStats
 
+/** `throwIfNoEntry = false` makes `statSync` return `undefined` for a missing path instead of throwing. */
+class StatOptions(val throwIfNoEntry: Boolean) extends js.Object
+
 class ReadStreamOptions(
     var start: js.UndefOr[Double] = js.undefined,
     var end: js.UndefOr[Double] = js.undefined,
@@ -27,6 +30,7 @@ trait ReadStream extends js.Object:
 private[heddle] object Fs extends js.Object:
   def readFileSync(path: String): Uint8Array                                 = js.native
   def statSync(path: String): FsStats                                        = js.native
+  def statSync(path: String, options: StatOptions): js.UndefOr[FsStats]      = js.native
   def writeFileSync(path: String, data: Uint8Array): Unit                    = js.native
   def createReadStream(path: String, options: ReadStreamOptions): ReadStream = js.native
 end Fs

@@ -127,11 +127,11 @@ object HeaderName:
     else
       val bucket = byLength(n)
       var i      = 0
-      while i < bucket.length do
-        if Ascii.eqIgnoreCase(raw, from, until, bucket(i).render) then return bucket(i)
-        i += 1
-      val render = Ascii.string(raw, from, until)
-      new HeaderName(render, asciiLower(render))
+      while i < bucket.length && !Ascii.eqIgnoreCase(raw, from, until, bucket(i).render) do i += 1
+      if i < bucket.length then bucket(i)
+      else
+        val render = Ascii.string(raw, from, until)
+        new HeaderName(render, asciiLower(render))
     end if
   end intern
 

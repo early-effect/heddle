@@ -30,9 +30,8 @@ private[heddle] object PathMacros:
   private def registerLits(parts: List[Part])(using Quotes): Expr[Unit] =
     val regs = parts.collect { case Part.Lit(v) => '{ PathLits.register(${ Expr(v) }) } }
     regs match
-      case Nil      => '{ () }
-      case r :: Nil => r
-      case rs       => rs.reduce((a, b) => '{ $a; $b })
+      case Nil          => '{ () }
+      case first :: all => all.foldLeft(first)((a, b) => '{ $a; $b })
 
   private def segExpr(part: Part)(using Quotes): Expr[Seg] =
     part match

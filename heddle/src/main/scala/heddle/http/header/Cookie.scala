@@ -59,39 +59,32 @@ final case class SetCookie(
 
 object SetCookie:
   def parse(raw: String): Option[SetCookie] =
-    val parts = raw.split(';').toList.map(_.trim).filter(_.nonEmpty)
-    parts.headOption.flatMap { first =>
-      val eq = first.indexOf('=')
-      if eq <= 0 then None
-      else
-        val name                       = first.substring(0, eq).trim
-        val value                      = CookiePair.unquote(first.substring(eq + 1).trim)
-        var domain: Option[String]     = None
-        var path: Option[String]       = None
-        var maxAge: Option[Long]       = None
-        var expires: Option[Instant]   = None
-        var secure                     = false
-        var httpOnly                   = false
-        var sameSite: Option[SameSite] = Option.empty
-        parts.tail.foreach { attr =>
-          val aeq    = attr.indexOf('=')
-          val (k, v) =
-            if aeq < 0 then (attr, "")
-            else (attr.substring(0, aeq).trim, CookiePair.unquote(attr.substring(aeq + 1).trim))
-          k.toLowerCase match
-            case "domain"   => domain = Some(v)
-            case "path"     => path = Some(v)
-            case "max-age"  => maxAge = v.toLongOption
-            case "expires"  => expires = HttpDate.parse(v)
-            case "secure"   => secure = true
-            case "httponly" => httpOnly = true
-            case "samesite" => sameSite = SameSite.parse(v)
-            case _          => ()
+    raw.split(';').toList.map(_.trim).filter(_.nonEmpty) match
+      case Nil            => None
+      case first :: attrs =>
+        val eq = first.indexOf('=')
+        Option.when(eq > 0) {
+          val base = SetCookie(first.substring(0, eq).trim, CookiePair.unquote(first.substring(eq + 1).trim))
+          attrs.foldLeft(base)(attribute)
         }
-        Some(SetCookie(name, value, domain, path, maxAge, expires, secure, httpOnly, sameSite))
-      end if
-    }
   end parse
+
+  /** An unknown attribute is ignored, and a malformed date or age is absent, as RFC 6265 §5.2 asks. */
+  private def attribute(cookie: SetCookie, attr: String): SetCookie =
+    val aeq    = attr.indexOf('=')
+    val (k, v) =
+      if aeq < 0 then (attr, "")
+      else (attr.substring(0, aeq).trim, CookiePair.unquote(attr.substring(aeq + 1).trim))
+    k.toLowerCase match
+      case "domain"   => cookie.copy(domain = Some(v))
+      case "path"     => cookie.copy(path = Some(v))
+      case "max-age"  => cookie.copy(maxAge = v.toLongOption)
+      case "expires"  => cookie.copy(expires = HttpDate.parse(v))
+      case "secure"   => cookie.copy(secure = true)
+      case "httponly" => cookie.copy(httpOnly = true)
+      case "samesite" => cookie.copy(sameSite = SameSite.parse(v))
+      case _          => cookie
+  end attribute
 
   def render(cookie: SetCookie): String =
     val b = StringBuilder(quotePair(cookie.name, cookie.value))

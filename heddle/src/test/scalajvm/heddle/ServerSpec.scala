@@ -1,6 +1,7 @@
 package heddle
 
 import BytesLength.*
+import heddle.server.{OutOfRange, Setting}
 import java.io.{ByteArrayOutputStream, InputStream}
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -214,10 +215,10 @@ object ServerSpec extends ZIOSpecDefault:
           }
           .provide(ZLayer.succeed(LiveServer.local))
       ,
-      test("install fails with BindFailed when the port is out of range"):
+      test("install refuses an out-of-range port before it binds"):
         val config = LiveServer.local.copy(port = -1)
-        ZIO.scoped(Server.install(Routes.empty, config)).flip.map { case ServerError.BindFailed(host, port, _) =>
-          assertTrue(host == config.host, port == -1)
+        ZIO.scoped(Server.install(Routes.empty, config)).flip.map { err =>
+          assertTrue(err == ServerError.InvalidConfig(NonEmptyChunk(OutOfRange(Setting.Port, -1, 0, 65535))))
         }
       ,
       test("install fails with BindFailed when the address is in use"):
@@ -227,8 +228,9 @@ object ServerSpec extends ZIOSpecDefault:
             server <- Server.install(Routes.empty, config)
             port   <- server.port
             err    <- Server.install(Routes.empty, config.copy(port = port)).flip
-          yield err match
-            case ServerError.BindFailed(host, bound, _) => assertTrue(host == config.host, bound == port)
+          yield assertTrue(err match
+            case ServerError.BindFailed(host, bound, _) => host == config.host && bound == port
+            case _                                      => false)
         }
       ,
       test("closing the scope unbinds the port"):

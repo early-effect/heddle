@@ -1,6 +1,7 @@
 package heddle
 
-import heddle.internal.duplex.NativeListener
+import heddle.error.HttpError
+import heddle.internal.duplex.{AcceptError, ByteConn, Listener, NativeListener}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import scala.scalanative.meta.LinktimeInfo
@@ -72,14 +73,13 @@ object NativeAcceptSpec extends ZIOSpecDefault:
 
   private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 0)
 
-  private def serveOnce(listener: heddle.internal.duplex.Listener): Task[Unit] =
+  private def serveOnce(listener: Listener): IO[AcceptError | HttpError | Throwable, Unit] =
     listener.accept.flatMap(serveConn)
 
-  private def serveConn(conn: heddle.internal.duplex.ByteConn): Task[Unit] =
+  private def serveConn(conn: ByteConn): IO[HttpError | Throwable, Unit] =
     val buf = ByteBuffer.allocate(1024)
     conn
       .read(buf)
-      .mapError(e => java.io.IOException(e.message))
       .flatMap { _ =>
         val res = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
         conn.write(Chunk.fromArray(res.getBytes(StandardCharsets.US_ASCII)))

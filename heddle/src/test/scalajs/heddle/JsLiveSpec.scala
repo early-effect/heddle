@@ -80,7 +80,7 @@ object JsLiveSpec extends ZIOSpecDefault:
         ZIO.scoped {
           Server
             .install(routes, local)
-            .provideSomeLayer[Scope](Tls.pem(JsTls.certPem, JsTls.keyPem))
+            .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap { server =>
               server.port.flatMap { port =>
                 tlsGet(port, "/health").map { body =>

@@ -17,8 +17,7 @@ object ApiSpec extends ZIOSpecDefault:
         for res <- api.routes(Request.get("/items/7"))
         yield assertTrue(
           res.status == Status.Ok,
-          api.openApi.endpoints.length == 1,
-          api.openApi.endpoints.head.promoted,
+          api.openApi.endpoints.map(_.promoted).toList == List(true),
           api.openApi.title == "Shop",
         )
       ,
@@ -59,12 +58,11 @@ object ApiSpec extends ZIOSpecDefault:
       test("resource unpromotes an endpoint that was marked .mcp"):
         val ep  = Endpoint.get("items" / int("id")).out[Item].mcp("get_item")
         val api = Api("Shop", "1.0.0").resource(ep)(id => ZIO.succeed(Item(id, "x")))
-        assertTrue(api.openApi.endpoints.head.promoted == false)
+        assertTrue(api.openApi.endpoints.map(_.promoted).toList == List(false))
       ,
       test("job of an already-promoted endpoint keeps the mcp name"):
         val ep  = Endpoint.get("items" / int("id")).out[Item].mcp("get_item")
         val api = Api("Shop", "1.0.0").job(ep)(id => ZIO.succeed(Item(id, "x")))
-        val d   = api.openApi.endpoints.head
-        assertTrue(d.promoted, d.toolName == "get_item"),
+        assertTrue(api.openApi.endpoints.map(d => (d.promoted, d.toolName)).toList == List((true, "get_item"))),
     ) @@ TestAspect.timeout(5.seconds)
 end ApiSpec

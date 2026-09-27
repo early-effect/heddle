@@ -80,15 +80,16 @@ private[heddle] object Hpack:
       val first = (raw(from) & 0xff) & max
       if first < max then (first, from + 1)
       else
-        var i   = from + 1
-        var m   = 0
-        var acc = first
-        while i < raw.length do
+        var i    = from + 1
+        var m    = 0
+        var acc  = first
+        var more = true
+        while more && i < raw.length do
           val b = raw(i) & 0xff
           acc += (b & 0x7f) << m
           i += 1
           m += 7
-          if (b & 0x80) == 0 then return (acc, i)
+          more = (b & 0x80) != 0
         (acc, i)
       end if
 

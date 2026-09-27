@@ -23,6 +23,14 @@ lazy val nativeOpenssl: Seq[sbt.Setting[?]] = {
   )
 }
 
+/** Sources the JVM and Native builds share: both have `java.nio` files and blocking reads. */
+lazy val jvmNativeShared: Seq[sbt.Setting[?]] =
+  Seq(
+    Compile / unmanagedSourceDirectories += Def.uncached(
+      projectMatrixBaseDirectory.value / "src" / "main" / "scalajvmnative"
+    )
+  )
+
 MyVersions.settings
 HeddleZipx.settings
 
@@ -103,14 +111,17 @@ lazy val heddle = (projectMatrix in file("heddle"))
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
   )
-  .jvmPlatform(scalaVersions = scalaVersions)
+  .jvmPlatform(scalaVersions = scalaVersions, jvmNativeShared)
   .jsPlatform(
     scalaVersions = scalaVersions,
     MyVersions.jsRuntime ++ Seq(
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+  .nativePlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl ++ jvmNativeShared,
+  )
 
 lazy val brotli = (projectMatrix in file("brotli"))
   .dependsOn(heddle % "compile->compile;test->test")

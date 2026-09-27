@@ -32,6 +32,16 @@ trait NetServer extends js.Object:
   val listening: Boolean                                                 = js.native
 end NetServer
 
+extension (server: NetServer)
+  /** The bound TCP port, or 0 before `listen` completes. A native JS trait cannot be type-tested, so narrowing the
+    * facade's union is a cast here and nowhere else.
+    */
+  private[heddle] def boundPort: Int =
+    server.address() match
+      case null      => 0
+      case _: String => 0
+      case info      => info.asInstanceOf[AddressInfo].port
+
 @js.native
 @JSImport("node:net", JSImport.Namespace)
 private[heddle] object Net extends js.Object:

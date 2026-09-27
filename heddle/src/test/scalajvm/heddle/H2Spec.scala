@@ -103,7 +103,7 @@ object H2Spec extends ZIOSpecDefault:
             val body  = datas.mkString
             assertTrue(
               datas.count(_.nonEmpty) == 2,
-              datas.last.isEmpty,
+              datas.lastOption.exists(_.isEmpty),
               body.contains("data: a"),
               body.contains("data: b"),
             )

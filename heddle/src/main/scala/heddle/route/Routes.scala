@@ -18,18 +18,10 @@ abstract class Routes[-R, +E]:
     middleware(this)
 
   def handleError(f: E => Response): Routes[R, Nothing] =
-    Routes.fromChunk(
-      toChunk.map { route =>
-        route.copy(run = (a, req) => route.run(a, req).catchAll(e => ZIO.succeed(f(e))))
-      }
-    )
+    Routes.fromChunk(toChunk.map(_.catchAll(e => ZIO.succeed(f(e)))))
 
   def handleErrorZIO[R1 <: R](f: E => ZIO[R1, Nothing, Response]): Routes[R1, Nothing] =
-    Routes.fromChunk(
-      toChunk.map { route =>
-        route.copy(run = (a, req) => route.run(a, req).catchAll(f))
-      }
-    )
+    Routes.fromChunk(toChunk.map(_.catchAll(f)))
 end Routes
 
 object Routes:
@@ -81,16 +73,17 @@ object Routes:
     def apply(request: Request): ZIO[R, E, Response] = dispatch(request)
 
   extension [R, E](self: Routes[R, E])
-    def provided[P: Tag, R0](extract: Request => ZIO[R0, Response, P]): Routes[R0, E] =
+    /** Runs `extract` first and hands its `P` to the routes, which then need only `R0`. A failed extract is the
+      * response. `covers` is the compiler's proof that `P` and `R0` together are everything the routes need.
+      */
+    def provided[P: Tag, R0](extract: Request => ZIO[R0, Response, P])(using
+        covers: (R0 & P) <:< R
+    ): Routes[R0, E] =
       fromHandler(
         Handler { req =>
           extract(req).foldZIO(
             res => ZIO.succeed(res),
-            p =>
-              self
-                .apply(req)
-                .asInstanceOf[ZIO[P & R0, E, Response]]
-                .provideSomeEnvironment[R0](_ ++ ZEnvironment(p)),
+            p => self(req).provideSomeEnvironment[R0](env => covers.liftCo[ZEnvironment](env ++ ZEnvironment(p))),
           )
         }
       )
@@ -105,13 +98,8 @@ private[heddle] object Dispatch:
       if found.isEmpty then ZIO.succeed(Response.notFound())
       else
         found.find(_.method == req.method) match
-          case Some(route) =>
-            if route.path.isLiteral then route.run((), req)
-            else
-              route.path.matches(req.path) match
-                case Some(a) => route.run(a, req)
-                case None    => ZIO.succeed(Response.notFound())
-          case None =>
+          case Some(route) => route.dispatch(req).getOrElse(ZIO.succeed(Response.notFound()))
+          case None        =>
             val allow = found.map(_.method).distinct.map(_.render).mkString(", ")
             ZIO.succeed(Response.methodNotAllowed(allow))
       end if
@@ -127,50 +115,46 @@ private[heddle] object Dispatch:
       val here =
         if from >= parts.length then terminals
         else
-          val head = parts(from)
-          val lit  = literals.get(head)
-          val vari = variable
-          if vari.isEmpty then
-            lit match
-              case Some(n) => n.lookup(parts, from + 1)
-              case None    => Chunk.empty
-          else if lit.isEmpty then vari.get.lookup(parts, from + 1)
-          else lit.get.lookup(parts, from + 1) ++ vari.get.lookup(parts, from + 1)
+          (literals.get(parts(from)), variable) match
+            case (Some(lit), Some(vari)) => lit.lookup(parts, from + 1) ++ vari.lookup(parts, from + 1)
+            case (Some(lit), None)       => lit.lookup(parts, from + 1)
+            case (None, Some(vari))      => vari.lookup(parts, from + 1)
+            case (None, None)            => Chunk.empty
       here ++ rest
     end lookup
   end Node
 
   private object Node:
     def build[R, E](routes: Chunk[Route[R, E]]): Node[R, E] =
-      val root = MNode()
+      val root = MNode[R, E]()
       routes.foreach { route =>
-        var cur  = root
-        var rest = false
-        route.path.segments.foreach {
-          case Seg.Lit(value) =>
-            cur = cur.literals.getOrElseUpdate(value, MNode())
-          case Seg.Var(_, _) =>
-            cur = cur.variable.getOrElse {
-              val child = MNode()
-              cur.variable = Some(child)
-              child
-            }
-          case Seg.Rest =>
-            cur.rest += route.asInstanceOf[Route[Any, Any]]
-            rest = true
+        val (at, trailing) = route.path.segments.foldLeft((root, false)) { case ((cur, trailing), seg) =>
+          seg match
+            case Seg.Lit(value) => (cur.literals.getOrElseUpdate(value, MNode()), trailing)
+            case Seg.Var(_, _)  => (cur.child, trailing)
+            case Seg.Rest       =>
+              cur.rest += route
+              (cur, true)
         }
-        if !rest then cur.terminals += route.asInstanceOf[Route[Any, Any]]
+        if !trailing then at.terminals += route
       }
-      root.freeze.asInstanceOf[Node[R, E]]
+      root.freeze
     end build
 
-    private final class MNode:
-      val literals: mutable.Map[String, MNode]            = mutable.Map.empty
-      var variable: Option[MNode]                         = None
-      val terminals: mutable.ArrayBuffer[Route[Any, Any]] = mutable.ArrayBuffer.empty
-      val rest: mutable.ArrayBuffer[Route[Any, Any]]      = mutable.ArrayBuffer.empty
+    private final class MNode[R, E]:
+      val literals: mutable.Map[String, MNode[R, E]]  = mutable.Map.empty
+      val terminals: mutable.ArrayBuffer[Route[R, E]] = mutable.ArrayBuffer.empty
+      val rest: mutable.ArrayBuffer[Route[R, E]]      = mutable.ArrayBuffer.empty
+      private var variable: Option[MNode[R, E]]       = None
 
-      def freeze: Node[Any, Any] =
+      def child: MNode[R, E] =
+        variable.getOrElse {
+          val made = MNode[R, E]()
+          variable = Some(made)
+          made
+        }
+
+      def freeze: Node[R, E] =
         Node(
           literals = literals.iterator.map((k, v) => k -> v.freeze).toMap,
           variable = variable.map(_.freeze),

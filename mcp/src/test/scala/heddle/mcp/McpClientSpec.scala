@@ -19,8 +19,8 @@ object McpClientSpec extends ZIOSpecDefault:
 
   private val board = ServedResource.text(Resource("ui://shop/board", "board"), "<p>hi</p>")
 
-  private val server: Mcp[Any] =
-    Mcp.from(api).flatMap(_.withResources(board)).toOption.get
+  private val server: IO[NonEmptyChunk[McpBuildError], Mcp[Any]] =
+    ZIO.fromEither(Mcp.from(api).flatMap(_.withResources(board)))
 
   private val settings = McpClient.Settings(Implementation("spec", "0.0.1"))
 
@@ -28,7 +28,7 @@ object McpClientSpec extends ZIOSpecDefault:
     McpClient.http("http://mcp.test/mcp", settings).provideSome[Scope](Client.inMemory(routes))
 
   /** A 2025-only server: it does not know `server/discover`. */
-  private val sessionOnly: Routes[Any, Nothing] =
+  private def sessionOnly(server: Mcp[Any]): Routes[Any, Nothing] =
     Routes.fromHandler(Handler { (req: Request) =>
       req.body.utf8.orDie.flatMap { raw =>
         val decoded = raw.fromJson[Json].toOption.flatMap(Message.decode(_).toOption)
@@ -65,12 +65,14 @@ object McpClientSpec extends ZIOSpecDefault:
     suite("over HTTP")(
       test("negotiates 2026-07-28 and learns who the server is"):
         ZIO.scoped(
-          overHttp(server.routes).map(s => assertTrue(s.era == Era.Stateless, s.server.exists(_.name == "Shop")))
+          server
+            .flatMap(m => overHttp(m.routes))
+            .map(s => assertTrue(s.era == Era.Stateless, s.server.exists(_.name == "Shop")))
         )
       ,
       test("falls back to a 2025-11-25 session when the server does not know server/discover"):
         ZIO.scoped {
-          overHttp(sessionOnly).flatMap { s =>
+          server.flatMap(m => overHttp(sessionOnly(m))).flatMap { s =>
             s.listTools.map(tools => assertTrue(s.era == Era.Session, tools.exists(_.name.value == "get_items_id")))
           }
         }
@@ -78,7 +80,7 @@ object McpClientSpec extends ZIOSpecDefault:
       test("lists tools and resources, and reads a resource"):
         ZIO.scoped {
           for
-            s         <- overHttp(server.routes)
+            s         <- server.flatMap(m => overHttp(m.routes))
             tools     <- s.listTools
             resources <- s.listResources
             read      <- s.readResource("ui://shop/board")
@@ -92,7 +94,7 @@ object McpClientSpec extends ZIOSpecDefault:
       test("a typed call returns the endpoint's output, a wrapped one included"):
         ZIO.scoped {
           for
-            s    <- overHttp(server.routes)
+            s    <- server.flatMap(m => overHttp(m.routes))
             item <- s.call(getItem)(1)
             hi   <- s.call(greet)("ada")
           yield assertTrue(item == Item(1, "ada"), hi == "hi ada")
@@ -100,14 +102,14 @@ object McpClientSpec extends ZIOSpecDefault:
       ,
       test("a typed call's declared error comes back as Domain"):
         ZIO.scoped {
-          overHttp(server.routes).flatMap(_.call(getItem)(9).flip).map { failure =>
+          server.flatMap(m => overHttp(m.routes)).flatMap(_.call(getItem)(9).flip).map { failure =>
             assertTrue(failure == McpCallFailure.Domain("no item 9"))
           }
         }
       ,
       test("an unknown uri is a typed JSON-RPC error"):
         ZIO.scoped {
-          overHttp(server.routes).flatMap(_.readResource("ui://shop/nope").flip).map { e =>
+          server.flatMap(m => overHttp(m.routes)).flatMap(_.readResource("ui://shop/nope").flip).map { e =>
             assertTrue(e match
               case McpError.Rpc(_: RpcError.ResourceNotFound) => true
               case _                                          => false)
@@ -118,14 +120,14 @@ object McpClientSpec extends ZIOSpecDefault:
       test("the same server answers over stdio framing"):
         ZIO.scoped {
           for
-            s    <- overPipe(end => server.stdio(end).orDie)
+            s    <- server.flatMap(m => overPipe(end => m.stdio(end).orDie))
             item <- s.call(getItem)(1)
           yield assertTrue(s.era == Era.Stateless, item == Item(1, "ada"))
         }
       ,
       test("concurrent calls each get their own answer"):
         ZIO.scoped {
-          overPipe(end => server.stdio(end).orDie).flatMap { s =>
+          server.flatMap(m => overPipe(end => m.stdio(end).orDie)).flatMap { s =>
             ZIO.foreachPar(Chunk.range(0, 24))(n => s.call(greet)(s"n$n").map(n -> _)).map { out =>
               assertTrue(out.forall((n, hi) => hi == s"hi n$n"))
             }
@@ -138,7 +140,8 @@ object McpClientSpec extends ZIOSpecDefault:
             val shuffler: LinePipe => UIO[Unit] = pipe =>
               for
                 disc <- pipe.readLine.orDie.some.orDieWith(_ => RuntimeException("no discover"))
-                _    <- pipe.writeLine(resultFor(disc.fromJson[Json.Obj].toOption.get, Json.Obj()).toJson).orDie
+                msg  <- ZIO.fromEither(disc.fromJson[Json.Obj]).orDieWith(RuntimeException(_))
+                _    <- pipe.writeLine(resultFor(msg, Json.Obj()).toJson).orDie
                 reqs <- ZIO.foreach(Chunk.range(0, n))(_ =>
                   pipe.readLine.orDie.map(_.flatMap(_.fromJson[Json.Obj].toOption))
                 )

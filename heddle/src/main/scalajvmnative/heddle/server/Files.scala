@@ -1,5 +1,6 @@
 package heddle.server
 
+import heddle.error.FileError
 import heddle.http.{Body, MediaType, Request, Response, Status}
 import heddle.http.header.{ByteRange, ContentRange, EntityTag, HeaderName}
 import java.nio.channels.FileChannel
@@ -8,13 +9,13 @@ import zio.*
 import zio.stream.ZStream
 
 object Files:
-  def fromPath(path: String): Task[Response] =
-    fromPath(Path.of(path))
+  def fromPath(path: String): IO[FileError, Response] =
+    ZIO.attempt(Path.of(path)).mapError(FileError.Unreadable(path, _)).flatMap(fromPath)
 
-  def fromPath(path: Path): Task[Response] =
+  def fromPath(path: Path): IO[FileError, Response] =
     serveFile(path, None)
 
-  def fromPath(path: Path, request: Request): Task[Response] =
+  def fromPath(path: Path, request: Request): IO[FileError, Response] =
     serveFile(path, Some(request))
 
   def fromDirectory(
@@ -22,15 +23,18 @@ object Files:
       urlPrefix: String,
       request: Request,
       indexHtml: Boolean,
-  ): Task[Option[Response]] =
-    fromDirectory(Path.of(root), urlPrefix, request, indexHtml)
+  ): IO[FileError, Option[Response]] =
+    ZIO
+      .attempt(Path.of(root))
+      .mapError(FileError.Unreadable(root, _))
+      .flatMap(fromDirectory(_, urlPrefix, request, indexHtml))
 
   def fromDirectory(
       root: Path,
       urlPrefix: String,
       request: Request,
       indexHtml: Boolean,
-  ): Task[Option[Response]] =
+  ): IO[FileError, Option[Response]] =
     ZIO
       .attemptBlocking {
         SafePath.remainder(urlPrefix, request.path).map { rest =>
@@ -46,13 +50,14 @@ object Files:
           else None
         }
       }
+      .mapError(FileError.Unreadable(root.toString, _))
       .flatMap {
         case None          => ZIO.succeed(None)
         case Some(None)    => ZIO.succeed(None)
         case Some(Some(p)) => serveFile(p, Some(request)).map(Some(_))
       }
 
-  def fromResource(name: String, request: Request): Task[Option[Response]] =
+  def fromResource(name: String, request: Request): IO[FileError, Option[Response]] =
     ZIO
       .attemptBlocking {
         SafePath.resolveUnder("", name.stripPrefix("/")) match
@@ -61,18 +66,25 @@ object Files:
             if clean.contains('\u0000') then None
             else Option(Thread.currentThread().getContextClassLoader.getResource(clean))
       }
+      .mapError(FileError.Unreadable(name, _))
       .flatMap {
         case None      => ZIO.succeed(None)
         case Some(url) =>
           url.getProtocol match
-            case "file" => serveFile(Path.of(url.toURI), Some(request)).map(Some(_))
-            case _      =>
+            case "file" =>
               ZIO
-                .attemptBlocking {
-                  val in = url.openStream()
-                  try in.readAllBytes()
-                  finally in.close()
-                }
+                .attempt(Path.of(url.toURI))
+                .mapError(FileError.Unreadable(name, _))
+                .flatMap(serveFile(_, Some(request)))
+                .map(Some(_))
+            case _ =>
+              ZIO
+                .scoped(
+                  ZIO
+                    .fromAutoCloseable(ZIO.attemptBlocking(url.openStream()))
+                    .flatMap(in => ZIO.attemptBlocking(in.readAllBytes()))
+                )
+                .mapError(FileError.Unreadable(name, _))
                 .map { bytes =>
                   val ct = MediaType.fromExtension(extension(Path.of(name)))
                   Some(
@@ -83,19 +95,34 @@ object Files:
                 }
       }
 
-  private def serveFile(path: Path, request: Option[Request]): Task[Response] =
+  private final case class Found(path: Path, size: Long, mtime: java.time.Instant, ct: MediaType, etag: EntityTag)
+
+  private def stat(path: Path): IO[FileError, Found] =
     ZIO
       .attemptBlocking {
         val p = path.toAbsolutePath.normalize()
-        if !JFiles.exists(p) then throw java.nio.file.NoSuchFileException(p.toString)
-        if JFiles.isDirectory(p) then throw java.nio.file.AccessDeniedException(p.toString, null, "is a directory")
-        val n     = JFiles.size(p)
-        val mtime = JFiles.getLastModifiedTime(p).toInstant
-        val ct    = MediaType.fromExtension(extension(p))
-        val etag  = EntityTag(s"$n-${mtime.toEpochMilli}", weak = true)
-        (p, n, mtime, ct, etag)
+        if !JFiles.exists(p) then Left(FileError.NotFound(p.toString))
+        else if JFiles.isDirectory(p) then Left(FileError.IsDirectory(p.toString))
+        else
+          val n     = JFiles.size(p)
+          val mtime = JFiles.getLastModifiedTime(p).toInstant
+          Right(
+            Found(
+              p,
+              n,
+              mtime,
+              MediaType.fromExtension(extension(p)),
+              EntityTag(s"$n-${mtime.toEpochMilli}", weak = true),
+            )
+          )
+        end if
       }
-      .map { (p, n, mtime, ct, etag) =>
+      .mapError(FileError.Unreadable(path.toString, _))
+      .flatMap(ZIO.fromEither(_))
+
+  private def serveFile(path: Path, request: Option[Request]): IO[FileError, Response] =
+    stat(path)
+      .map { case Found(p, n, mtime, ct, etag) =>
         val base = Response(Status.Ok)
           .withHeader(HeaderName.ETag, etag.render)
           .withHeader(HeaderName.LastModified, heddle.http.header.HttpDate.render(mtime))
@@ -153,10 +180,7 @@ object Files:
               java.nio.channels.Channels.newInputStream(ch)
             }
             .refineToOrDie[java.io.IOException]
-        )(in =>
-          ZIO.succeed(try in.close()
-          catch case _: Throwable => ())
-        )
+        )(in => ZIO.attempt(in.close()).ignore)
         .map(in => ZStream.fromInputStream(in, 8192).take(len))
     }
 

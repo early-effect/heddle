@@ -40,8 +40,8 @@ api
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
-              val json = out.get.toJson
+            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).some.map { out =>
+              val json = out.toJson
               json.contains("seat_the_party") &&
               json.contains("get_show") &&
               json.contains("list_shows") &&

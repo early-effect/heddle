@@ -51,7 +51,7 @@ private[heddle] object RsaPlatform:
 
   private def unsigned(n: BigInteger): Chunk[Byte] =
     val raw = n.toByteArray
-    if raw.length > 1 && raw(0) == 0 then Chunk.fromArray(raw.tail)
+    if raw.length > 1 && raw(0) == 0 then Chunk.fromArray(raw.drop(1))
     else Chunk.fromArray(raw)
 
   private def integer(bytes: Chunk[Byte]): BigInteger =

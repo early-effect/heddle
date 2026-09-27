@@ -2,7 +2,7 @@ package heddle.http
 
 import java.nio.charset.StandardCharsets
 import java.util.Arrays
-import zio.{Chunk, Ref}
+import zio.{Chunk, Ref, ZIO}
 import zio.stream.ZStream
 
 enum FormField:
@@ -29,12 +29,14 @@ object Multipart:
     ZStream.unwrap {
       Ref.make(Chunk.empty[Byte]).map { buf =>
         val live = stream.mapChunksZIO { chunk =>
-          buf.modify { acc =>
-            val (fields, rest, err) = takeComplete(acc ++ chunk, boundary, finish = false)
-            err match
-              case Some(msg) => throw IllegalArgumentException(msg)
-              case None      => (fields, rest)
-          }
+          buf
+            .modify { acc =>
+              val (fields, rest, err) = takeComplete(acc ++ chunk, boundary, finish = false)
+              err match
+                case Some(msg) => (Left(IllegalArgumentException(msg)), acc)
+                case None      => (Right(fields), rest)
+            }
+            .flatMap(ZIO.fromEither(_))
         }
         val tail = ZStream.fromZIO(buf.get).flatMap { leftover =>
           val (fields, _, err) = takeComplete(leftover, boundary, finish = true)
@@ -180,18 +182,15 @@ object Multipart:
   end param
 
   private def indexOf(hay: Array[Byte], needle: Array[Byte], from: Int): Int =
-    var i = from
-    while i <= hay.length - needle.length do
-      var j    = 0
-      var same = true
-      while same && j < needle.length do
-        if hay(i + j) != needle(j) then same = false
-        else j += 1
-      if same then return i
-      i += 1
-    -1
-  end indexOf
+    val last = hay.length - needle.length
+    var i    = from
+    while i <= last && !startsWith(hay, i, needle) do i += 1
+    if i <= last then i else -1
 
   private def startsWith(hay: Array[Byte], from: Int, needle: Array[Byte]): Boolean =
-    from >= 0 && from + needle.length <= hay.length && needle.indices.forall(j => hay(from + j) == needle(j))
+    if from < 0 || from + needle.length > hay.length then false
+    else
+      var j = 0
+      while j < needle.length && hay(from + j) == needle(j) do j += 1
+      j == needle.length
 end Multipart

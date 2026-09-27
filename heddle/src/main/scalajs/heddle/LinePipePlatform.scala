@@ -62,7 +62,7 @@ private[heddle] object LinePipePlatform:
         val raw = buf.slice(0, nl).toArray
         buf.remove(0, nl + 1)
         val line =
-          if raw.nonEmpty && raw.last == '\r' then String(raw, 0, raw.length - 1, StandardCharsets.UTF_8)
+          if raw.lastOption.contains('\r') then String(raw, 0, raw.length - 1, StandardCharsets.UTF_8)
           else String(raw, StandardCharsets.UTF_8)
         Some(line)
     end takeLine

@@ -156,7 +156,7 @@ object RouteSpec extends ZIOSpecDefault:
         val path  = Path.decode("/health")
         assertTrue(
           path.segments == Chunk("health"),
-          path.segments.head eq "health",
+          path.segments.headOption.exists(_ eq "health"),
           codec.matches(path).contains(()),
         ),
     ) @@ TestAspect.timeout(5.seconds)

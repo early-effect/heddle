@@ -2,6 +2,7 @@ package heddle.endpoint
 
 import java.nio.charset.StandardCharsets
 import heddle.http.{Body, MediaType, Response, Status}
+import scala.collection.immutable.ListMap
 import zio.Chunk
 import zio.json.JsonCodec
 
@@ -58,17 +59,19 @@ object ErrorCodec:
       s: Schema[E],
       j: JsonCodec[E],
   ): ErrorCodec[E] =
-    val table   = statuses.toArray
-    val grouped = statuses.zipWithIndex.groupBy(_._1.code)
-    val docs    = statuses.map(_.code).distinct.map { code =>
-      val ordinals = grouped(code).map(_._2)
+    val table  = statuses.toVector
+    val byCode = statuses.zipWithIndex.foldLeft(ListMap.empty[Int, (Status, List[Int])]) { case (acc, (st, i)) =>
+      acc.updated(st.code, acc.get(st.code).fold((st, List(i)))((first, is) => (first, is :+ i)))
+    }
+    val docs = byCode.values.toList.map { (status, ordinals) =>
       val variants = ordinals.map(i => s.cases.lift(i).getOrElse(s.doc)).distinct
       val schema   = variants match
         case one :: Nil => one
         case many       => SchemaDoc.OneOf(None, many)
-      jsonDoc(table(ordinals.head), schema)
+      jsonDoc(status, schema)
     }
-    ErrorCodec(e => table(ordinal(e)), Some(j), docs)
+    // Endpoint.outErrors gives every case a status, so a miss here is a heddle bug and answers 500.
+    ErrorCodec(e => table.lift(ordinal(e)).getOrElse(Status.InternalServerError), Some(j), docs)
   end cases
 
   private def jsonDoc(status: Status, schema: SchemaDoc): StatusDoc =

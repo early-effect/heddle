@@ -3,7 +3,6 @@ package heddle.client
 import heddle.client.internal.{Connector, Http1Client, Http1Conn, IoFailure}
 import heddle.http.{Request, Response}
 import heddle.internal.duplex.{ByteConn, ChannelConn, SslConn}
-import java.io.IOException
 import java.net.{InetSocketAddress, SocketTimeoutException}
 import java.nio.channels.SocketChannel
 import javax.net.ssl.{SSLContext, SSLException, SSLSocket, SNIHostName}
@@ -38,8 +37,7 @@ private[heddle] object ClientPlatform:
     val io: IoFailure = JvmIo
 
     def open(target: Target): IO[ClientError, Http1Conn] =
-      ZIO
-        .attemptBlockingInterrupt(connect(target))
+      connect(target)
         .mapError {
           case _: SocketTimeoutException => ClientError.ConnectTimeout(target.authority)
           case e: SSLException           => ClientError.Tls(target.authority, e)
@@ -47,35 +45,39 @@ private[heddle] object ClientPlatform:
         }
         .map(Http1Conn(_))
 
-    /** Blocking. Closes the channel on any failure so a refused or failed handshake never leaks a socket. */
-    private def connect(target: Target): ByteConn =
-      val ch = SocketChannel.open()
-      try
-        val ms =
-          if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
-          else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
-        ch.socket.connect(InetSocketAddress(target.authority.host, target.authority.port), ms)
-        if !target.tls then ChannelConn(ch)
-        else
-          val host = target.authority.host
-          val sock = ssl.getSocketFactory
-            .createSocket(ch.socket(), host, target.authority.port, true)
-            .asInstanceOf[SSLSocket]
-          sock.setUseClientMode(true)
-          val params = sock.getSSLParameters
-          params.setEndpointIdentificationAlgorithm("HTTPS")
-          if !isIpLiteral(host) then params.setServerNames(java.util.List.of(SNIHostName(host)))
-          sock.setSSLParameters(params)
-          sock.startHandshake()
-          SslConn(sock)
-        end if
-      catch
-        case e: Throwable =>
-          try ch.close()
-          catch case _: IOException => ()
-          throw e
-      end try
-    end connect
+    /** Closes the channel on any failure or interruption, so a refused or failed handshake never leaks a socket. */
+    private def connect(target: Target): Task[ByteConn] =
+      ZIO.attempt(SocketChannel.open()).flatMap { ch =>
+        ZIO
+          .attemptBlockingInterrupt {
+            ch.socket.connect(InetSocketAddress(target.authority.host, target.authority.port), connectMillis)
+          }
+          .zipRight(if target.tls then handshake(ch, target) else ZIO.succeed(ChannelConn(ch)))
+          .onError(_ => ZIO.attempt(ch.close()).ignore)
+      }
+
+    private def connectMillis: Int =
+      if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then 0
+      else math.max(1L, cfg.connectTimeout.toMillis).min(Int.MaxValue.toLong).toInt
+
+    private def handshake(ch: SocketChannel, target: Target): Task[ByteConn] =
+      val host = target.authority.host
+      ZIO.attempt(ssl.getSocketFactory.createSocket(ch.socket(), host, target.authority.port, true)).flatMap {
+        case sock: SSLSocket =>
+          ZIO.attemptBlockingInterrupt {
+            sock.setUseClientMode(true)
+            val params = sock.getSSLParameters
+            params.setEndpointIdentificationAlgorithm("HTTPS")
+            if !isIpLiteral(host) then params.setServerNames(java.util.List.of(SNIHostName(host)))
+            sock.setSSLParameters(params)
+            sock.startHandshake()
+            SslConn(sock)
+          }
+        case other =>
+          ZIO.attempt(other.close()).ignore *>
+            ZIO.fail(IllegalStateException(s"an SSLSocketFactory made a ${other.getClass.getName}"))
+      }
+    end handshake
   end JvmConnector
 
   private def isIpLiteral(host: String): Boolean =

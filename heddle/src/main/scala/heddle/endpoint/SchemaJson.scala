@@ -26,8 +26,8 @@ object SchemaJson:
         typed("string", format)
       case SchemaDoc.Array(items) =>
         Json.Obj("type" -> Json.Str("array"), "items" -> render(items, components, embedNamed))
-      case SchemaDoc.Object(title, _, _) if !embedNamed && title.isDefined =>
-        Json.Obj("$ref" -> Json.Str(s"#/components/schemas/${title.get}"))
+      case SchemaDoc.Object(Some(title), _, _) if !embedNamed =>
+        Json.Obj("$ref" -> Json.Str(s"#/components/schemas/$title"))
       case SchemaDoc.Object(title, fields, required) =>
         val props = Json.Obj(fields.map(f => f.name -> render(f.doc, components, embedNamed))*)
         val extra =

@@ -12,7 +12,7 @@ object JsAsyncSpec extends ZIOSpecDefault:
         JsAsync.fromPromise(js.Promise.resolve[Int](7)).map(n => assertTrue(n == 7))
       ,
       test("a rejected Promise fails with its message"):
-        val p = js.Promise.reject(js.Error("nope")).asInstanceOf[js.Promise[Int]]
+        val p: js.Promise[Int] = js.Promise.reject(js.Error("nope"))
         JsAsync.fromPromise(p).flip.map(e => assertTrue(e.getMessage.contains("nope")))
       ,
       test("each run of the effect starts the promise again"):

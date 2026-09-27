@@ -64,6 +64,8 @@ Why that split exists is on [What stays open](what-stays-open.html).
 defaults to Loom (`JvmScheduler.Loom`); `JvmScheduler.Default` still binds. JS is Node
 `net` / `tls`. Native is POSIX sockets plus OpenSSL. TLS is a compose-time layer, not a
 protocol flag: `Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
+The layer reads the PEM at startup on every platform, so a missing block is a `TlsError`
+before the first connection, not a failed handshake later.
 HTTP/2 (ALPN `h2`) is the JVM bind. JS and Native serve HTTP/1.1 on that same `Routes`
 value. Idle, header, and connection caps live on `Server.Config`. See
 [What stays open](what-stays-open.html).
@@ -128,6 +130,8 @@ codecs reject, `Unexpected` for a status the endpoint never declared. Nothing be
     section("Files and compression")(
       md"""
 A caller-given file is `Files.fromPath` (jailed under `SafePath` for directory roots).
+It fails with a `FileError` (`NotFound`, `IsDirectory`, `Unreadable`), and `toResponse` is
+the answer a client should see: 404 for the first two, 500 when the disk fails.
 Compression is `@@ Middleware.compress` (gzip in core). Add `heddle-brotli` and pass
 `Brotli.compressor` when you want `br`. Incoming `Content-Encoding` is
 `@@ Middleware.decompress(maxBytes = ...)`. Inflation stops at `maxBytes`: a small gzip bomb
@@ -144,6 +148,10 @@ gets `413` before it can fill memory, and corrupt input gets `400`.
       exampleValue {
         Brotli.encode(zio.Chunk.fromArray("hi".getBytes("UTF-8"))).nonEmpty
       }.assert(ok => assertTrue(ok)),
+      exampleZIO {
+        val routes = Routes(Method.GET / "gone" -> Handler.fromFile("/no/such/file.txt").mapError(_.toResponse))
+        routes(Request.get("/gone")).merge.map(_.status)
+      }.assert(status => assertTrue(status == Status.NotFound)),
     ),
   )
 end Http

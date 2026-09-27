@@ -138,9 +138,12 @@ object MiddlewareSpec extends ZIOSpecDefault:
         test("turns extraction failure into the error response"):
           val authed =
             Routes(Method.GET / "me" -> handler(ZIO.serviceWith[User](u => Response.text(u.name))))
-          val routes = authed.provided(_ => ZIO.fail(Response.empty(Status.Unauthorized)))
-          routes(Request.get("/me")).map { res =>
-            assertTrue(res.status == Status.Unauthorized)
+          val routes = authed.provided { req =>
+            ZIO.fromOption(req.header("X-User").map(User(_))).orElseFail(Response.empty(Status.Unauthorized))
+          }
+          (routes(Request.get("/me")) <*> routes(Request.get("/me").addHeader("X-User", "ada"))).map {
+            (anonymous, named) =>
+              assertTrue(anonymous.status == Status.Unauthorized, named.body.text.contains("ada"))
           },
       ),
       suite("debug")(

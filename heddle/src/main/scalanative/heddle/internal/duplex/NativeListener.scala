@@ -3,71 +3,55 @@ package heddle.internal.duplex
 import heddle.Server
 import heddle.error.ServerError
 import heddle.internal.posix.{AsyncFd, Net}
+import java.util.concurrent.atomic.AtomicBoolean
 import zio.*
 
+/** A listening socket whose `produce` fiber turns readiness into accepted descriptors on `inbound`. */
 private[heddle] final class NativeListener(
     listenFd: Int,
     tcpNoDelay: Boolean,
     soKeepAlive: Boolean,
-    inbound: Queue[Either[Throwable, Int]],
+    inbound: Queue[Either[AcceptError, Int]],
 ) extends Listener:
-  @volatile private var closed = false
+  private val closed = AtomicBoolean(false)
 
   def localPort: UIO[Int] = ZIO.succeed(Net.localPort(listenFd))
 
-  def acceptFd: Task[Int] =
-    inbound.take.flatMap {
-      case Left(e)   => ZIO.fail(e)
-      case Right(fd) => ZIO.succeed(fd)
-    }
+  def acceptFd: IO[AcceptError, Int] =
+    inbound.take.flatMap(ZIO.fromEither(_))
 
-  def accept: Task[ByteConn] =
+  def accept: IO[AcceptError, ByteConn] =
     acceptFd.map(NativeConn.of)
 
   def close: UIO[Unit] =
-    ZIO.succeed {
-      if !closed then
-        closed = true
-        Net.close(listenFd)
-    } *> inbound.shutdown
+    ZIO.succeed(if closed.compareAndSet(false, true) then Net.close(listenFd)) *> inbound.shutdown
+
+  private def configure(fd: Int): UIO[Unit] =
+    ZIO.attempt(Net.setTcpNoDelay(fd, tcpNoDelay)).ignore *> ZIO.attempt(Net.setKeepAlive(fd, soKeepAlive)).ignore
 
   private[duplex] def produce: UIO[Unit] =
-    def loop: UIO[Unit] =
-      ZIO.suspendSucceed {
-        if closed then ZIO.unit
-        else
-          AsyncFd
-            .readable(listenFd)
-            .foldZIO(
-              e =>
-                val err =
-                  if closed || Option(e.getMessage).contains("listener closed") then
-                    java.io.IOException("listener closed")
-                  else e
-                inbound.offer(Left(err)).unit
-              ,
-              _ =>
-                if closed then ZIO.unit
-                else
-                  ZIO.attempt(Net.accept(listenFd)).orElseSucceed(-1).flatMap { fd =>
-                    if fd < 0 then loop
-                    else
-                      try
-                        Net.setTcpNoDelay(fd, tcpNoDelay)
-                        Net.setKeepAlive(fd, soKeepAlive)
-                      catch case _: Throwable => ()
-                      inbound.offer(Right(fd)) *> loop
-                  },
-            )
-      }
-    loop
-  end produce
+    ZIO.suspendSucceed {
+      if closed.get() then ZIO.unit
+      else
+        AsyncFd
+          .readable(listenFd)
+          .foldZIO(
+            cause => inbound.offer(Left(if closed.get() then AcceptError.Closed else AcceptError.Failed(cause))).unit,
+            _ =>
+              if closed.get() then ZIO.unit
+              else
+                ZIO.attempt(Net.accept(listenFd)).option.flatMap {
+                  case Some(fd) if fd >= 0 => configure(fd) *> inbound.offer(Right(fd)) *> produce
+                  case _                   => produce
+                },
+          )
+    }
 end NativeListener
 
 object NativeListener:
   def bind(config: Server.Config): ZIO[Scope, ServerError, NativeListener] =
     for
-      inbound  <- Queue.unbounded[Either[Throwable, Int]]
+      inbound  <- Queue.unbounded[Either[AcceptError, Int]]
       listener <- ZIO
         .attempt {
           val fd = Net.listen(config.host, config.port, config.soBacklog, config.reuseAddress)

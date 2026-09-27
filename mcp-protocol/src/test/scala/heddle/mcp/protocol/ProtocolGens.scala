@@ -12,7 +12,8 @@ object ProtocolGens:
   val toolName: Gen[Any, ToolName] =
     Gen
       .stringBounded(1, 40)(Gen.oneOf(Gen.alphaNumericChar, Gen.elements('_', '-', '.')))
-      .map(s => ToolName.from(s).toOption.get)
+      .map(ToolName.from)
+      .collect { case Right(name) => name }
 
   val json: Gen[Any, Json] = Gen.suspend(jsonAt(3))
 

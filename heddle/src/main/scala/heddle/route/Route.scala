@@ -3,19 +3,33 @@ package heddle.route
 import heddle.http.{Method, Request, Response}
 import zio.*
 
-final case class Route[-R, +E](
-    method: Method,
-    path: PathCodec[?],
-    run: (Any, Request) => ZIO[R, E, Response],
-)
+/** One method and path, and what answers it. `Params` is what the path captures; `run` takes exactly that. */
+sealed trait Route[-R, +E]:
+  type Params
+  def method: Method
+  def path: PathCodec[Params]
+  def run(params: Params, request: Request): ZIO[R, E, Response]
+
+  /** The captured params when the request's path matches, then the handler. */
+  private[heddle] def dispatch(request: Request): Option[ZIO[R, E, Response]] =
+    path.literalMatch.orElse(path.matches(request.path)).map(run(_, request))
+
+  def catchAll[R1 <: R, E2](f: E => ZIO[R1, E2, Response]): Route[R1, E2] =
+    Route.from(method, path, (params, request) => run(params, request).catchAll(f))
+end Route
 
 object Route:
-  def from[A, R, E](
+  def from[A, R, E](method: Method, path: PathCodec[A], f: (A, Request) => ZIO[R, E, Response]): Route[R, E] =
+    Of(method, path, f)
+
+  private final case class Of[A, -R, +E](
       method: Method,
       path: PathCodec[A],
       f: (A, Request) => ZIO[R, E, Response],
-  ): Route[R, E] =
-    Route(method, path, (a, req) => f(a.asInstanceOf[A], req))
+  ) extends Route[R, E]:
+    type Params = A
+    def run(params: A, request: Request): ZIO[R, E, Response] = f(params, request)
+end Route
 
 final case class RoutePattern[A](method: Method, path: PathCodec[A]):
   def /(lit: String): RoutePattern[A] = copy(path = path / lit)
@@ -23,8 +37,8 @@ final case class RoutePattern[A](method: Method, path: PathCodec[A]):
   def /[B](codec: PathCodec[B]): RoutePattern[Combine[A, B]] =
     RoutePattern(method, path / codec)
 
-  def ->[R, E](h: Handler[R, E])(using A =:= Unit): Route[R, E] =
-    Route.from(method, path.asInstanceOf[PathCodec[Unit]], (_, req) => h.run(req))
+  def ->[R, E](h: Handler[R, E])(using ev: A =:= Unit): Route[R, E] =
+    Route.from(method, ev.substituteCo(path), (_, req) => h.run(req))
 
   def ->[R, E](f: A => ZIO[R, E, Response]): Route[R, E] =
     Route.from(method, path, (a, _) => f(a))

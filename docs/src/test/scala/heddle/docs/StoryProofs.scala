@@ -70,8 +70,8 @@ object StoryProofs extends ZIOSpecDefault:
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
           val call = BoxOffice.rpc(ClientRequest.CallTool(ToolName("get_show"), Json.Obj("id" -> Json.Num(1))))
-          mcp.handle(call).map { out =>
-            val json = out.get.toJson
+          mcp.handle(call).some.map { out =>
+            val json = out.toJson
             assertTrue(json.contains("Evening bill"), !json.contains("\"isError\":true"))
           }
         }
@@ -80,8 +80,8 @@ object StoryProofs extends ZIOSpecDefault:
     test("MCP ping completes"):
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-          mcp.handle(BoxOffice.rpc(ClientRequest.Ping)).map { out =>
-            assertTrue(out.get.toJson.contains("\"resultType\":\"complete\""))
+          mcp.handle(BoxOffice.rpc(ClientRequest.Ping)).some.map { out =>
+            assertTrue(out.toJson.contains("\"resultType\":\"complete\""))
           }
         }
       }
@@ -89,8 +89,8 @@ object StoryProofs extends ZIOSpecDefault:
     test("tools/list is the job set"):
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-          mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
-            val json = out.get.toJson
+          mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).some.map { out =>
+            val json = out.toJson
             assertTrue(
               json.contains("get_show"),
               json.contains("list_shows"),

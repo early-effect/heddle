@@ -1,6 +1,9 @@
 package heddle
 
-private object JsTls:
+/** A self-signed test certificate for `localhost` and 127.0.0.1, valid until 2036, and its key. Every platform's TLS
+  * specs serve and trust this one pair.
+  */
+private object TestTls:
   val certPem: String =
     """-----BEGIN CERTIFICATE-----
       |MIICyTCCAbGgAwIBAgIJAOVgapgYQ16wMA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNV
@@ -51,4 +54,4 @@ private object JsTls:
       |z1iaQCW5rtpq+cpKfaa3rc1NvA==
       |-----END PRIVATE KEY-----
       |""".stripMargin
-end JsTls
+end TestTls

@@ -89,11 +89,6 @@ object Passwords:
 end Passwords
 
 object MemoryStores:
-  def unsafeSeed(users: List[UserRecord], clients: List[ClientRecord]): ProviderStores =
-    zio.Unsafe.unsafe { implicit u =>
-      zio.Runtime.default.unsafe.run(seed(users, clients)).getOrThrowFiberFailure()
-    }
-
   def seed(users: List[UserRecord], clients: List[ClientRecord]): UIO[ProviderStores] =
     for
       u <- Ref.make(users.map(x => x.id -> x).toMap)

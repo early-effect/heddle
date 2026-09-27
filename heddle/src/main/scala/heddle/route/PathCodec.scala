@@ -65,6 +65,10 @@ final class PathCodec[A](
       i += 1
     !vars
 
+  /** A path with no captures matches exactly one request path, so its value is computed once. */
+  private[heddle] val literalMatch: Option[A] =
+    if isLiteral then extractFn(segments.collect { case Seg.Lit(v) => v }) else None
+
   def matchPath(parts: List[String]): Option[(A, List[String])] =
     if parts.length < len then None
     else

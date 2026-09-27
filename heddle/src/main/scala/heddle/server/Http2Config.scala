@@ -12,9 +12,20 @@ final case class Http2Config(
     maxHeaderListSize: BytesLength = Http2Config.defaultMaxHeaderListSize,
     maxOutstandingFrames: Int = Http2Config.defaultMaxOutstandingFrames,
 ):
-  if maxFrameSize.toInt < H2Frame.MinMaxFrameSize || maxFrameSize.toInt > H2Frame.MaxMaxFrameSize then
-    throw IllegalArgumentException(s"maxFrameSize $maxFrameSize not in 16384..16777215")
-  if maxOutstandingFrames < 1 then throw IllegalArgumentException("maxOutstandingFrames must be >= 1")
+  /** RFC 9113 §6.5.2 bounds for the settings heddle advertises, and the queue bound heddle needs. */
+  private[heddle] def outOfRange: List[OutOfRange] =
+    List(
+      OutOfRange.check(Setting.MaxConcurrentStreams, maxConcurrentStreams.toLong, 0, Int.MaxValue),
+      OutOfRange.check(Setting.InitialWindowSize, initialWindowSize.toLong, 0, Int.MaxValue),
+      OutOfRange.check(
+        Setting.MaxFrameSize,
+        maxFrameSize.toLong,
+        H2Frame.MinMaxFrameSize.toLong,
+        H2Frame.MaxMaxFrameSize.toLong,
+      ),
+      OutOfRange.check(Setting.MaxHeaderListSize, maxHeaderListSize.toLong, 0, Int.MaxValue),
+      OutOfRange.check(Setting.MaxOutstandingFrames, maxOutstandingFrames.toLong, 1, Int.MaxValue),
+    ).flatten
 end Http2Config
 
 object Http2Config:
