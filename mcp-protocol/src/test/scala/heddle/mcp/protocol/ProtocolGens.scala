@@ -48,6 +48,7 @@ object ProtocolGens:
     text.map(RpcError.InvalidParams(_)),
     text.map(RpcError.Internal(_)),
     text.map(RpcError.HeaderMismatch(_)),
+    text.map(RpcError.ResourceNotFound(_)),
     (text <*> Gen.chunkOfBounded(0, 3)(version)).map(RpcError.UnsupportedVersion(_, _)),
     (Gen.int(-31999, 31999) <*> text <*> Gen.option(obj())).map(RpcError.Other(_, _, _)),
   )

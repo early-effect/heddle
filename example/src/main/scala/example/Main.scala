@@ -43,7 +43,7 @@ object Main extends ZIOAppDefault:
       meApi  = Api("Box office", "0.1.0").resource(Endpoints.me) { _ =>
         ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
       }
-      mcp <- ZIO.fromEither(Mcp.from(public, writes)).map(_.withCatalog)
+      mcp <- ZIO.fromEither(Mcp.from(public, writes).flatMap(_.withCatalog))
       op        = Provider.routes(ProviderConfig(issuer), stores, key)
       authed    = (writes.routes ++ meApi.routes).provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
       mcpAuthed = mcp.routes.provided(

@@ -1,6 +1,7 @@
 package heddle.mcp.server
 
 import heddle.http.header.Headers
+import heddle.mcp.ServedResource
 import heddle.mcp.protocol.*
 import zio.json.*
 import zio.json.ast.Json
@@ -14,18 +15,32 @@ enum Era:
   /** 2025-11-25: `initialize`, then a session; results without the 2026 envelope. */
   case Session
 
+/** What a server offers: tools, resources, and the extensions it advertises with their settings. */
+final case class Offer[-R](
+    tools: Chunk[ToolCall[R]],
+    resources: Chunk[ServedResource[R]],
+    extensions: Map[ExtensionId, Json.Obj],
+)
+
 /** Answers MCP requests from typed messages. Transports parse bytes and pick the [[Era]]; this decides everything else,
   * and never throws or dies on what a client sends.
   */
 final class Engine[-R](
     val server: Implementation,
-    val tools: Chunk[ToolCall[R]],
+    val offer: Offer[R],
     val instructions: Option[String],
     val listTtlMs: Long,
 ):
-  private val byName: Map[ToolName, ToolCall[R]] = tools.map(t => t.tool.name -> t).toMap
+  private val byName: Map[ToolName, ToolCall[R]]    = offer.tools.map(t => t.tool.name -> t).toMap
+  private val byUri: Map[String, ServedResource[R]] = offer.resources.map(r => r.resource.uri -> r).toMap
 
-  val capabilities: Json.Obj = Json.Obj("tools" -> Json.Obj())
+  /** `tools` always; `resources` when there are any; `extensions` as `server/discover` and `initialize` send them. */
+  val capabilities: Json.Obj =
+    val resources  = Option.when(offer.resources.nonEmpty)("resources" -> Json.Obj())
+    val extensions = Option.when(offer.extensions.nonEmpty)(
+      "extensions" -> Json.Obj(Chunk.fromIterable(offer.extensions.map((id, settings) => id.value -> settings)))
+    )
+    Json.Obj(Chunk("tools" -> Json.Obj()) ++ Chunk.fromIterable(resources) ++ Chunk.fromIterable(extensions))
 
   /** Parses and answers one JSON value. Notifications and stray responses get no reply. */
   def handle(raw: Json, headers: Headers, era: Era): ZIO[R, Nothing, Option[Message]] =
@@ -76,6 +91,18 @@ final class Engine[-R](
         byName.get(name) match
           case None       => ZIO.left(RpcError.InvalidParams(s"Unknown tool: ${name.value}"))
           case Some(tool) => tool.call(args, headers).map(r => Right(Envelope.complete(encoded(r))))
+      case (ClientRequest.ListResources(_), _) =>
+        ZIO.right(listed("resources", Json.Arr(offer.resources.map(r => encoded(r.resource)))))
+      case (ClientRequest.ListResourceTemplates(_), _) =>
+        ZIO.right(listed("resourceTemplates", Json.Arr()))
+      case (ClientRequest.ReadResource(uri), _) =>
+        byUri.get(uri) match
+          case None         => ZIO.left(RpcError.ResourceNotFound(s"Resource not found: $uri"))
+          case Some(served) =>
+            served.read.fold(
+              e => Left(RpcError.Internal(s"Resource $uri is unavailable: ${e.reason}")),
+              contents => Right(Envelope.complete(encoded(ReadResourceResult(contents)))),
+            )
       case (other, _) => ZIO.left(RpcError.methodNotFound(other.method))
 
   private def discover: Json.Obj =
@@ -89,11 +116,10 @@ final class Engine[-R](
     )
 
   private def listTools: Json.Obj =
-    Envelope.complete(
-      "tools"      -> Json.Arr(tools.map(t => encoded(t.tool))),
-      "ttlMs"      -> Json.Num(listTtlMs),
-      "cacheScope" -> Json.Str("public"),
-    )
+    listed("tools", Json.Arr(offer.tools.map(t => encoded(t.tool))))
+
+  private def listed(key: String, items: Json.Arr): Json.Obj =
+    Envelope.complete(key -> items, "ttlMs" -> Json.Num(listTtlMs), "cacheScope" -> Json.Str("public"))
 
   private def encoded[A: JsonEncoder](a: A): Json.Obj =
     a.toJsonAST match
