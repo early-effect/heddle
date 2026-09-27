@@ -51,7 +51,8 @@ object Handler:
               hs.status,
               hs.headers,
               (src, send) =>
-                val sock = heddle.ws.LiveWebSocket(src, send)
+                // `WebSocket` is public and speaks `Throwable`; the wire's typed failure becomes its cause here.
+                val sock = heddle.ws.LiveWebSocket(src, c => send(c).mapError(_.asThrowable))
                 run(sock).provideEnvironment(env),
             )
           }

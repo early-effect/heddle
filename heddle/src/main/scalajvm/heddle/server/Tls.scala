@@ -15,11 +15,8 @@ import heddle.internal.engine.{ConnBuf, ConnBufPlatform}
 import zio.*
 
 final class Tls private (ctx: SSLContext):
-  private[heddle] def server(conn: ByteConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
-    conn match
-      case c: ChannelConn => wrap(c.ch, alpn)
-      case _              =>
-        ZIO.fail(HttpError.Io(IllegalArgumentException("TLS server needs a channel connection")))
+  private[heddle] def server(conn: ChannelConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
+    wrap(conn.ch, alpn)
 
   private[heddle] def wrap(ch: SocketChannel, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
     val sock = ch.socket()
@@ -56,7 +53,7 @@ object Tls:
     def src(buf: ByteBuffer): ConnBuf =
       ConnBufPlatform.inputStream(buf, socket.getInputStream, socket)
 
-    def send: Chunk[Byte] => Task[Unit] =
+    def send: heddle.internal.duplex.Sink =
       Tls.writer(socket.getOutputStream)
   end Session
 
@@ -92,13 +89,16 @@ object Tls:
         .mapError(TlsError.Unusable(_))
     yield tls
 
-  private[heddle] def writer(out: OutputStream): Chunk[Byte] => Task[Unit] =
+  /** A blocking TLS write, on the blocking pool. */
+  private[heddle] def writer(out: OutputStream): heddle.internal.duplex.Sink =
     chunk =>
-      ZIO.attempt {
-        if chunk.nonEmpty then
-          out.write(chunk.toArray)
-          out.flush()
-      }
+      ZIO
+        .attemptBlocking {
+          if chunk.nonEmpty then
+            out.write(chunk.toArray)
+            out.flush()
+        }
+        .mapError(HttpError.Io(_))
 
   private[heddle] def pull(in: InputStream, n: Int): IO[HttpError, Option[Chunk[Byte]]] =
     ZIO

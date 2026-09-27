@@ -14,6 +14,5 @@ private[heddle] object PathLits:
     ()
 
   def intern(raw: Chunk[Byte], from: Int, until: Int): String =
-    val hit = table.get(BytesView.view(raw, from, until))
-    if hit ne null then hit else Ascii.string(raw, from, until)
+    heddle.internal.JavaMaps.getOr(table, BytesView.view(raw, from, until))(Ascii.string(raw, from, until))
 end PathLits

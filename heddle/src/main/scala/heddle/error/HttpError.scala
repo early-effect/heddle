@@ -18,4 +18,10 @@ enum HttpError(val message: String) extends HeddleError:
 
   def toResponse: Option[Response] =
     status.map(s => Response.text(message, s))
+
+  /** For the APIs that speak `Throwable`: the I/O cause itself, or an exception that says what went wrong. */
+  def asThrowable: Throwable =
+    this match
+      case Io(t) => t
+      case other => java.io.IOException(other.message)
 end HttpError

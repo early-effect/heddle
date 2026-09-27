@@ -11,7 +11,7 @@ private object NativeTls:
     def localPort: UIO[Int] = plain.localPort
 
     def accept: IO[AcceptError | HttpError, ByteConn] =
-      plain.accept.flatMap(tls.server(_, Chunk.empty)).map(_.conn)
+      plain.accept.flatMap(tls.server).map(_.conn)
 
   def listener(config: Server.Config): ZIO[Scope, ServerError | TlsError, Listener] =
     for

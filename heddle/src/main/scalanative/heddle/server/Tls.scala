@@ -8,23 +8,17 @@ import heddle.internal.posix.SslIo
 import zio.*
 
 final class Tls private (ctx: Ssl.Ctx):
-  private[heddle] def server(conn: ByteConn, alpn: Chunk[String]): IO[HttpError, Tls.Session] =
-    val _ = alpn
-    conn match
-      case n: NativeConn =>
-        ZIO
-          .suspendSucceed(ZIO.fromEither(Ssl.accept(ctx, n.fd)))
-          .flatMap { session =>
-            SslIo
-              .handshake(session, accept = true, n.fd)
-              .onError(_ => ZIO.succeed(session.close()))
-              .as(Tls.Session(NativeConn.tls(n.fd, session), ""))
-          }
-          .mapError(e => HttpError.Io(e.exception))
-      case _ =>
-        ZIO.fail(HttpError.Io(IllegalArgumentException("TLS server needs a native connection")))
-    end match
-  end server
+  /** Native serves HTTP/1.1 only, so there is no ALPN to offer. */
+  private[heddle] def server(conn: NativeConn): IO[HttpError, Tls.Session] =
+    ZIO
+      .suspendSucceed(ZIO.fromEither(Ssl.accept(ctx, conn.fd)))
+      .flatMap { session =>
+        SslIo
+          .handshake(session, accept = true, conn.fd)
+          .onError(_ => ZIO.succeed(session.close()))
+          .as(Tls.Session(NativeConn.tls(conn.fd, session), ""))
+      }
+      .mapError(e => HttpError.Io(e.exception))
 end Tls
 
 object Tls:

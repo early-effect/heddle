@@ -2,8 +2,8 @@ package heddle
 
 import heddle.error.{HttpError, ServerError}
 import heddle.http.Response
-import heddle.internal.duplex.{ByteConn, Listener, NodeListener}
-import heddle.internal.engine.{ConnBuf, Http1, LiveConnections}
+import heddle.internal.duplex.{Listener, NodeConn, NodeListener}
+import heddle.internal.engine.{ConnBuf, Http1, Lifecycle, LiveConnections, Wire}
 import heddle.route.Routes
 import heddle.server.Tls
 import zio.*
@@ -27,22 +27,26 @@ private[heddle] object ServerPlatform:
     end for
   end install
 
-  private def bind(config: Server.Config, tls: Option[Tls]): IO[ServerError, Listener] =
+  /** Node terminates TLS in its own listener, so a connection arrives already decrypted. */
+  private def bind(config: Server.Config, tls: Option[Tls]): IO[ServerError, Listener[NodeConn]] =
     tls match
       case None    => NodeListener.plain(config)
       case Some(t) => t.listener(config)
 
   private def runConnection[R](
       routes: Routes[R, Response],
-      conn: ByteConn,
+      conn: NodeConn,
       config: Server.Config,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       secure: Boolean,
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
-    val src     = ConnBuf.fromConn(readBuf, conn)
-    val send    = conn.write
-    Http1.serveConnection(routes, src, send, config, takingWork, busy, secure)
+    Http1.serveConnection(
+      routes,
+      Wire(ConnBuf.fromConn(readBuf, conn), conn.write, secure),
+      config,
+      Lifecycle(takingWork, busy),
+    )
   end runConnection
 end ServerPlatform

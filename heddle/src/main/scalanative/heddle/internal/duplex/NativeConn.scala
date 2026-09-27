@@ -10,8 +10,8 @@ import zio.*
   * each park on the poller instead.
   */
 private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) extends ByteConn:
-  @volatile private var closed                = false
-  @volatile private var readTimeout: Duration = Duration.Infinity
+  private val closed      = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val readTimeout = java.util.concurrent.atomic.AtomicReference[Duration](Duration.Infinity)
 
   /** The bytes read, or `-1` at end of stream. */
   def read(dst: ByteBuffer): IO[HttpError, Int] =
@@ -32,7 +32,7 @@ private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) ex
     }
 
   /** Plain sockets block a write on writability; TLS may block it on either direction. */
-  def write(chunk: Chunk[Byte]): Task[Unit] =
+  def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
     if chunk.isEmpty then ZIO.unit
     else
       val arr                                        = chunk.toArray
@@ -40,33 +40,34 @@ private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) ex
         ssl match
           case Some(s) => s.write(arr, off, arr.length - off)
           case None    => Net.write(fd, arr, off, arr.length - off)
-      def loop(off: Int): Task[Unit] =
+      def loop(off: Int): IO[HttpError, Unit] =
         if off >= arr.length then ZIO.unit
         else
-          ZIO.suspendSucceed(ZIO.fromEither(push(off))).mapError(_.exception).flatMap {
+          ZIO.suspendSucceed(ZIO.fromEither(push(off))).mapError(e => HttpError.Io(e.exception)).flatMap {
             case Transfer.Moved(n)    => loop(off + n)
-            case Transfer.Blocked(on) => AsyncFd.ready(fd, on).mapError(_.exception) *> loop(off)
-            case Transfer.Eof         => ZIO.fail(java.io.IOException("the TLS peer closed before the write finished"))
+            case Transfer.Blocked(on) => AsyncFd.ready(fd, on).mapError(e => HttpError.Io(e.exception)) *> loop(off)
+            case Transfer.Eof         =>
+              ZIO.fail(HttpError.Io(java.io.IOException("the TLS peer closed before the write finished")))
           }
       loop(0)
 
   private def park(on: Interest): IO[HttpError, Unit] =
     val park    = AsyncFd.ready(fd, on).mapError(e => HttpError.Io(e.exception))
-    val timeout = readTimeout
+    val timeout = readTimeout.get
     if timeout == Duration.Infinity || timeout.toNanos <= 0L then park
     else park.timeoutFail(HttpError.Timeout)(timeout)
 
   def close: UIO[Unit] =
     ZIO.succeed {
-      if !closed then
-        closed = true
+      // Exactly once: a second close could hit a descriptor the kernel has since handed to another socket.
+      if closed.compareAndSet(false, true) then
         // SSL_set_fd wraps the socket in a BIO_NOCLOSE BIO: SSL_free leaves it open.
         ssl.foreach(_.close())
         Net.close(fd)
     }
 
   def setReadTimeout(d: Duration): UIO[Unit] =
-    ZIO.succeed { readTimeout = d }
+    ZIO.succeed(readTimeout.set(d))
 end NativeConn
 
 object NativeConn:

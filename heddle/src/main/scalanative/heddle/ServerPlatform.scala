@@ -2,8 +2,8 @@ package heddle
 
 import heddle.error.{HttpError, ServerError}
 import heddle.http.Response
-import heddle.internal.duplex.{ByteConn, NativeListener}
-import heddle.internal.engine.{ConnBuf, Http1, LiveConnections}
+import heddle.internal.duplex.{NativeConn, NativeListener}
+import heddle.internal.engine.{ConnBuf, Http1, Lifecycle, LiveConnections, Wire}
 import heddle.route.Routes
 import heddle.server.Tls
 import zio.*
@@ -30,25 +30,21 @@ private[heddle] object ServerPlatform:
 
   private def runConnection[R](
       routes: Routes[R, Response],
-      conn: ByteConn,
+      conn: NativeConn,
       config: Server.Config,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
+    val life    = Lifecycle(takingWork, busy)
     tls match
       case None =>
-        val src  = ConnBuf.fromConn(readBuf, conn)
-        val send = conn.write
-        Http1.serveConnection(routes, src, send, config, takingWork, busy, secure = false)
+        Http1.serveConnection(routes, Wire(ConnBuf.fromConn(readBuf, conn), conn.write, secure = false), config, life)
       case Some(t) =>
-        t.server(conn, Chunk.empty).flatMap { session =>
-          val src  = ConnBuf.fromConn(readBuf, session.conn)
-          val send = session.conn.write
-          Http1
-            .serveConnection(routes, src, send, config, takingWork, busy, secure = true)
-            .ensuring(session.conn.close)
+        t.server(conn).flatMap { session =>
+          val wire = Wire(ConnBuf.fromConn(readBuf, session.conn), session.conn.write, secure = true)
+          Http1.serveConnection(routes, wire, config, life).ensuring(session.conn.close)
         }
     end match
   end runConnection

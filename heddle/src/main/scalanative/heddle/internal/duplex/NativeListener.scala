@@ -13,7 +13,7 @@ private[heddle] final class NativeListener(
     tcpNoDelay: Boolean,
     soKeepAlive: Boolean,
     inbound: Queue[Either[AcceptError, Int]],
-) extends Listener:
+) extends Listener[NativeConn]:
   private val closed = AtomicBoolean(false)
 
   def localPort: UIO[Int] = ZIO.succeed(Net.localPort(listenFd))
@@ -21,7 +21,7 @@ private[heddle] final class NativeListener(
   def acceptFd: IO[AcceptError, Int] =
     inbound.take.flatMap(ZIO.fromEither(_))
 
-  def accept: IO[AcceptError, ByteConn] =
+  def accept: IO[AcceptError, NativeConn] =
     acceptFd.map(NativeConn.of)
 
   def close: UIO[Unit] =

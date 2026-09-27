@@ -10,10 +10,10 @@ import zio.*
 /** A Node server's connections as a pull: sockets that arrive before `accept` wait in `pending`, and `accept` calls
   * that arrive before a socket wait in `waiters`. Node runs this on one thread, so the queues need no locks.
   */
-private[heddle] final class NodeListener[S <: js.Object](server: NetServer, event: String, wrap: S => ByteConn)
-    extends Listener:
+private[heddle] final class NodeListener[S <: js.Object](server: NetServer, event: String, wrap: S => NodeConn)
+    extends Listener[NodeConn]:
   private val pending                         = mutable.Queue.empty[S]
-  private val waiters                         = mutable.Queue.empty[IO[AcceptError, ByteConn] => Unit]
+  private val waiters                         = mutable.Queue.empty[IO[AcceptError, NodeConn] => Unit]
   private var closed                          = false
   private var closeWaiter: Option[() => Unit] = None
 
@@ -37,12 +37,12 @@ private[heddle] final class NodeListener[S <: js.Object](server: NetServer, even
 
   def localPort: UIO[Int] = ZIO.succeed(server.boundPort)
 
-  def accept: IO[AcceptError, ByteConn] =
+  def accept: IO[AcceptError, NodeConn] =
     ZIO.suspendSucceed {
       if pending.nonEmpty then ZIO.succeed(wrap(pending.dequeue()))
       else if closed then ZIO.fail(AcceptError.Closed)
       else
-        ZIO.async[Any, AcceptError, ByteConn] { cb =>
+        ZIO.async[Any, AcceptError, NodeConn] { cb =>
           if pending.nonEmpty then cb(ZIO.succeed(wrap(pending.dequeue())))
           else if closed then cb(ZIO.fail(AcceptError.Closed))
           else waiters.enqueue(cb)
@@ -59,10 +59,10 @@ private[heddle] final class NodeListener[S <: js.Object](server: NetServer, even
 end NodeListener
 
 private[heddle] object NodeListener:
-  def plain(config: Server.Config): IO[ServerError, Listener] =
+  def plain(config: Server.Config): IO[ServerError, Listener[NodeConn]] =
     bind(config, Net.createServer(), "connection", NodeConn.of)
 
-  def tls(config: Server.Config, certPem: String, keyPem: String): IO[ServerError, Listener] =
+  def tls(config: Server.Config, certPem: String, keyPem: String): IO[ServerError, Listener[NodeConn]] =
     val alpn = if config.http2 then js.Array("h2", "http/1.1") else js.Array("http/1.1")
     bind(
       config,
@@ -75,9 +75,9 @@ private[heddle] object NodeListener:
       config: Server.Config,
       server: => NetServer,
       event: String,
-      wrap: S => ByteConn,
-  ): IO[ServerError, Listener] =
-    ZIO.async[Any, ServerError, Listener] { cb =>
+      wrap: S => NodeConn,
+  ): IO[ServerError, Listener[NodeConn]] =
+    ZIO.async[Any, ServerError, Listener[NodeConn]] { cb =>
       val bound = server
       bound.once(
         "error",

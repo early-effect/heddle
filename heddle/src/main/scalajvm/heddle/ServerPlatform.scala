@@ -2,8 +2,8 @@ package heddle
 
 import heddle.error.{HttpError, ServerError, WireError}
 import heddle.http.Response
-import heddle.internal.duplex.{ByteConn, ChannelListener}
-import heddle.internal.engine.{ConnBuf, Http1, LiveConnections}
+import heddle.internal.duplex.{ChannelConn, ChannelListener}
+import heddle.internal.engine.{ConnBuf, Http1, Lifecycle, LiveConnections, Wire}
 import heddle.route.Routes
 import heddle.server.Tls
 import zio.*
@@ -41,54 +41,46 @@ private[heddle] object ServerPlatform:
 
   private def runConnection[R](
       routes: Routes[R, Response],
-      conn: ByteConn,
+      conn: ChannelConn,
       config: Server.Config,
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
+    val life    = Lifecycle(takingWork, busy)
     tls match
-      case None =>
-        val src  = ConnBuf.fromConn(readBuf, conn)
-        val send = conn.write
-        serve(routes, src, send, config, takingWork, busy, secure = false)
+      case None    => serve(routes, Wire(ConnBuf.fromConn(readBuf, conn), conn.write, secure = false), config, life)
       case Some(t) =>
         val alpn = if config.http2 then Chunk("h2", "http/1.1") else Chunk("http/1.1")
         t.server(conn, alpn).flatMap { session =>
-          val src   = ConnBuf.fromConn(readBuf, session.conn)
-          val send  = session.conn.write
-          val proto = session.applicationProtocol
-          val work  =
-            if proto == "h2" && config.http2 then
-              consumePreface(src) *>
-                heddle.internal.h2.H2Connection.serve(routes, src, send, config, takingWork, busy, secure = true)
-            else Http1.serveConnection(routes, src, send, config, takingWork, busy, secure = true)
+          val wire = Wire(ConnBuf.fromConn(readBuf, session.conn), session.conn.write, secure = true)
+          val work =
+            if session.applicationProtocol == "h2" && config.http2 then
+              consumePreface(wire.src) *> heddle.internal.h2.H2Connection.serve(routes, wire, config, life)
+            else Http1.serveConnection(routes, wire, config, life)
           work.ensuring(session.conn.close)
         }
     end match
   end runConnection
 
+  /** Plain HTTP: HTTP/2 when the client opens with its preface (prior knowledge), HTTP/1.1 otherwise. */
   private def serve[R](
       routes: Routes[R, Response],
-      src: ConnBuf,
-      send: Chunk[Byte] => Task[Unit],
+      wire: Wire,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean,
+      life: Lifecycle,
   ): ZIO[R, HttpError, Unit] =
-    if !config.http2 then Http1.serveConnection(routes, src, send, config, takingWork, busy, secure)
+    if !config.http2 then Http1.serveConnection(routes, wire, config, life)
     else
       val preface = heddle.internal.h2.H2Frame.Preface
-      src.setReadTimeout(config.headerTimeout) *>
-        Server.awaitWithin(config.headerTimeout)(src.fillUntil(preface.length)).flatMap {
+      wire.src.setReadTimeout(config.headerTimeout) *>
+        Server.awaitWithin(config.headerTimeout)(wire.src.fillUntil(preface.length)).flatMap {
           case None        => ZIO.fail(HttpError.Timeout)
           case Some(avail) =>
-            if avail >= preface.length && src.hasPrefix(preface) then
-              src.takeExact(preface.length) *>
-                heddle.internal.h2.H2Connection.serve(routes, src, send, config, takingWork, busy, secure)
-            else Http1.serveConnection(routes, src, send, config, takingWork, busy, secure)
+            if avail >= preface.length && wire.src.hasPrefix(preface) then
+              wire.src.takeExact(preface.length) *> heddle.internal.h2.H2Connection.serve(routes, wire, config, life)
+            else Http1.serveConnection(routes, wire, config, life)
         }
 
   private def consumePreface(src: ConnBuf): IO[HttpError, Unit] =

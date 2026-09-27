@@ -61,13 +61,12 @@ private[heddle] object Ascii:
     else if eqIgnoreCase(raw, from, until, Accept) then Accept
     else string(raw, from, until)
 
-  /** Known values interned; unknown returns null so the caller can keep a slice. */
-  def internValue(raw: Array[Byte], from: Int, until: Int): String | Null =
-    val (a, b) = trim(raw, from, until)
-    if eqIgnoreCase(raw, a, b, Close) then Close
-    else if eqIgnoreCase(raw, a, b, KeepAlive) then KeepAlive
-    else if eqIgnoreCase(raw, a, b, Chunked) then Chunked
-    else null
+  /** The shared string for a value the engine compares by reference (`close`, `keep-alive`, `chunked`). */
+  def internValue(raw: Array[Byte], from: Int, until: Int): Option[String] =
+    if eqIgnoreCase(raw, from, until, Close) then Some(Close)
+    else if eqIgnoreCase(raw, from, until, KeepAlive) then Some(KeepAlive)
+    else if eqIgnoreCase(raw, from, until, Chunked) then Some(Chunked)
+    else None
 
   def string(raw: Chunk[Byte], from: Int, until: Int): String =
     val len = until - from

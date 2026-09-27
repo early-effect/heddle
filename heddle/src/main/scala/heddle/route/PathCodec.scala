@@ -169,9 +169,15 @@ object PathCodec:
       a => Chunk(render(a)),
     )
 
+  /** RFC 9562 §4: exactly `8-4-4-4-12` hex digits. `UUID.fromString` also takes `1-2-3-4-5` and throws otherwise. */
   private[heddle] def parseUuid(raw: String): Option[UUID] =
-    try Some(UUID.fromString(raw))
-    catch case _: IllegalArgumentException => None
+    val groups = raw.split("-", -1)
+    val shaped = groups.length == 5 && groups.map(_.length).sameElements(Array(8, 4, 4, 4, 12)) &&
+      groups.forall(_.forall(c => Character.digit(c, 16) >= 0 && c < 128))
+    Option.when(shaped) {
+      val hex = groups.mkString
+      UUID(java.lang.Long.parseUnsignedLong(hex.take(16), 16), java.lang.Long.parseUnsignedLong(hex.drop(16), 16))
+    }
 end PathCodec
 
 inline def int(inline name: String): PathCodec[Int]       = PathCodec.int(name)

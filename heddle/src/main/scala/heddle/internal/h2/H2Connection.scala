@@ -3,7 +3,8 @@ package heddle.internal.h2
 import heddle.error.{H2Violation, HttpError, WireError}
 import heddle.http.{Body, HttpVersion, Method, Request, Response, Url}
 import heddle.http.header.{Header, Headers}
-import heddle.internal.engine.ConnBuf
+import heddle.internal.duplex.Sink
+import heddle.internal.engine.{ConnBuf, Lifecycle, Wire}
 import heddle.route.Routes
 import heddle.Server
 import heddle.server.Http2Config
@@ -17,14 +18,13 @@ import zio.stream.ZStream
 private[heddle] object H2Connection:
   def serve[R](
       routes: Routes[R, Response],
-      src: ConnBuf,
-      send: Chunk[Byte] => Task[Unit],
+      wire: Wire,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean = false,
+      life: Lifecycle,
   ): ZIO[R, HttpError, Unit] =
-    val h2 = config.http2Config
+    val Wire(src, send, secure) = wire
+    val (takingWork, busy)      = (life.takingWork, life.busy)
+    val h2                      = config.http2Config
     ZIO.scoped[R] {
       for
         conn    <- Conn.make(config, busy, secure)
@@ -103,8 +103,8 @@ private[heddle] object H2Connection:
   private def goAway(conn: Conn, code: Int): UIO[Unit] =
     conn.lastStream.get.flatMap(last => conn.offer(H2Frame.GoAway(last, code)))
 
-  private def write(send: Chunk[Byte] => Task[Unit], frames: Chunk[H2Frame]): IO[HttpError, Unit] =
-    send(frames.flatMap(FrameCodec.encode)).mapError(HttpError.Io(_))
+  private def write(send: Sink, frames: Chunk[H2Frame]): IO[HttpError, Unit] =
+    send(frames.flatMap(FrameCodec.encode))
 
   private def violation(v: H2Violation): IO[HttpError, Nothing] =
     ZIO.fail(HttpError.Malformed(WireError.H2Protocol(v)))

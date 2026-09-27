@@ -7,31 +7,32 @@ import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
 import heddle.route.Routes
 import heddle.Server
+import heddle.internal.duplex.Sink
 import zio.*
 import zio.stream.ZStream
 
 private[heddle] object Http1:
+  /** Serves a connection whose bytes arrive by `pull`: the engine's own tests, and callers without a socket. */
   def serveConnection[R](
       routes: Routes[R, Response],
       pull: IO[HttpError, Option[Chunk[Byte]]],
-      send: Chunk[Byte] => Task[Unit],
+      send: Sink,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
+      life: Lifecycle,
   ): ZIO[R, HttpError, Unit] =
     val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
-    serveConnection(routes, ConnBuf.fromPull(buf, pull), send, config, takingWork, busy)
+    serveConnection(routes, Wire(ConnBuf.fromPull(buf, pull), send, secure = false), config, life)
   end serveConnection
 
   def serveConnection[R](
       routes: Routes[R, Response],
-      src: ConnBuf,
-      send: Chunk[Byte] => Task[Unit],
+      wire: Wire,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
-      secure: Boolean = false,
+      life: Lifecycle,
   ): ZIO[R, HttpError, Unit] =
+    val Wire(src, send, secure)               = wire
+    val takingWork                            = life.takingWork
+    val busy                                  = life.busy
     def loop(n: Int): ZIO[R, HttpError, Unit] =
       if !takingWork.get() then ZIO.unit
       else
@@ -220,34 +221,32 @@ private[heddle] object Http1:
     }
 
   private def writeResponse(
-      send: Chunk[Byte] => Task[Unit],
+      send: Sink,
       response: Response,
       persist: Boolean,
       version: HttpVersion,
   ): IO[HttpError, Unit] =
-    val io: Task[Unit] =
-      if persist && version == HttpVersion.Http11 && !response.headers.has(Ascii.Connection) then
-        response.body match
-          case Body.Empty | Body.Bytes(_, _)   => send(staticHttp11(response))
-          case Body.Stream(stream, _, Some(n)) =>
-            send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
-          case Body.Stream(stream, _, None) =>
-            send(headBytes(response, None, persist, version)) *>
-              stream.runForeachChunk(chunk => send(chunkedFrame(chunk))) *>
-              send(Chunk.fromArray(Ascii.ChunkedEnd))
-      else
-        response.body match
-          case Body.Empty =>
-            send(headBytes(response, Some(0L), persist, version))
-          case Body.Bytes(bytes, _) =>
-            send(headBytes(response, Some(bytes.length.toLong), persist, version)) *> send(bytes)
-          case Body.Stream(stream, _, Some(n)) =>
-            send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
-          case Body.Stream(stream, _, None) =>
-            send(headBytes(response, None, persist, version)) *>
-              stream.runForeachChunk(chunk => send(chunkedFrame(chunk))) *>
-              send(Chunk.fromArray(Ascii.ChunkedEnd))
-    io.mapError(HttpError.Io(_))
+    def chunked(stream: ZStream[Any, Throwable, Byte]): IO[HttpError, Unit] =
+      stream.mapError(HttpError.Io(_)).runForeachChunk(chunk => send(chunkedFrame(chunk))) *>
+        send(Chunk.fromArray(Ascii.ChunkedEnd))
+    if persist && version == HttpVersion.Http11 && !response.headers.has(Ascii.Connection) then
+      response.body match
+        case Body.Empty | Body.Bytes(_, _)   => send(staticHttp11(response))
+        case Body.Stream(stream, _, Some(n)) =>
+          send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
+        case Body.Stream(stream, _, None) =>
+          send(headBytes(response, None, persist, version)) *> chunked(stream)
+    else
+      response.body match
+        case Body.Empty =>
+          send(headBytes(response, Some(0L), persist, version))
+        case Body.Bytes(bytes, _) =>
+          send(headBytes(response, Some(bytes.length.toLong), persist, version)) *> send(bytes)
+        case Body.Stream(stream, _, Some(n)) =>
+          send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
+        case Body.Stream(stream, _, None) =>
+          send(headBytes(response, None, persist, version)) *> chunked(stream)
+    end if
   end writeResponse
 
   private[heddle] def staticHttp11(response: Response): Chunk[Byte] =
@@ -264,13 +263,11 @@ private[heddle] object Http1:
       Chunk.fromArray(out)
   end staticHttp11
 
-  private def sendExactly(
-      send: Chunk[Byte] => Task[Unit],
-      stream: ZStream[Any, Throwable, Byte],
-      n: Long,
-  ): Task[Unit] =
+  /** A `Content-Length` body: exactly `n` bytes, or an I/O failure that closes the connection. */
+  private def sendExactly(send: Sink, stream: ZStream[Any, Throwable, Byte], n: Long): IO[HttpError, Unit] =
     Ref.make(0L).flatMap { written =>
       stream
+        .mapError(HttpError.Io(_))
         .mapChunksZIO { c =>
           written.get.flatMap { w =>
             val rem = n - w
@@ -284,7 +281,7 @@ private[heddle] object Http1:
         .runForeachChunk(send) *>
         written.get.flatMap { w =>
           if w == n then ZIO.unit
-          else ZIO.fail(java.io.IOException(s"wrote $w bytes, Content-Length $n"))
+          else ZIO.fail(HttpError.Io(java.io.IOException(s"wrote $w bytes, Content-Length $n")))
         }
     }
 

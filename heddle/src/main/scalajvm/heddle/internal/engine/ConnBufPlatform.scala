@@ -11,8 +11,8 @@ private[heddle] object ConnBufPlatform:
     val ms =
       if d == Duration.Infinity || d.toNanos <= 0L then 0
       else math.max(1L, d.toMillis).min(Int.MaxValue.toLong).toInt
-    try sock.setSoTimeout(ms)
-    catch case _: Throwable => ()
+    // A socket that is already closed refuses the option; its next read fails on its own.
+    scala.util.Try(sock.setSoTimeout(ms)).fold(_ => (), identity)
 
   def channel(buf: ByteBuffer, ch: SocketChannel): ConnBuf =
     buf.limit(0)
