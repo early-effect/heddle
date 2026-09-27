@@ -199,5 +199,49 @@ bounded, or free), and fields a newer host sends that this revision does not kno
         assertTrue(refused.left.toOption.map(_.message).contains("ui/message: role must be user, not assistant"))
       },
     ),
+    section("The view bridge")(
+      md"""
+A view connects to its host with `AppBridge.connect(shed, port, settings)`. The handshake is
+`ui/initialize` and then `ui/notifications/initialized`; the bridge answers and routes messages
+until its scope closes. `ViewPort` is the transport: `postMessage` in a browser, or
+`ViewPort.pair` for a host and a view in one process, as the tests use.
+
+```scala
+ZIO.scoped {
+  for
+    bridge <- AppBridge.connect(bill, port, AppBridge.Settings(Implementation("bill-view", "1")))
+    show   <- bridge.call(_.show)(7)          // Int in, Show out, ShowNotFound as a typed error
+  yield show
+}
+```
+
+A view calls only its shed's grants, by picking them, and each call reuses the MCP client's
+typed path: the input becomes the tool's arguments, and the result comes back as the endpoint's
+output or one of its declared errors (`McpCallFailure.Domain`).
+
+The view renders the launch tool's lifecycle from `bridge.run`, a stream of `Run[In, Err, Out]`
+whose types come from the shed's launch grant. The host's notifications step it: a partial input
+the model is still writing (shown, never trusted), the call, and its result, cancellation, or a
+payload the launch tool's types cannot read. The host context arrives with the handshake and
+changes through `bridge.context`. When the host tears the view down, the bridge runs the view's
+`onTeardown` before it answers.
+""",
+      exampleZIO {
+        import heddle.mcp.apps.ui.*
+        for
+          called <- Run.step(BoxOffice.listShows)(Run.waiting, HostNotification.ToolInput(Json.Obj()))
+          early  <- Run.step(BoxOffice.listShows)(
+            Run.waiting,
+            HostNotification.ToolResult(heddle.mcp.protocol.CallToolResult(Chunk.empty)),
+          )
+        yield (called, early)
+      }.assert { (called, early) =>
+        import heddle.mcp.apps.ui.*
+        assertTrue(
+          called == Run.Called(()),
+          early == Run.Unreadable("a tool result arrived before its input"),
+        )
+      },
+    ),
   )
 end McpAppsPage
