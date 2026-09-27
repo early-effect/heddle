@@ -1,7 +1,11 @@
 package heddle
 
 import zio.*
+import zio.stream.ZStream
 import zio.test.*
+
+final case class Greeting(n: Int, name: String)
+final case class Count(n: Int)
 
 object EndpointSpec extends ZIOSpecDefault:
   def spec =
@@ -69,9 +73,9 @@ object EndpointSpec extends ZIOSpecDefault:
         val ep = Endpoint
           .get("echo" / int("n"))
           .query[String]("name")
-          .mapIn { case (n, name) => s"$name:$n" }
+          .mapIn((n, name) => Greeting(n, name))(g => (g.n, g.name))
           .outText()
-        val routes = ep.implement(s => ZIO.succeed(s))
+        val routes = ep.implement(g => ZIO.succeed(s"${g.name}:${g.n}"))
         routes(Request.get("/echo/2?name=ada")).map { res =>
           assertTrue(res.body.asString == "ada:2")
         }
@@ -102,17 +106,14 @@ object EndpointSpec extends ZIOSpecDefault:
       test("toRequest encodes path query header and json body"):
         val ep =
           Endpoint.post("echo" / int("n")).query[String]("name").header[String]("X-User").inJson[String].out[String]
-        ep.toRequest((((4, "ada"), "russ"), "hi"), Url.root) match
-          case Left(err)  => assertTrue(err == "")
-          case Right(req) =>
-            assertTrue(
-              req.method == Method.POST,
-              req.path.render == "/echo/4",
-              req.query.get("name").contains("ada"),
-              req.header("X-User").contains("russ"),
-              req.body.asString == "\"hi\"",
-            )
-        end match
+        val req = ep.toRequest((((4, "ada"), "russ"), "hi"), Url.root)
+        assertTrue(
+          req.method == Method.POST,
+          req.path.render == "/echo/4",
+          req.query.get("name").contains("ada"),
+          req.header("X-User").contains("russ"),
+          req.body.asString == "\"hi\"",
+        )
       ,
       test("inMemory Client.call roundtrips an endpoint"):
         val ep     = Endpoint.get("echo" / int("n")).query[String]("name").outText()
@@ -140,15 +141,40 @@ object EndpointSpec extends ZIOSpecDefault:
         )
       ,
       outErrorsSuite,
-      test("mapIn is not invertible"):
-        val ep = Endpoint.get("echo" / int("n")).mapIn(_.toString).outText()
-        assertTrue(ep.toRequest("4", Url.root).isLeft)
+      test("mapIn round-trips through toRequest, then steps added after it"):
+        val ep = Endpoint
+          .get("echo" / int("n"))
+          .mapIn(Count(_))(_.n)
+          .query[String]("name")
+          .outText()
+        val req = ep.toRequest((Count(4), "ada"), Url.root)
+        assertTrue(req.path.render == "/echo/4", req.query.get("name").contains("ada"))
       ,
       test("optional query is omitted when empty"):
-        val ep = Endpoint.get("echo").query[Option[String]]("name").outText()
-        ep.toRequest(None, Url.root) match
-          case Left(_)    => assertTrue(false)
-          case Right(req) => assertTrue(req.query.get("name").isEmpty, req.path.render == "/echo")
+        val ep  = Endpoint.get("echo").query[Option[String]]("name").outText()
+        val req = ep.toRequest(None, Url.root)
+        assertTrue(req.query.get("name").isEmpty, req.path.render == "/echo")
+      ,
+      test("Client.call does not compile for a streaming endpoint"):
+        typeCheck("""Client.call(Endpoint.get("ticks").outSse)(())""").map { result =>
+          assertTrue(result.left.exists(_.contains("Client.subscribe")))
+        }
+      ,
+      test("Client.subscribe streams an outSse endpoint's events"):
+        val ep     = Endpoint.get("ticks").outSse
+        val events = ZStream(heddle.sse.ServerSentEvent("a"), heddle.sse.ServerSentEvent("b"))
+        val routes = ep.implement(_ => ZIO.succeed(events))
+        Client
+          .subscribe(ep)(())
+          .runCollect
+          .provideLayer(Client.inMemory(routes))
+          .map(got => assertTrue(got.map(_.data) == Chunk("a", "b")))
+      ,
+      test("an outText endpoint reads its body as text, whatever the Content-Type"):
+        val ep  = Endpoint.get("t").outText()
+        val res =
+          Response(Status.Ok).withBody(Body.fromBytes(Chunk.fromArray("hi".getBytes), Some(MediaType.OctetStream)))
+        ep.fromResponse(res).map(out => assertTrue(out == "hi"))
       ,
       test("inMemory Client.call roundtrips JSON in and out"):
         val ep     = Endpoint.post("echo").inJson[String].out[String]

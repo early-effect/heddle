@@ -2,6 +2,7 @@ package heddle.sse
 
 import java.nio.charset.StandardCharsets
 import zio.{Chunk, Duration}
+import zio.stream.ZStream
 
 object SseCodec:
   val heartbeat: Chunk[Byte] = Chunk.fromArray(": ping\n\n".getBytes(StandardCharsets.US_ASCII))
@@ -32,6 +33,15 @@ object SseCodec:
       }
       b += '\n'
       Chunk.fromArray(b.result())
+
+  /** Events as they complete in a byte stream. A trailing partial event is dropped when the stream ends. */
+  def stream[E](bytes: ZStream[Any, E, Byte]): ZStream[Any, E, ServerSentEvent] =
+    bytes.chunks
+      .mapAccum(Chunk.empty[Byte]) { (acc, chunk) =>
+        val (events, rest) = decode(acc ++ chunk)
+        (rest, events)
+      }
+      .flattenChunks
 
   /** Complete events in `bytes`, plus leftover that is not yet a blank-line-terminated event. */
   def decode(bytes: Chunk[Byte]): (Chunk[ServerSentEvent], Chunk[Byte]) =

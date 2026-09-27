@@ -84,7 +84,7 @@ private[heddle] object OpenApiJson:
       (ep.pathParams ++ ep.queries ++ ep.headers).map { p =>
         Json.Obj(
           "name"     -> Json.Str(p.name),
-          "in"       -> Json.Str(p.in),
+          "in"       -> Json.Str(p.in.render),
           "required" -> Json.Bool(p.required),
           "schema"   -> SchemaJson.render(p.schema, mutable.LinkedHashMap.empty, embedNamed = true),
         )

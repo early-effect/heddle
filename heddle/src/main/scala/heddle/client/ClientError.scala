@@ -19,4 +19,7 @@ enum ClientError(val message: String) extends HeddleError:
       extends ClientError(s"${authority.render} sent an invalid response: ${error.message}")
   case PoolExhausted(authority: Authority) extends ClientError(s"No free connection to ${authority.render}")
   case InvalidTrust(reason: String)        extends ClientError(s"Unusable trust material: $reason")
+
+  /** A streamed response body failed after its head arrived. */
+  case BodyFailed(cause: Throwable) extends ClientError(s"Response body failed: $cause")
 end ClientError

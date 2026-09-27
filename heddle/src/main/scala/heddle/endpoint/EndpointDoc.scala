@@ -2,7 +2,13 @@ package heddle.endpoint
 
 import heddle.http.{MediaType, Method, Status}
 
-final case class ParamDoc(name: String, in: String, required: Boolean, schema: SchemaDoc)
+/** Where a parameter travels in the request (OpenAPI `in`). */
+enum ParamLocation(val render: String):
+  case Path   extends ParamLocation("path")
+  case Query  extends ParamLocation("query")
+  case Header extends ParamLocation("header")
+
+final case class ParamDoc(name: String, in: ParamLocation, required: Boolean, schema: SchemaDoc)
 
 final case class MediaDoc(schema: SchemaDoc, contentType: MediaType)
 
