@@ -4,7 +4,7 @@ import BytesLength.*
 import heddle.error.ServerError
 import heddle.http.Response
 import heddle.route.Routes
-import heddle.server.{Http2Config, OutOfRange, Setting}
+import heddle.server.{Http2Config, OutOfRange, Setting, Tls}
 import zio.*
 
 final class Server private[heddle] (val port: UIO[Int], val shutdown: UIO[Unit])
@@ -145,6 +145,14 @@ object Server:
   def serve[R](routes: Routes[R, Response], config: Config): ZIO[R, ServerError, Nothing] =
     ZIO.scoped(install(routes, config) *> ZIO.never)
 
+  /** HTTPS with the `Tls` the environment provides:
+    * `Server.serveTls(app).provide(Config.defaults, Tls.pem(cert, key))`.
+    */
+  def serveTls[R](routes: Routes[R, Response]): ZIO[R & Config & Tls, ServerError, Nothing] =
+    ZIO.serviceWithZIO[Config] { config =>
+      ZIO.serviceWithZIO[Tls](tls => ZIO.scoped(install(routes, config, tls) *> ZIO.never))
+    }
+
   def sbtInterruptExit: UIO[Unit] =
     ServerPlatform.sbtInterruptExit
 
@@ -152,15 +160,12 @@ object Server:
     ZIO.serviceWithZIO[Config](config => install(routes, config))
 
   def install[R](routes: Routes[R, Response], config: Config): ZIO[R & Scope, ServerError, Server] =
-    install(routes, config, JvmScheduler.Loom)
-
-  def install[R](
-      routes: Routes[R, Response],
-      config: Config,
-      scheduler: JvmScheduler,
-  ): ZIO[R & Scope, ServerError, Server] =
     ZIO.fromEither(config.validate).mapError(ServerError.InvalidConfig(_)) *>
-      ServerPlatform.install(routes, config, scheduler)
+      ServerPlatform.install(routes, config, None)
+
+  def install[R](routes: Routes[R, Response], config: Config, tls: Tls): ZIO[R & Scope, ServerError, Server] =
+    ZIO.fromEither(config.validate).mapError(ServerError.InvalidConfig(_)) *>
+      ServerPlatform.install(routes, config, Some(tls))
 
   def run[R](routes: Routes[R, Response])(req: heddle.http.Request): ZIO[R, Nothing, Response] =
     routes(req).merge

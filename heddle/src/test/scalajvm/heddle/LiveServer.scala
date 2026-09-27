@@ -18,7 +18,7 @@ object LiveServer:
       config: Server.Config = local,
   )(f: String => IO[E, A]): ZIO[Any, E | HeddleError, A] =
     ZIO.scoped {
-      Server.install(routes, config).provideSomeLayer[Scope](tls).flatMap { server =>
+      ZIO.serviceWithZIO[Tls](Server.install(routes, config, _)).provideSomeLayer[Scope](tls).flatMap { server =>
         server.port.flatMap(port => f(s"https://127.0.0.1:$port"))
       }
     }

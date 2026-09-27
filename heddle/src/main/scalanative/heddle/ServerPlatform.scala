@@ -11,18 +11,13 @@ import zio.*
 private[heddle] object ServerPlatform:
   def sbtInterruptExit: UIO[Unit] = ZIO.unit
 
-  def install[R](routes: Routes[R, Response], config: Server.Config): ZIO[R & Scope, ServerError, Server] =
-    install(routes, config, JvmScheduler.Loom)
-
   def install[R](
       routes: Routes[R, Response],
       config: Server.Config,
-      scheduler: JvmScheduler,
+      tls: Option[Tls],
   ): ZIO[R & Scope, ServerError, Server] =
-    val _ = scheduler
     for
       clock    <- ZIO.clock
-      tls      <- ZIO.environmentWith[Any](_.getDynamic[Tls])
       live     <- LiveConnections.make(config.maxConnections)
       listener <- NativeListener.bind(config)
       port     <- listener.localPort

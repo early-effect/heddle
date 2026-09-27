@@ -1,6 +1,6 @@
 package heddle.http.header
 
-import heddle.http.{ContentEncoding, MediaType, TransferCoding, Url}
+import heddle.http.{AcceptEncoding, ContentEncoding, HeaderParams, MediaType, TransferCoding, Url}
 import java.time.Instant
 import zio.Chunk
 
@@ -59,8 +59,14 @@ final case class Headers(toChunk: Chunk[Header]):
   def contentEncoding: Chunk[ContentEncoding] =
     ContentEncoding.parseList(get(HeaderName.ContentEncoding))
 
-  def acceptEncoding: Chunk[ContentEncoding] =
-    ContentEncoding.parseAccept(get(HeaderName.AcceptEncoding))
+  def acceptEncoding: Chunk[AcceptEncoding] =
+    get(HeaderName.AcceptEncoding).fold(Chunk.empty)(ContentEncoding.parseAccept)
+
+  /** The `Connection` options, lower-cased (RFC 9110 §7.6.1). */
+  def connection: Chunk[String] =
+    Chunk.fromIterable(
+      getAll(HeaderName.Connection).flatMap(_.split(',')).map(v => HeaderParams.lower(v.trim)).filter(_.nonEmpty)
+    )
 
   def transferEncoding: Chunk[TransferCoding] =
     TransferCoding.parseList(get(HeaderName.TransferEncoding))

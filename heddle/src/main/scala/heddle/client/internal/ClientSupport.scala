@@ -15,7 +15,7 @@ private[heddle] object ClientSupport:
   /** Gunzips the body when the caller asked for gzip and the server sent it, within `maxBodyBytes`. */
   def inflate(cfg: Client.Config, target: Target, requested: Headers)(res: Response): IO[ClientError, Response] =
     val asked = requested.get(HeaderName.AcceptEncoding).exists(_.toLowerCase.contains("gzip"))
-    if !asked || !res.headers.contentEncoding.contains(ContentEncoding.Gzip) then ZIO.succeed(res)
+    if !asked || res.headers.contentEncoding != Chunk(ContentEncoding.Gzip) then ZIO.succeed(res)
     else
       res.body match
         case Body.Bytes(raw, mediaType) =>

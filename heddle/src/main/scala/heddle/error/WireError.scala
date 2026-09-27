@@ -10,13 +10,19 @@ enum WireError(val message: String) extends HeddleError:
   case BadHeaderLine                 extends WireError("a header line has no name before its colon")
   case TruncatedHeaders              extends WireError("the header block ends before its blank line")
   case BadContentLength(raw: String) extends WireError(s"not a Content-Length: $raw")
-  case TruncatedBody                 extends WireError("the body ends before its declared length")
-  case ChunkLineTooLong              extends WireError("a chunk-size line is too long")
-  case BadChunkSize(token: String)   extends WireError(s"not a chunk size: $token")
-  case TruncatedChunk                extends WireError("a chunked body ends mid-chunk")
-  case MissingChunkCrlf              extends WireError("a chunk is not followed by CRLF")
-  case NoH2Preface                   extends WireError("ALPN chose h2, and the client did not send the h2 preface")
-  case TruncatedFrame                extends WireError("an HTTP/2 frame ends early")
+
+  /** RFC 9112 §6.1: a request with both framings is how requests are smuggled past a proxy that reads the other one. */
+  case ConflictingFraming extends WireError("a request has both Content-Length and Transfer-Encoding")
+
+  /** A request's transfer codings must be exactly `chunked`: nothing else is implemented, and chunked must be last. */
+  case UnsupportedTransferCoding(raw: String) extends WireError(s"Transfer-Encoding $raw is not chunked alone")
+  case TruncatedBody                          extends WireError("the body ends before its declared length")
+  case ChunkLineTooLong                       extends WireError("a chunk-size line is too long")
+  case BadChunkSize(token: String)            extends WireError(s"not a chunk size: $token")
+  case TruncatedChunk                         extends WireError("a chunked body ends mid-chunk")
+  case MissingChunkCrlf                       extends WireError("a chunk is not followed by CRLF")
+  case NoH2Preface    extends WireError("ALPN chose h2, and the client did not send the h2 preface")
+  case TruncatedFrame extends WireError("an HTTP/2 frame ends early")
   case FrameTooLarge(length: Int, max: Int)
       extends WireError(s"an HTTP/2 frame of $length bytes is over the $max limit")
   case FrameSize(frameType: Int, length: Int)

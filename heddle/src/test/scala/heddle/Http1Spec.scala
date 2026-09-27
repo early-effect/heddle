@@ -332,9 +332,37 @@ object Http1Spec extends ZIOSpecDefault:
           },
           Method.GET / "a" -> Handler.text("AAA"),
         )
-        runWire(routes, get("/short") + get("/a")).either.map {
-          case Left(_)     => assertTrue(true)
-          case Right(wire) => assertTrue(!wire.contains("AAA"))
+        runWire(routes, get("/short") + get("/a")).either.map { r =>
+          assertTrue(r.left.exists {
+            case HttpError.Io(e) => String.valueOf(e.getMessage).contains("Content-Length 5")
+            case _               => false
+          })
+        }
+      ,
+      test("a request with both Content-Length and Transfer-Encoding, or a coding that is not chunked alone, is a 400"):
+        val routes = Routes(Method.POST / "echo" -> Handler.text("reached"))
+        val heads  = List(
+          "Content-Length: 4\r\nTransfer-Encoding: chunked",
+          "Transfer-Encoding: gzip, chunked",
+          "Transfer-Encoding: chunked, gzip",
+          "Transfer-Encoding: notchunked",
+        )
+        ZIO
+          .foreach(heads)(h =>
+            runWire(routes, s"POST /echo HTTP/1.1\r\nHost: localhost\r\n$h\r\n\r\n4\r\nping\r\n0\r\n\r\n")
+          )
+          .map(wires => assertTrue(wires.forall(w => w.startsWith("HTTP/1.1 400") && !w.contains("reached"))))
+      ,
+      test("Connection is a list of options: keep-alive, close closes"):
+        val routes = Routes(Method.GET / "a" -> Handler.text("A"), Method.GET / "b" -> Handler.text("B"))
+        runWire(routes, get("/a", headers = "Host: localhost\r\nConnection: keep-alive, close") + get("/b")).map {
+          wire => assertTrue(wire.contains("A"), !wire.contains("B"), wire.contains("Connection: close"))
+        }
+      ,
+      test("a handler that dies answers 500 without its stack trace"):
+        val routes = Routes(Method.GET / "boom" -> handler(ZIO.dieMessage("secret internals")))
+        runWire(routes, get("/boom")).map { wire =>
+          assertTrue(wire.startsWith("HTTP/1.1 500"), !wire.contains("secret internals"), !wire.contains("\tat "))
         },
     ) @@ TestAspect.timeout(5.seconds)
 

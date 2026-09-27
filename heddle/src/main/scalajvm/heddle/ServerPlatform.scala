@@ -18,18 +18,14 @@ private[heddle] object ServerPlatform:
       ()
     }
 
-  def install[R](routes: Routes[R, Response], config: Server.Config): ZIO[R & Scope, ServerError, Server] =
-    install(routes, config, JvmScheduler.Loom)
-
   def install[R](
       routes: Routes[R, Response],
       config: Server.Config,
-      scheduler: JvmScheduler,
+      tls: Option[Tls],
   ): ZIO[R & Scope, ServerError, Server] =
     for
-      _        <- enableScheduler(scheduler)
+      _        <- enableLoom
       clock    <- ZIO.clock
-      tls      <- ZIO.environmentWith[R & Scope](_.getDynamic[Tls])
       live     <- LiveConnections.make(config.maxConnections)
       listener <- ZIO.acquireRelease(ChannelListener.bind(config))(_.close)
       halt0 = live.halt(listener, config.gracefulShutdownTimeout).withClock(clock)
@@ -39,11 +35,9 @@ private[heddle] object ServerPlatform:
     end for
   end install
 
-  private def enableScheduler(scheduler: JvmScheduler): URIO[Scope, Unit] =
-    scheduler match
-      case JvmScheduler.Default => ZIO.unit
-      case JvmScheduler.Loom    =>
-        (Runtime.enableLoomBasedExecutor ++ Runtime.enableLoomBasedBlockingExecutor).build.unit.ignore
+  /** Connection fibers run on virtual threads; a JVM that cannot enable them still binds on the default executor. */
+  private val enableLoom: URIO[Scope, Unit] =
+    (Runtime.enableLoomBasedExecutor ++ Runtime.enableLoomBasedBlockingExecutor).build.unit.ignore
 
   private def runConnection[R](
       routes: Routes[R, Response],

@@ -54,18 +54,6 @@ object ServerSpec extends ZIOSpecDefault:
           }
         }
       ,
-      test("JvmScheduler.Default still binds"):
-        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        ZIO.scoped {
-          Server.install(routes, LiveServer.local, JvmScheduler.Default).flatMap { server =>
-            server.port.flatMap { p =>
-              Client.get(s"http://127.0.0.1:$p/health").map { res =>
-                assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "ok")
-              }
-            }
-          }
-        }
-      ,
       test("unknown paths are 404 on the wire"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>

@@ -198,14 +198,31 @@ only when that request asked for gzip.
       md"""
 | Middleware | Role |
 | --- | --- |
-| `compress` | Response `Content-Encoding` on the wrapped `Routes` |
-| `decompress(maxBytes)` | Inflate a request body, capped |
+| `compress` | Response `Content-Encoding`: the coding the client rates highest among those the server has; `q=0` is a refusal |
+| `decompress(maxBytes)` | Inflate a request body, capped; a coding it cannot decode is 415 |
 | `timeout` | Slow handler becomes 504. Does not close the socket |
-| `cors` / `requestId` / `requireTls` | Policy on the wrapped `Routes` |
+| `cors(CorsConfig)` | `CorsOrigins.Any` answers `*` and offers no credentials; `CorsOrigins.Only(origins, credentials)` echoes a listed origin, with `Vary: Origin` |
+| `requestId` / `requireTls` | Policy on the wrapped `Routes` |
+
+`CorsOrigins.Any` never reflects the request's `Origin`: reflecting it with credentials would let any site read
+a signed-in user's responses. Name the origins that may do that.
 """,
-      exampleValue {
-        true
-      }.assert(ok => assertTrue(ok)),
+      exampleZIO {
+        val policy = Middleware.CorsOrigins.Only(Set("https://app.example"), Middleware.CorsCredentials.Include)
+        val app    = Routes(Method.GET / "me" -> Handler.text("ada")) @@
+          Middleware.cors(Middleware.CorsConfig(origins = policy)) @@ Middleware.compress()
+        for
+          listed   <- app(Request.get("/me").withHeader("Origin", "https://app.example"))
+          stranger <- app(Request.get("/me").withHeader("Origin", "https://evil.example"))
+          refused  <- app(Request.get("/me").withHeader("Accept-Encoding", "gzip;q=0"))
+        yield (
+          listed.header("Access-Control-Allow-Origin"),
+          stranger.header("Access-Control-Allow-Origin"),
+          refused.header("Content-Encoding"),
+        )
+      }.assert { case (listed, stranger, refused) =>
+        assertTrue(listed.contains("https://app.example"), stranger.isEmpty, refused.isEmpty)
+      },
     ),
   )
 end Reference

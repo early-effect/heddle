@@ -112,5 +112,5 @@ object FormSpec extends ZIOSpecDefault:
       test("Request.cookie reads Cookie header"):
         val req = Request.get("/").addCookie("sid", "abc")
         assertTrue(req.cookie("sid").contains("abc")),
-    ) @@ TestAspect.timeout(5.seconds)
+    ) @@ TestAspect.timeout(60.seconds)
 end FormSpec

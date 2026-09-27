@@ -51,7 +51,15 @@ object ClientSpec extends ZIOSpecDefault:
         Client
           .get("http://192.0.2.1:1", Client.Config.default.copy(connectTimeout = 80.millis))
           .either
-          .map(e => assertTrue(e.isLeft))
+          .map { e =>
+            // The blackhole times out where it is routed and is refused where it is not; either way it fails to connect.
+            assertTrue(e.left.exists {
+              case ClientError.ConnectTimeout(Authority("192.0.2.1", 1)) |
+                  ClientError.Connect(Authority("192.0.2.1", 1), _) =>
+                true
+              case _ => false
+            })
+          }
       @@ TestAspect.timeout(3.seconds),
       test("pool exhausted when maxConnectionsPerHost is 1 and two stay in flight"):
         val cfg = Client.Config.default.copy(maxConnectionsPerHost = 1, maxIdlePerHost = 0)

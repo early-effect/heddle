@@ -45,6 +45,12 @@ object SameSite:
       case "none"   => Some(SameSite.None)
       case _        => Option.empty
 
+/** A `Set-Cookie` attribute that is present or absent (RFC 6265bis §5.6; `Partitioned` is CHIPS). */
+enum CookieFlag(val attribute: String):
+  case Secure      extends CookieFlag("Secure")
+  case HttpOnly    extends CookieFlag("HttpOnly")
+  case Partitioned extends CookieFlag("Partitioned")
+
 final case class SetCookie(
     name: String,
     value: String,
@@ -52,8 +58,7 @@ final case class SetCookie(
     path: Option[String] = None,
     maxAge: Option[Long] = None,
     expires: Option[Instant] = None,
-    secure: Boolean = false,
-    httpOnly: Boolean = false,
+    flags: Set[CookieFlag] = Set.empty,
     sameSite: Option[SameSite] = Option.empty,
 )
 
@@ -76,14 +81,16 @@ object SetCookie:
       if aeq < 0 then (attr, "")
       else (attr.substring(0, aeq).trim, CookiePair.unquote(attr.substring(aeq + 1).trim))
     k.toLowerCase match
-      case "domain"   => cookie.copy(domain = Some(v))
-      case "path"     => cookie.copy(path = Some(v))
-      case "max-age"  => cookie.copy(maxAge = v.toLongOption)
-      case "expires"  => cookie.copy(expires = HttpDate.parse(v))
-      case "secure"   => cookie.copy(secure = true)
-      case "httponly" => cookie.copy(httpOnly = true)
-      case "samesite" => cookie.copy(sameSite = SameSite.parse(v))
-      case _          => cookie
+      case "domain"      => cookie.copy(domain = Some(v))
+      case "path"        => cookie.copy(path = Some(v))
+      case "max-age"     => cookie.copy(maxAge = v.toLongOption)
+      case "expires"     => cookie.copy(expires = HttpDate.parse(v))
+      case "secure"      => cookie.copy(flags = cookie.flags + CookieFlag.Secure)
+      case "httponly"    => cookie.copy(flags = cookie.flags + CookieFlag.HttpOnly)
+      case "partitioned" => cookie.copy(flags = cookie.flags + CookieFlag.Partitioned)
+      case "samesite"    => cookie.copy(sameSite = SameSite.parse(v))
+      case _             => cookie
+    end match
   end attribute
 
   def render(cookie: SetCookie): String =
@@ -92,8 +99,7 @@ object SetCookie:
     cookie.path.foreach(p => b.append("; Path=").append(p))
     cookie.maxAge.foreach(n => b.append("; Max-Age=").append(n.toString))
     cookie.expires.foreach(t => b.append("; Expires=").append(HttpDate.render(t)))
-    if cookie.secure then b.append("; Secure")
-    if cookie.httpOnly then b.append("; HttpOnly")
+    CookieFlag.values.filter(cookie.flags).foreach(f => b.append("; ").append(f.attribute))
     cookie.sameSite.foreach(s => b.append("; SameSite=").append(s.render))
     b.toString
   end render
