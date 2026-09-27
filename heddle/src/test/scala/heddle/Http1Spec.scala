@@ -227,6 +227,30 @@ object Http1Spec extends ZIOSpecDefault:
           assertTrue(wire.contains("ping"), wire.contains("A"))
         }
       ,
+      test("a Content-Length that is not 1*DIGIT is a 400"):
+        val routes = Routes(Method.POST / "echo" -> Handler.text("ok"))
+        ZIO
+          .foreach(List("+5", "-1", "0x5", "5,5", "5 5", ""))(n =>
+            runWire(routes, s"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: $n\r\n\r\nhello")
+          )
+          .map(wires => assertTrue(wires.forall(_.startsWith("HTTP/1.1 400"))))
+      ,
+      test("a chunk size that is not 1*HEXDIG fails the body, an empty size line included"):
+        val routes = Routes(
+          Method.POST / "echo" -> handler { (req: Request) =>
+            req.body.collect.fold(_ => Response.text("bad", Status.BadRequest), c => Response.text(s"${c.length}"))
+          }
+        )
+        val post = (size: String) =>
+          s"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n$size\r\nping\r\n0\r\n\r\n"
+        (ZIO.foreach(List("+4", "-4", "", "0x4", "4 4"))(s => runWire(routes, post(s))) <*> runWire(
+          routes,
+          post("4;ext=1"),
+        ))
+          .map((bad, ok) =>
+            assertTrue(bad.forall(_.startsWith("HTTP/1.1 400")), ok.startsWith("HTTP/1.1 200"), ok.endsWith("4"))
+          )
+      ,
       test("chunked response then a second GET on the same connection"):
         val routes = Routes(
           Method.GET / "s" -> handler {

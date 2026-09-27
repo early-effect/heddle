@@ -56,19 +56,14 @@ enum Body:
   def asForm: Task[Form] =
     utf8.map(Form.decode)
 
-  def asMultipart: Task[Chunk[FormField]] =
-    val bound = mediaType.flatMap(mt => mt.params.collectFirst { case ("boundary", b) => b })
-    collect.flatMap { bytes =>
-      bound match
-        case None    => ZIO.fail(IllegalArgumentException("multipart body missing boundary"))
-        case Some(b) => ZIO.fromEither(Multipart.parse(bytes, b)).mapError(IllegalArgumentException(_))
-    }
+  private def boundary: Either[MultipartError, String] =
+    mediaType.flatMap(_.params.collectFirst { case ("boundary", b) => b }).toRight(MultipartError.Undeclared)
 
-  def asMultipartStream: ZStream[Any, Throwable, FormField] =
-    val bound = mediaType.flatMap(mt => mt.params.collectFirst { case ("boundary", b) => b })
-    bound match
-      case None    => ZStream.fail(IllegalArgumentException("multipart body missing boundary"))
-      case Some(b) => Multipart.decode(toStream, b)
+  def asMultipart: ZIO[Any, Throwable | MultipartError, Chunk[FormField]] =
+    ZIO.fromEither(boundary).flatMap(b => collect.flatMap(bytes => ZIO.fromEither(Multipart.parse(bytes, b))))
+
+  def asMultipartStream: ZStream[Any, Throwable | MultipartError, FormField] =
+    boundary.fold(ZStream.fail(_), Multipart.decode(toStream, _))
 end Body
 
 object Body:

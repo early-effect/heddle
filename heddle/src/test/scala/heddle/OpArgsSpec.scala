@@ -15,7 +15,7 @@ object OpArgsSpec extends ZIOSpecDefault:
           .inJson[NewItem]
           .out[Item]
         OpArgs.inputSchema(ep.doc) match
-          case Left(err)                                    => assertTrue(err.isEmpty)
+          case Left(err)                                    => assertNever(err.message)
           case Right(SchemaDoc.Object(_, fields, required)) =>
             assertTrue(
               fields.map(_.name) == List("id", "q", "name"),
@@ -29,7 +29,7 @@ object OpArgsSpec extends ZIOSpecDefault:
       test("fails on path and body name collision"):
         val ep = Endpoint.post("items" / int("name")).inJson[NewItem].out[Item]
         OpArgs.inputSchema(ep.doc) match
-          case Left(msg) => assertTrue(msg.contains("collision"), msg.contains("name"))
+          case Left(err) => assertTrue(err == OpArgsError.NameCollision(List("name")))
           case Right(_)  => assertTrue(false)
       ,
       test("nestBody keeps the body as one property"):
@@ -58,7 +58,7 @@ object OpArgsSpec extends ZIOSpecDefault:
           "name" -> Json.Str("ada"),
         )
         OpArgs.request(ep.doc, args) match
-          case Left(err)  => assertTrue(err.isEmpty)
+          case Left(err)  => assertNever(err.message)
           case Right(req) =>
             assertTrue(
               req.method == Method.POST,

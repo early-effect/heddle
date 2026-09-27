@@ -1,6 +1,6 @@
 package heddle
 
-import heddle.error.{HttpError, ServerError}
+import heddle.error.{HttpError, ServerError, WireError}
 import heddle.http.Response
 import heddle.internal.duplex.{ByteConn, ChannelListener}
 import heddle.internal.engine.{ConnBuf, Http1, LiveConnections}
@@ -101,6 +101,6 @@ private[heddle] object ServerPlatform:
     val preface = heddle.internal.h2.H2Frame.Preface
     src.fillUntil(preface.length).flatMap { avail =>
       if avail >= preface.length && src.hasPrefix(preface) then src.takeExact(preface.length).unit
-      else ZIO.fail(HttpError.Malformed("expected h2 preface after ALPN h2"))
+      else ZIO.fail(HttpError.Malformed(WireError.NoH2Preface))
     }
 end ServerPlatform

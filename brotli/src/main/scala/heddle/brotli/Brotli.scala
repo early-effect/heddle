@@ -1,7 +1,7 @@
 package heddle.brotli
 
 import heddle.BytesLength
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.ContentEncoding
 import heddle.server.{Compressor, Decompressor}
 import zio.Chunk
@@ -21,7 +21,7 @@ object Brotli:
     catch
       case _: OverLimit                                            => Left(HttpError.BodyTooLarge)
       case e @ (_: BrotliException | _: IndexOutOfBoundsException) =>
-        Left(HttpError.Malformed(s"brotli: ${e.getMessage}"))
+        Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Brotli, String.valueOf(e.getMessage))))
 
   def encodeArray(data: Array[Byte]): Array[Byte] =
     val w = BitWriter()

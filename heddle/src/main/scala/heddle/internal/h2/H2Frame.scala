@@ -14,13 +14,22 @@ private[heddle] enum H2Frame:
       weight: Int = 16,
   )
   case RstStream(streamId: Int, errorCode: Int)
-  case Settings(ack: Boolean, params: Chunk[(Int, Int)])
-  case Ping(ack: Boolean, opaque: Chunk[Byte])
+  case Settings(params: Chunk[(Int, Int)])
+
+  /** RFC 9113 §6.5: an acknowledgement carries no parameters. */
+  case SettingsAck
+  case Ping(opaque: Long)
+  case PingAck(opaque: Long)
   case GoAway(lastStreamId: Int, errorCode: Int, debug: Chunk[Byte] = Chunk.empty)
   case WindowUpdate(streamId: Int, increment: Int)
   case Continuation(streamId: Int, headerBlock: Chunk[Byte], endHeaders: Boolean)
   case Priority(streamId: Int, exclusive: Boolean, streamDependency: Int, weight: Int)
   case PushPromise(streamId: Int, promisedId: Int, headerBlock: Chunk[Byte], endHeaders: Boolean)
+
+  /** A frame type this endpoint does not know. RFC 9113 §4.1: the connection ignores it. The codec keeps every field so
+    * decoding stays lossless.
+    */
+  case Unknown(frameType: Int, flags: Int, streamId: Int, payload: Chunk[Byte])
 end H2Frame
 
 object H2Frame:

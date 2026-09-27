@@ -22,14 +22,14 @@ private[heddle] object Target:
           val scheme = if req.secure then Scheme.Https else Scheme.Http
           of(Url.parse(s"${scheme.render}://$host${req.url.render}"))
         case None =>
-          Left(ClientError.InvalidTarget(req.url.render, "no host: use an absolute URL or set a Host header"))
+          Left(ClientError.InvalidTarget(req.url.render, TargetError.NoHost))
 
   def of(url: Url): Either[ClientError, Target] =
     val scheme = url.scheme.getOrElse(Scheme.Http)
     url.host.filter(_.nonEmpty) match
-      case None => Left(ClientError.InvalidTarget(url.render, "no host"))
+      case None => Left(ClientError.InvalidTarget(url.render, TargetError.NoHost))
       case Some(_) if scheme != Scheme.Http && scheme != Scheme.Https =>
-        Left(ClientError.InvalidTarget(url.render, s"${scheme.render} is not an HTTP scheme"))
+        Left(ClientError.InvalidTarget(url.render, TargetError.NotHttp(scheme)))
       case Some(host) =>
         val bare = host.stripPrefix("[").stripSuffix("]")
         val rt   = if url.query.isEmpty then url.path.render else s"${url.path.render}?${url.query.render}"

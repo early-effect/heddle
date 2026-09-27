@@ -48,7 +48,9 @@ object Message:
         case (None, Some(r: Json.Obj), None) =>
           id.fold(invalid("a result needs an id"))(i => Right(Result(i, r)))
         case (None, None, Some(e: Json.Obj)) =>
-          RpcError.fromJson(e).fold(invalid, err => Right(Error(id, err)))
+          RpcError
+            .fromJson(e)
+            .fold(invalid("an error needs an integer code and a string message"))(err => Right(Error(id, err)))
         case _ => invalid("exactly one of method, result, error")
     end if
   end fromObj

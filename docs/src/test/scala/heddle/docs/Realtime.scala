@@ -23,7 +23,8 @@ They are HTTP hosts for streams. They are not MCP tools. `OpArgs.promotable` wil
 chunk. `Sse.session` is a writer you `send` / `heartbeat` into. JSON in `data` is `JsonCodec.encode`.
 `data` may span lines. `event` and `id` are `SseField`s, which never hold a CR or LF, so a value
 cannot end its field and forge another: `SseField("tick")` checks a literal at compile time,
-`SseField.from(raw)` returns an `Either`, and `SseField.of(n)` takes a number.
+`SseField.from(raw)` returns `Left(SseFieldError.LineBreak(at))` for a value that breaks a line,
+and `SseField.of(n)` takes a number.
 """,
       exampleZIO {
         val tick   = SseField("tick")

@@ -100,7 +100,7 @@ object ClientRequest:
   private def callTool(p: Json.Obj): Either[RpcError, ClientRequest] =
     for
       name <- p.get("name") match
-        case Some(Json.Str(n)) => ToolName.from(n).left.map(RpcError.InvalidParams(_))
+        case Some(Json.Str(n)) => ToolName.from(n).left.map(e => RpcError.InvalidParams(e.message))
         case _                 => Left(RpcError.InvalidParams("missing tool name"))
       args <- p.get("arguments") match
         case None              => Right(Json.Obj())

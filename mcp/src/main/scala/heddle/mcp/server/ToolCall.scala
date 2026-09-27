@@ -1,6 +1,6 @@
 package heddle.mcp.server
 
-import heddle.endpoint.{BoundOp, Hint, OpArgs, SchemaJson}
+import heddle.endpoint.{BoundOp, Hint, OpArgs, OpArgsError, SchemaJson}
 import heddle.http.header.Headers
 import heddle.mcp.{McpBuildError, ToolShapes}
 import heddle.mcp.protocol.{CallToolResult, ContentBlock, Structured, Tool, ToolAnnotations, ToolName}
@@ -48,7 +48,7 @@ object ToolCall:
       err: Structured,
   ): ZIO[R, Nothing, CallToolResult] =
     OpArgs.request(op.endpoint.doc, args, headers) match
-      case Left(msg)  => ZIO.succeed(failed(msg))
+      case Left(e)    => ZIO.succeed(failed(e.message))
       case Right(req) =>
         op.input(req)
           .foldZIO(
@@ -90,7 +90,7 @@ object ToolCall:
   private[server] def objectSchema(schema: Json, tool: String): Either[McpBuildError, Json.Obj] =
     schema match
       case o: Json.Obj if o.get("type").contains(Json.Str("object")) => Right(o)
-      case _ => Left(McpBuildError.NotPromotable(tool, "tool arguments must be a JSON object"))
+      case _ => Left(McpBuildError.NotPromotable(tool, OpArgsError.NotAnObject))
 
   private def annotations(hints: List[Hint]): Option[ToolAnnotations] =
     if hints.isEmpty then None

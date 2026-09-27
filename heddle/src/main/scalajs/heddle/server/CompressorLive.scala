@@ -1,6 +1,6 @@
 package heddle.server
 
-import heddle.error.HttpError
+import heddle.error.{HttpError, WireError}
 import heddle.http.ContentEncoding
 import heddle.internal.Crc32
 import heddle.internal.node.{Zlib, ZlibFlush, ZlibOptions}
@@ -19,7 +19,8 @@ private[server] object CompressorLive:
       if out.length.toLong > limit then Left(HttpError.BodyTooLarge) else Right(out)
     catch
       case js.JavaScriptException(e: js.Error) if e.name == "RangeError" => Left(HttpError.BodyTooLarge)
-      case js.JavaScriptException(e: js.Error) => Left(HttpError.Malformed(s"gzip: ${e.message}"))
+      case js.JavaScriptException(e: js.Error)                           =>
+        Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Gzip, e.message)))
 
   private[server] def toU8(bytes: Chunk[Byte]): Uint8Array =
     val a = Uint8Array(bytes.length)

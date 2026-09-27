@@ -8,7 +8,7 @@ final case class ToolUi(resourceUri: Option[UiUri], visibility: Visibility)
 
 /** What a host could not accept while reading `_meta.ui`. Unreadable asks are dropped, never widened. */
 enum MetaProblem:
-  case BadOrigin(directive: Directive, raw: String, reason: String)
+  case BadOrigin(directive: Directive, raw: String, reason: OriginError)
   case BadResourceUri(raw: String)
   case UnknownPermission(name: String)
 

@@ -1,10 +1,15 @@
 package heddle.oauth
 
 import heddle.client.ClientError
+import heddle.error.HeddleError
 import heddle.http.Response
+import heddle.oauth.jose.JoseError
 
-enum OAuthError:
-  case InvalidToken(detail: String)
+enum OAuthError extends HeddleError:
+  case InvalidToken(reason: JoseError)
+
+  /** A remote verifier has not loaded its key set yet, or the refresh failed to produce one. */
+  case NoKeys
   case Discovery(detail: String)
   case Protocol(detail: String)
 
@@ -13,7 +18,8 @@ enum OAuthError:
 
   def message: String =
     this match
-      case InvalidToken(m) => m
+      case InvalidToken(e) => e.message
+      case NoKeys          => "the verifier has no key set yet"
       case Discovery(m)    => m
       case Protocol(m)     => m
       case Transport(c)    =>
@@ -23,6 +29,6 @@ enum OAuthError:
 
   def toResponse: Response =
     this match
-      case InvalidToken(_) => Response.unauthorized(message)
-      case _               => Response.badRequest(message)
+      case InvalidToken(_) | NoKeys => Response.unauthorized(message)
+      case _                        => Response.badRequest(message)
 end OAuthError

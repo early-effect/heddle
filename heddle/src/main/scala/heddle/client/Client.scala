@@ -3,7 +3,6 @@ package heddle.client
 import heddle.BytesLength
 import heddle.BytesLength.*
 import heddle.endpoint.Endpoint
-import heddle.error.HttpError
 import heddle.http.{Body, Method, Request, Response, Url}
 import heddle.http.header.Headers
 import heddle.route.Routes
@@ -121,7 +120,7 @@ object Client:
         target <- ZIO.fromEither(Target.of(req))
         res    <- ClientPlatform.streaming(req, config)
         _      <- ZIO
-          .fail(ClientError.Protocol(target.authority, HttpError.Malformed(s"SSE needs 200, got ${res.status.code}")))
+          .fail(ClientError.NotAnEventStream(target.authority, res.status))
           .unless(res.status.code == 200)
       yield SseCodec.stream(res.body.toStream.mapError(ClientError.Io(target.authority, _)))
     }
@@ -177,7 +176,7 @@ object Client:
     given [A](using scala.util.NotGiven[A <:< ZStream[?, ?, ?]]): Strict[A] = new Strict[A] {}
 
   private def decoded(url: String): IO[ClientError, Url] =
-    ZIO.fromEither(Url.decode(url)).mapError(ClientError.InvalidTarget(url, _))
+    ZIO.fromEither(Url.decode(url)).mapError(e => ClientError.InvalidTarget(url, TargetError.Malformed(e)))
 
   private def join(base: Url, rel: Url): Url =
     if rel.absolute then rel

@@ -103,7 +103,7 @@ object Provider:
   end loginGet
 
   private def loginPost(config: ProviderConfig, stores: ProviderStores, req: Request): UIO[Response] =
-    req.body.asForm.orDie.flatMap { form =>
+    withForm(req) { form =>
       val user   = form.get("username").getOrElse("")
       val pass   = form.get("password").getOrElse("")
       val resume = form.get("resume").getOrElse("/")
@@ -137,7 +137,7 @@ object Provider:
       key: SigningKey,
       req: Request,
   ): UIO[Response] =
-    req.body.asForm.orDie.flatMap { form =>
+    withForm(req) { form =>
       clientOf(stores, req, form).flatMap {
         case None    => ZIO.succeed(Response.unauthorized("invalid_client"))
         case Some(c) =>
@@ -253,16 +253,18 @@ object Provider:
             }
 
   private def introspect(config: ProviderConfig, key: SigningKey, req: Request): UIO[Response] =
-    req.body.asForm.orDie.map { form =>
+    withForm(req) { form =>
       val tok = form.get("token").getOrElse("")
-      Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
-        case Left(_)  => Response.json("""{"active":false}""")
-        case Right(c) =>
-          Response.json(s"""{"active":true,"sub":"${c.subject}","scope":"${c.scopes.mkString(" ")}"}""")
+      ZIO.succeed(
+        Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
+          case Left(_)  => Response.json("""{"active":false}""")
+          case Right(c) =>
+            Response.json(s"""{"active":true,"sub":"${c.subject}","scope":"${c.scopes.mkString(" ")}"}""")
+      )
     }
 
   private def revoke(stores: ProviderStores, req: Request): UIO[Response] =
-    req.body.asForm.orDie.flatMap { form =>
+    withForm(req) { form =>
       val tok = form.get("token").getOrElse("")
       stores.tokens.takeRefresh(tok).as(Response.empty(Status.Ok))
     }
@@ -299,6 +301,10 @@ object Provider:
   private def pkceOk(verifier: String, challenge: String): Boolean =
     val digest = DigestPlatform.sha256Sync(Chunk.fromArray(verifier.getBytes(StandardCharsets.US_ASCII)))
     Base64Url.encode(digest) == challenge
+
+  /** An unreadable form is the client's error, `400 invalid_request` (RFC 6749 §5.2), not a defect. */
+  private def withForm(req: Request)(use: Form => UIO[Response]): UIO[Response] =
+    req.body.asForm.foldZIO(_ => ZIO.succeed(Response.badRequest("invalid_request")), use)
 
   private def bearer(req: Request): Option[String] =
     req.headers.get[Authorization] match

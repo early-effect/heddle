@@ -1,14 +1,15 @@
 package heddle.mcp.apps
 
 import heddle.mcp.{Mcp, McpBuildError, ServedResource}
-import heddle.mcp.protocol.{ExtensionId, Resource, ResourceContents, ToolName}
+import heddle.mcp.protocol.{ExtensionId, Resource, ResourceContents, ToolName, ToolNameError}
 import zio.json.ast.Json
 import zio.{Chunk, NonEmptyChunk, ZIO}
 
 /** Why a shed could not be served. */
 enum AppBuildError(val message: String) extends heddle.error.HeddleError:
-  case Mcp(error: McpBuildError)                  extends AppBuildError(error.message)
-  case BadToolName(grant: String, reason: String) extends AppBuildError(s"$grant cannot be an MCP tool name: $reason")
+  case Mcp(error: McpBuildError) extends AppBuildError(error.message)
+  case BadToolName(grant: String, reason: ToolNameError)
+      extends AppBuildError(s"$grant cannot be an MCP tool name: ${reason.message}")
   case LaunchNotForModel(grant: String)
       extends AppBuildError(s"$grant opens the view, so the model must be able to call it")
 

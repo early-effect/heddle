@@ -1,8 +1,17 @@
 package heddle.internal.h2
 
+import heddle.error.WireError
+
 import zio.Chunk
 
+/** RFC 9113 §4.1 framing. `decode` is total and lossless: `decode(encode(f) ++ rest) == Right(f -> rest)`. */
 private[heddle] object FrameCodec:
+  private val EndStream    = 0x01
+  private val Ack          = 0x01
+  private val EndHeaders   = 0x04
+  private val Padded       = 0x08
+  private val PriorityFlag = 0x20
+
   def encode(frame: H2Frame): Chunk[Byte] =
     val (tpe, flags, streamId, payload) = parts(frame)
     val len                             = payload.length
@@ -19,134 +28,120 @@ private[heddle] object FrameCodec:
     Chunk.fromArray(head) ++ payload
   end encode
 
-  def decode(bytes: Chunk[Byte], maxFrame: Int): Either[String, (H2Frame, Chunk[Byte])] =
-    if bytes.length < 9 then Left("short header")
+  def decode(bytes: Chunk[Byte], maxFrame: Int): Either[WireError, (H2Frame, Chunk[Byte])] =
+    if bytes.length < 9 then Left(WireError.TruncatedFrame)
     else
       val len = ((bytes(0) & 0xff) << 16) | ((bytes(1) & 0xff) << 8) | (bytes(2) & 0xff)
-      if len > maxFrame then Left("frame too large")
-      else if bytes.length < 9 + len then Left("short payload")
+      if len > maxFrame then Left(WireError.FrameTooLarge(len, maxFrame))
+      else if bytes.length < 9 + len then Left(WireError.TruncatedFrame)
       else
-        val tpe      = bytes(3) & 0xff
-        val flags    = bytes(4) & 0xff
-        val streamId =
-          ((bytes(5) & 0x7f) << 24) | ((bytes(6) & 0xff) << 16) | ((bytes(7) & 0xff) << 8) | (bytes(8) & 0xff)
-        val payload = bytes.drop(9).take(len)
-        val rest    = bytes.drop(9 + len)
-        body(tpe, flags, streamId, payload).map(_ -> rest)
-      end if
+        val streamId = u32val(bytes, 5) & 0x7fffffff
+        body(bytes(3) & 0xff, bytes(4) & 0xff, streamId, bytes.slice(9, 9 + len)).map(_ -> bytes.drop(9 + len))
 
   private def parts(frame: H2Frame): (Int, Int, Int, Chunk[Byte]) =
     frame match
       case H2Frame.Data(id, data, end, pad) =>
-        var flags = if end then 0x01 else 0
-        val pay   =
-          if pad > 0 then
-            flags |= 0x08
-            Chunk.single(pad.toByte) ++ data ++ Chunk.fromArray(Array.ofDim[Byte](pad))
-          else data
-        (H2Frame.DataType, flags, id, pay)
+        val padded = pad > 0
+        val body   = if padded then Chunk.single(pad.toByte) ++ data ++ Chunk.fill(pad)(0.toByte) else data
+        (H2Frame.DataType, flag(end, EndStream) | flag(padded, Padded), id, body)
       case H2Frame.Headers(id, block, endStream, endHeaders, exclusive, dep, weight) =>
-        var flags = 0
-        if endStream then flags |= 0x01
-        if endHeaders then flags |= 0x04
-        val pay =
-          if dep != 0 || exclusive then
-            flags |= 0x20
-            val d = (if exclusive then 0x80000000 else 0) | (dep & 0x7fffffff)
-            val p = Array.ofDim[Byte](5)
-            p(0) = ((d >>> 24) & 0xff).toByte
-            p(1) = ((d >>> 16) & 0xff).toByte
-            p(2) = ((d >>> 8) & 0xff).toByte
-            p(3) = (d & 0xff).toByte
-            p(4) = (weight - 1).toByte
-            Chunk.fromArray(p) ++ block
-          else block
-        (H2Frame.HeadersType, flags, id, pay)
+        val prioritized = exclusive || dep != 0 || weight != 16
+        val flags       = flag(endStream, EndStream) | flag(endHeaders, EndHeaders) | flag(prioritized, PriorityFlag)
+        (H2Frame.HeadersType, flags, id, if prioritized then priority(exclusive, dep, weight) ++ block else block)
       case H2Frame.RstStream(id, code) =>
         (H2Frame.RstStreamType, 0, id, u32(code))
-      case H2Frame.Settings(ack, params) =>
-        val flags = if ack then 0x01 else 0
-        val pay   =
-          params.foldLeft(Chunk.empty[Byte]) { case (acc, (k, v)) =>
-            acc ++ u16(k) ++ u32(v)
-          }
-        (H2Frame.SettingsType, flags, 0, pay)
-      case H2Frame.Ping(ack, opaque) =>
-        val flags = if ack then 0x01 else 0
-        val p     = opaque.toArray.padTo(8, 0.toByte).take(8)
-        (H2Frame.PingType, flags, 0, Chunk.fromArray(p))
+      case H2Frame.Settings(params) =>
+        (H2Frame.SettingsType, 0, 0, params.flatMap((k, v) => u16(k) ++ u32(v)))
+      case H2Frame.SettingsAck =>
+        (H2Frame.SettingsType, Ack, 0, Chunk.empty)
+      case H2Frame.Ping(opaque) =>
+        (H2Frame.PingType, 0, 0, u32((opaque >>> 32).toInt) ++ u32(opaque.toInt))
+      case H2Frame.PingAck(opaque) =>
+        (H2Frame.PingType, Ack, 0, u32((opaque >>> 32).toInt) ++ u32(opaque.toInt))
       case H2Frame.GoAway(last, code, debug) =>
         (H2Frame.GoAwayType, 0, 0, u32(last) ++ u32(code) ++ debug)
       case H2Frame.WindowUpdate(id, inc) =>
         (H2Frame.WindowUpdateType, 0, id, u32(inc))
       case H2Frame.Continuation(id, block, endHeaders) =>
-        val flags = if endHeaders then 0x04 else 0
-        (H2Frame.ContinuationType, flags, id, block)
+        (H2Frame.ContinuationType, flag(endHeaders, EndHeaders), id, block)
       case H2Frame.Priority(id, exclusive, dep, weight) =>
-        val d = (if exclusive then 0x80000000 else 0) | (dep & 0x7fffffff)
-        val p = Array.ofDim[Byte](5)
-        p(0) = ((d >>> 24) & 0xff).toByte
-        p(1) = ((d >>> 16) & 0xff).toByte
-        p(2) = ((d >>> 8) & 0xff).toByte
-        p(3) = (d & 0xff).toByte
-        p(4) = (weight - 1).toByte
-        (H2Frame.PriorityType, 0, id, Chunk.fromArray(p))
+        (H2Frame.PriorityType, 0, id, priority(exclusive, dep, weight))
       case H2Frame.PushPromise(id, promised, block, endHeaders) =>
-        val flags = if endHeaders then 0x04 else 0
-        (H2Frame.PushPromiseType, flags, id, u32(promised) ++ block)
+        (H2Frame.PushPromiseType, flag(endHeaders, EndHeaders), id, u32(promised) ++ block)
+      case H2Frame.Unknown(tpe, flags, id, payload) =>
+        (tpe, flags, id, payload)
 
-  private def body(tpe: Int, flags: Int, id: Int, payload: Chunk[Byte]): Either[String, H2Frame] =
+  private def body(tpe: Int, flags: Int, id: Int, payload: Chunk[Byte]): Either[WireError, H2Frame] =
+    def set(bit: Int): Boolean                                       = (flags & bit) != 0
+    def sized(n: Int)(frame: => H2Frame): Either[WireError, H2Frame] =
+      if payload.length == n then Right(frame) else Left(WireError.FrameSize(tpe, payload.length))
+    def atLeast(n: Int, c: Chunk[Byte])(frame: => H2Frame): Either[WireError, H2Frame] =
+      if c.length >= n then Right(frame) else Left(WireError.FrameSize(tpe, payload.length))
     tpe match
       case H2Frame.DataType =>
-        val (data, pad) = stripPad(flags, payload)
-        Right(H2Frame.Data(id, data, (flags & 0x01) != 0, pad))
+        unpad(tpe, flags, payload).map((data, pad) => H2Frame.Data(id, data, set(EndStream), pad))
       case H2Frame.HeadersType =>
-        var rest = payload
-        var excl = false
-        var dep  = 0
-        var w    = 16
-        if (flags & 0x08) != 0 then rest = rest.drop(1)
-        if (flags & 0x20) != 0 && rest.length >= 5 then
-          val v = u32val(rest)
-          excl = (v & 0x80000000) != 0
-          dep = v & 0x7fffffff
-          w = (rest(4) & 0xff) + 1
-          rest = rest.drop(5)
-        if (flags & 0x08) != 0 && payload.nonEmpty then
-          val pad = payload(0) & 0xff
-          rest = rest.dropRight(pad)
-        Right(H2Frame.Headers(id, rest, (flags & 0x01) != 0, (flags & 0x04) != 0, excl, dep, w))
-      case H2Frame.RstStreamType if payload.length == 4 =>
-        Right(H2Frame.RstStream(id, u32val(payload)))
-      case H2Frame.SettingsType =>
-        if payload.length % 6 != 0 then Left("bad settings")
-        else
-          val ps = Chunk.fromIterator(
-            payload.toArray.grouped(6).map { g =>
-              val k = ((g(0) & 0xff) << 8) | (g(1) & 0xff)
-              val v = ((g(2) & 0xff) << 24) | ((g(3) & 0xff) << 16) | ((g(4) & 0xff) << 8) | (g(5) & 0xff)
-              k -> v
+        unpad(tpe, flags, payload).flatMap { (rest, _) =>
+          if !set(PriorityFlag) then Right(H2Frame.Headers(id, rest, set(EndStream), set(EndHeaders)))
+          else
+            atLeast(5, rest) {
+              val (exclusive, dep, weight) = priorityOf(rest)
+              H2Frame.Headers(id, rest.drop(5), set(EndStream), set(EndHeaders), exclusive, dep, weight)
             }
-          )
-          Right(H2Frame.Settings((flags & 0x01) != 0, ps))
-      case H2Frame.PingType if payload.length == 8 =>
-        Right(H2Frame.Ping((flags & 0x01) != 0, payload))
-      case H2Frame.GoAwayType if payload.length >= 8 =>
-        Right(H2Frame.GoAway(u32val(payload), u32val(payload.drop(4)), payload.drop(8)))
-      case H2Frame.WindowUpdateType if payload.length == 4 =>
-        Right(H2Frame.WindowUpdate(id, u32val(payload) & 0x7fffffff))
+        }
+      case H2Frame.PriorityType =>
+        sized(5) {
+          val (exclusive, dep, weight) = priorityOf(payload)
+          H2Frame.Priority(id, exclusive, dep, weight)
+        }
+      case H2Frame.RstStreamType =>
+        sized(4)(H2Frame.RstStream(id, u32val(payload, 0)))
+      case H2Frame.SettingsType if set(Ack) =>
+        sized(0)(H2Frame.SettingsAck)
+      case H2Frame.SettingsType if payload.length % 6 != 0 =>
+        Left(WireError.FrameSize(tpe, payload.length))
+      case H2Frame.SettingsType =>
+        val params = (0 until payload.length by 6).map(at => u16val(payload, at) -> u32val(payload, at + 2))
+        Right(H2Frame.Settings(Chunk.fromIterable(params)))
+      case H2Frame.PushPromiseType =>
+        unpad(tpe, flags, payload).flatMap { (rest, _) =>
+          atLeast(4, rest)(H2Frame.PushPromise(id, u32val(rest, 0) & 0x7fffffff, rest.drop(4), set(EndHeaders)))
+        }
+      case H2Frame.PingType =>
+        sized(8) {
+          val opaque = (u32val(payload, 0).toLong << 32) | (u32val(payload, 4).toLong & 0xffffffffL)
+          if set(Ack) then H2Frame.PingAck(opaque) else H2Frame.Ping(opaque)
+        }
+      case H2Frame.GoAwayType =>
+        atLeast(8, payload)(H2Frame.GoAway(u32val(payload, 0) & 0x7fffffff, u32val(payload, 4), payload.drop(8)))
+      case H2Frame.WindowUpdateType =>
+        sized(4)(H2Frame.WindowUpdate(id, u32val(payload, 0) & 0x7fffffff))
       case H2Frame.ContinuationType =>
-        Right(H2Frame.Continuation(id, payload, (flags & 0x04) != 0))
-      case H2Frame.PriorityType if payload.length == 5 =>
-        val v = u32val(payload)
-        Right(H2Frame.Priority(id, (v & 0x80000000) != 0, v & 0x7fffffff, (payload(4) & 0xff) + 1))
-      case other => Left(s"unsupported frame $other")
+        Right(H2Frame.Continuation(id, payload, set(EndHeaders)))
+      case other =>
+        Right(H2Frame.Unknown(other, flags, id, payload))
+    end match
+  end body
 
-  private def stripPad(flags: Int, payload: Chunk[Byte]): (Chunk[Byte], Int) =
-    if (flags & 0x08) == 0 || payload.isEmpty then (payload, 0)
+  /** RFC 9113 §6.1: padding as long as the payload or longer is a connection error. */
+  private def unpad(tpe: Int, flags: Int, payload: Chunk[Byte]): Either[WireError, (Chunk[Byte], Int)] =
+    if (flags & Padded) == 0 then Right(payload -> 0)
     else
-      val pad = payload(0) & 0xff
-      (payload.drop(1).dropRight(pad), pad)
+      payload.headOption match
+        case None       => Left(WireError.FrameSize(tpe, 0))
+        case Some(byte) =>
+          val pad = byte & 0xff
+          if pad >= payload.length then Left(WireError.BadPadding(pad, payload.length))
+          else Right(payload.slice(1, payload.length - pad) -> pad)
+
+  private def flag(on: Boolean, bit: Int): Int = if on then bit else 0
+
+  private def priority(exclusive: Boolean, dep: Int, weight: Int): Chunk[Byte] =
+    u32(flag(exclusive, 0x80000000) | (dep & 0x7fffffff)) :+ (weight - 1).toByte
+
+  private def priorityOf(c: Chunk[Byte]): (Boolean, Int, Int) =
+    val v = u32val(c, 0)
+    ((v & 0x80000000) != 0, v & 0x7fffffff, (c(4) & 0xff) + 1)
 
   private def u16(n: Int): Chunk[Byte] =
     Chunk((n >>> 8).toByte, n.toByte)
@@ -154,6 +149,9 @@ private[heddle] object FrameCodec:
   private def u32(n: Int): Chunk[Byte] =
     Chunk(((n >>> 24) & 0xff).toByte, ((n >>> 16) & 0xff).toByte, ((n >>> 8) & 0xff).toByte, (n & 0xff).toByte)
 
-  private def u32val(c: Chunk[Byte]): Int =
-    ((c(0) & 0xff) << 24) | ((c(1) & 0xff) << 16) | ((c(2) & 0xff) << 8) | (c(3) & 0xff)
+  private def u16val(c: Chunk[Byte], at: Int): Int =
+    ((c(at) & 0xff) << 8) | (c(at + 1) & 0xff)
+
+  private def u32val(c: Chunk[Byte], at: Int): Int =
+    ((c(at) & 0xff) << 24) | ((c(at + 1) & 0xff) << 16) | ((c(at + 2) & 0xff) << 8) | (c(at + 3) & 0xff)
 end FrameCodec

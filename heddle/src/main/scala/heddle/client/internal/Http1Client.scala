@@ -48,7 +48,7 @@ private[heddle] object Http1Client:
       _    <- Http1Exchange.send(c, target, req.method, ClientSupport.prepare(cfg, req.headers), req.body, connector.io)
       _    <- c.src.setReadTimeout(cfg.idleTimeout)
       head <- Http1Exchange.readHead(c, target, Limits.of(cfg), connector.io)
-      framing = Http1Exchange.framing(req.method, head)
+      framing <- ZIO.fromEither(Http1Exchange.framing(req.method, head)).mapError(Http1Exchange.malformed(target))
     yield Http1Exchange.response(head, Http1Exchange.streamBody(c, framing, head.headers.contentType))
 
   def strict(
@@ -60,11 +60,11 @@ private[heddle] object Http1Client:
   ): IO[ClientError, (Response, Reuse)] =
     val limits = Limits.of(cfg)
     for
-      _    <- Http1Exchange.send(c, target, req.method, req.headers, req.body, io)
-      _    <- c.src.setReadTimeout(cfg.idleTimeout)
-      head <- Http1Exchange.readHead(c, target, limits, io)
-      framing = Http1Exchange.framing(req.method, head)
-      bytes <- Http1Exchange.readBody(c, target, framing, limits, io)
+      _       <- Http1Exchange.send(c, target, req.method, req.headers, req.body, io)
+      _       <- c.src.setReadTimeout(cfg.idleTimeout)
+      head    <- Http1Exchange.readHead(c, target, limits, io)
+      framing <- ZIO.fromEither(Http1Exchange.framing(req.method, head)).mapError(Http1Exchange.malformed(target))
+      bytes   <- Http1Exchange.readBody(c, target, framing, limits, io)
     yield (
       Http1Exchange.response(head, Body.fromBytes(bytes, head.headers.contentType)),
       Http1Exchange.reuse(req.headers, head, framing),

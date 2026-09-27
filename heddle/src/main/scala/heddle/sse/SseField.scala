@@ -8,9 +8,10 @@ final case class SseField @publicInBinary private[sse] (value: String):
   override def toString: String = value
 
 object SseField:
-  def from(raw: String): Either[String, SseField] =
-    if raw.exists(c => c == '\n' || c == '\r') then Left(s"SSE field must not contain CR or LF: ${raw.take(40)}")
-    else Right(new SseField(raw))
+  def from(raw: String): Either[SseFieldError, SseField] =
+    raw.indexWhere(c => c == '\n' || c == '\r') match
+      case -1 => Right(new SseField(raw))
+      case at => Left(SseFieldError.LineBreak(at))
 
   def of(n: Long): SseField = new SseField(n.toString)
 
@@ -19,9 +20,8 @@ object SseField:
 
   private def literal(raw: Expr[String])(using Quotes): Expr[SseField] =
     import quotes.reflect.report
-    raw.value match
-      case None => report.errorAndAbort("SseField(...) takes a literal; use SseField.from")
-      case Some(s) if s.exists(c => c == '\n' || c == '\r') =>
-        report.errorAndAbort("SSE field must not contain CR or LF")
-      case Some(s) => '{ new SseField(${ Expr(s) }) }
+    raw.value.map(s => (s, from(s))) match
+      case None                => report.errorAndAbort("SseField(...) takes a literal; use SseField.from")
+      case Some((_, Left(e)))  => report.errorAndAbort(e.message)
+      case Some((s, Right(_))) => '{ new SseField(${ Expr(s) }) }
 end SseField

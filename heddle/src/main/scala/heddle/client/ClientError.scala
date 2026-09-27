@@ -1,6 +1,7 @@
 package heddle.client
 
 import heddle.error.{HeddleError, HttpError}
+import heddle.http.Status
 
 /** Host and port a request connects to. `host` is never bracketed. */
 final case class Authority(host: String, port: Int):
@@ -8,7 +9,8 @@ final case class Authority(host: String, port: Int):
 
 /** Why an exchange produced no response. A response with any status is a success, not a `ClientError`. */
 enum ClientError(val message: String) extends HeddleError:
-  case InvalidTarget(target: String, reason: String) extends ClientError(s"Cannot send to '$target': $reason")
+  case InvalidTarget(target: String, reason: TargetError)
+      extends ClientError(s"Cannot send to '$target': ${reason.message}")
   case Connect(authority: Authority, cause: Throwable)
       extends ClientError(s"Connect to ${authority.render} failed: $cause")
   case ConnectTimeout(authority: Authority)        extends ClientError(s"Connect to ${authority.render} timed out")
@@ -18,7 +20,9 @@ enum ClientError(val message: String) extends HeddleError:
   case Protocol(authority: Authority, error: HttpError)
       extends ClientError(s"${authority.render} sent an invalid response: ${error.message}")
   case PoolExhausted(authority: Authority) extends ClientError(s"No free connection to ${authority.render}")
-  case InvalidTrust(reason: String)        extends ClientError(s"Unusable trust material: $reason")
+  case NotAnEventStream(authority: Authority, status: Status)
+      extends ClientError(s"${authority.render} answered an event-stream request with ${status.code}, not 200")
+  case InvalidTrust(reason: String) extends ClientError(s"Unusable trust material: $reason")
 
   /** A streamed response body failed after its head arrived. */
   case BodyFailed(cause: Throwable) extends ClientError(s"Response body failed: $cause")

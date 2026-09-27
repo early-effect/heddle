@@ -15,15 +15,6 @@ object H2Spec extends ZIOSpecDefault:
       test("preface is 24 bytes and http2 is on by default"):
         assertTrue(H2Frame.Preface.length == 24, Server.Config.default.http2)
       ,
-      test("SETTINGS round-trips"):
-        val f = H2Frame.Settings(ack = false, Chunk(4 -> 65535, 5 -> 16384))
-        val e = FrameCodec.encode(f)
-        FrameCodec.decode(e, 16384).map { (g, rest) =>
-          assertTrue(rest.isEmpty, g == f)
-        } match
-          case Left(err) => assertTrue(err == "")
-          case Right(a)  => a
-      ,
       test("HPACK round-trips :method and :path"):
         val hs  = Chunk(":method" -> "GET", ":path" -> "/health", ":scheme" -> "http")
         val dec = Hpack.decode(Hpack.encode(hs))
@@ -31,7 +22,7 @@ object H2Spec extends ZIOSpecDefault:
       ,
       test("ConnBuf fillUntil sees the h2 preface"):
         val preface = Chunk.fromArray(H2Frame.Preface)
-        val rest    = FrameCodec.encode(H2Frame.Settings(ack = false, Chunk.empty))
+        val rest    = FrameCodec.encode(H2Frame.Settings(Chunk.empty))
         val src     = ConnBuf.fromPull(java.nio.ByteBuffer.allocate(1024), ZIO.succeed(Some(preface ++ rest)))
         src.fillUntil(24).map { avail =>
           val peek = src.peek(24)
@@ -218,7 +209,7 @@ object H2Spec extends ZIOSpecDefault:
         val out = s.getOutputStream
         val in  = s.getInputStream
         out.write(H2Frame.Preface)
-        out.write(FrameCodec.encode(H2Frame.Settings(ack = false, Chunk.empty)).toArray)
+        out.write(FrameCodec.encode(H2Frame.Settings(Chunk.empty)).toArray)
         out.flush()
         reqs.foreach { req =>
           val hs =
@@ -254,8 +245,8 @@ object H2Spec extends ZIOSpecDefault:
           var keep  = true
           while keep do
             FrameCodec.decode(chunk, 1 << 20) match
-              case Right((H2Frame.Settings(false, _), rest)) =>
-                out.write(FrameCodec.encode(H2Frame.Settings(ack = true, Chunk.empty)).toArray)
+              case Right((H2Frame.Settings(_), rest)) =>
+                out.write(FrameCodec.encode(H2Frame.SettingsAck).toArray)
                 out.flush()
                 chunk = rest
               case Right((H2Frame.Data(id, data, end, _), rest)) =>
@@ -292,7 +283,7 @@ object H2Spec extends ZIOSpecDefault:
         val out = s.getOutputStream
         val in  = s.getInputStream
         out.write(H2Frame.Preface)
-        out.write(FrameCodec.encode(H2Frame.Settings(ack = false, Chunk.empty)).toArray)
+        out.write(FrameCodec.encode(H2Frame.Settings(Chunk.empty)).toArray)
         val block = Hpack.encode(
           Chunk(
             ":method"               -> "CONNECT",
@@ -319,8 +310,8 @@ object H2Spec extends ZIOSpecDefault:
           var keep  = true
           while keep do
             FrameCodec.decode(chunk, 1 << 20) match
-              case Right((H2Frame.Settings(false, _), rest)) =>
-                out.write(FrameCodec.encode(H2Frame.Settings(ack = true, Chunk.empty)).toArray)
+              case Right((H2Frame.Settings(_), rest)) =>
+                out.write(FrameCodec.encode(H2Frame.SettingsAck).toArray)
                 out.flush()
                 chunk = rest
               case Right((H2Frame.Headers(_, _, _, _, _, _, _), rest)) =>

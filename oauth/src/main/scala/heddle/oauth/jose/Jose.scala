@@ -90,61 +90,64 @@ object Jose:
     s"$input.${Base64Url.encode(sig)}"
   end sign
 
-  def verify(token: String, jwks: Jwks, issuer: String, audience: String): Either[String, JwtClaim] =
+  def verify(token: String, jwks: Jwks, issuer: String, audience: String): Either[JoseError, JwtClaim] =
     for
       parts <- splitCompact(token)
       (hB64, pB64, sB64) = parts
-      header <- decodeJson(hB64)
-      alg    <- str(header, "alg").toRight("missing alg")
-      _      <- Either.cond(alg == "RS256", (), s"unsupported alg: $alg")
-      jwk    <- jwks.byKid(str(header, "kid")).toRight("no matching JWK")
-      sig    <- Base64Url.decode(sB64)
+      header <- decodeJson("header", hB64)
+      alg    <- str(header, "alg").toRight(JoseError.MissingAlg)
+      _      <- Either.cond(alg == "RS256", (), JoseError.UnsupportedAlg(alg))
+      jwk    <- jwks.byKid(str(header, "kid")).toRight(JoseError.NoMatchingKey)
+      sig    <- Base64Url.decode(sB64).left.map(JoseError.BadBase64("signature", _))
       input = utf8(s"$hB64.$pB64")
-      _       <- Either.cond(RsaPlatform.verifySync(jwk.public, input, sig), (), "bad signature")
-      payload <- decodeJson(pB64)
+      _       <- Either.cond(RsaPlatform.verifySync(jwk.public, input, sig), (), JoseError.BadSignature)
+      payload <- decodeJson("payload", pB64)
       claim   <- claimsOf(payload, issuer, audience)
     yield claim
 
-  def parseJwks(json: String): Either[String, Jwks] =
-    json.fromJson[JwksWire].left.map(identity).flatMap { wire =>
+  def parseJwks(json: String): Either[JoseError, Jwks] =
+    json.fromJson[JwksWire].left.map(JoseError.JwksNotJson(_)).flatMap { wire =>
       val parsed = wire.keys.map { k =>
-        if k.kty.exists(_ != "RSA") then Left("JWK kty must be RSA")
-        else
-          for
-            n <- k.n.toRight("JWK missing n").flatMap(Base64Url.decode)
-            e <- k.e.toRight("JWK missing e").flatMap(Base64Url.decode)
-          yield Jwk(k.kid.getOrElse(""), n, e)
+        k.kty.filter(_ != "RSA") match
+          case Some(kty) => Left(JoseError.JwkNotRsa(kty))
+          case None      =>
+            for
+              n <- k.n.toRight(JoseError.JwkMissing("n")).flatMap(key("n"))
+              e <- k.e.toRight(JoseError.JwkMissing("e")).flatMap(key("e"))
+            yield Jwk(k.kid.getOrElse(""), n, e)
       }
       parsed.collectFirst { case Left(err) => err } match
         case Some(err) => Left(err)
         case None      =>
           val keys = parsed.collect { case Right(j) => j }
-          if keys.isEmpty then Left("JWKS has no keys") else Right(Jwks(keys))
+          if keys.isEmpty then Left(JoseError.NoKeys) else Right(Jwks(keys))
     }
 
-  private def splitCompact(token: String): Either[String, (String, String, String)] =
+  private def key(field: String)(b64: String): Either[JoseError, Chunk[Byte]] =
+    Base64Url.decode(b64).left.map(JoseError.BadBase64(s"JWK $field", _))
+
+  private def splitCompact(token: String): Either[JoseError, (String, String, String)] =
     token.split("\\.", -1) match
       case Array(h, p, s) if h.nonEmpty && p.nonEmpty && s.nonEmpty => Right((h, p, s))
-      case _                                                        => Left("malformed JWT")
+      case _                                                        => Left(JoseError.Malformed)
 
-  private def decodeJson(b64: String): Either[String, Json.Obj] =
-    Base64Url.decode(b64).flatMap { bytes =>
-      String(bytes.toArray, StandardCharsets.UTF_8).fromJson[Json].flatMap {
-        case o: Json.Obj => Right(o)
-        case _           => Left("JWT JSON must be an object")
-      }
+  private def decodeJson(part: String, b64: String): Either[JoseError, Json.Obj] =
+    Base64Url.decode(b64).left.map(JoseError.BadBase64(part, _)).flatMap { bytes =>
+      String(bytes.toArray, StandardCharsets.UTF_8).fromJson[Json] match
+        case Right(o: Json.Obj) => Right(o)
+        case _                  => Left(JoseError.NotJsonObject(part))
     }
 
-  private def claimsOf(payload: Json.Obj, issuer: String, audience: String): Either[String, JwtClaim] =
+  private def claimsOf(payload: Json.Obj, issuer: String, audience: String): Either[JoseError, JwtClaim] =
     val now = Instant.now()
     val exp = num(payload, "exp").map(Instant.ofEpochSecond)
     val nbf = num(payload, "nbf").map(Instant.ofEpochSecond)
     val iss = str(payload, "iss").getOrElse("")
     val aud = audienceOf(payload)
-    if exp.exists(now.isAfter) then Left("expired")
-    else if nbf.exists(now.isBefore) then Left("not yet valid")
-    else if issuer.nonEmpty && iss != issuer then Left("issuer mismatch")
-    else if audience.nonEmpty && !aud.contains(audience) then Left("audience mismatch")
+    if exp.exists(now.isAfter) then Left(JoseError.Expired)
+    else if nbf.exists(now.isBefore) then Left(JoseError.NotYetValid)
+    else if issuer.nonEmpty && iss != issuer then Left(JoseError.IssuerMismatch(issuer, iss))
+    else if audience.nonEmpty && !aud.contains(audience) then Left(JoseError.AudienceMismatch(audience, aud))
     else
       val scope = str(payload, "scope").getOrElse("")
       Right(

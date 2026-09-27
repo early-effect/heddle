@@ -1,7 +1,7 @@
 package heddle.mcp.client
 
 import heddle.LinePipe
-import heddle.client.{Client, ClientError}
+import heddle.client.{Client, ClientError, TargetError}
 import heddle.http.Url
 import heddle.http.header.Headers
 import heddle.mcp.protocol.*
@@ -27,7 +27,9 @@ object McpClient:
       headers: Headers = Headers.empty,
   ): ZIO[Scope & Client, McpError, McpSession] =
     for
-      target  <- ZIO.fromEither(Url.decode(url)).mapError(r => McpError.Transport(ClientError.InvalidTarget(url, r)))
+      target <- ZIO
+        .fromEither(Url.decode(url))
+        .mapError(e => McpError.Transport(ClientError.InvalidTarget(url, TargetError.Malformed(e))))
       client  <- ZIO.service[Client]
       sid     <- Ref.make(Option.empty[String])
       session <- connect(HttpCarrier(client, target, headers, sid), settings)

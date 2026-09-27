@@ -44,8 +44,8 @@ object UiMetaLawsSpec extends ZIOSpecDefault:
           policy.network.connect == Set(Origin("https://api.example.com")),
           problems.length == 2,
           problems.forall {
-            case MetaProblem.BadOrigin(Directive.Connect, _, _) => true
-            case _                                              => false
+            case MetaProblem.BadOrigin(Directive.Connect, _, OriginError.NotBare(_)) => true
+            case _                                                                   => false
           },
         )
       }
@@ -68,7 +68,24 @@ object UiMetaLawsSpec extends ZIOSpecDefault:
     ,
     test("origins parse back from their rendering, and a wildcard never parses"):
       check(origin)(o => assertTrue(Origin.from(o.render) == Right(o))) &&
-      check(Gen.alphaNumericStringBounded(1, 8))(s => assertTrue(Origin.from(s"https://*.$s.com").isLeft))
+      check(Gen.alphaNumericStringBounded(1, 8))(s =>
+        assertTrue(Origin.from(s"https://*.$s.com") == Left(OriginError.NotBare('*')))
+      )
+    ,
+    test("an origin with a path, query, fragment, userinfo, or wildcard is not bare"):
+      check(origin, Gen.elements('/', '?', '#', '@', '*')) { (o, c) =>
+        assertTrue(Origin.from(s"${o.render}${c}x") == Left(OriginError.NotBare(c)))
+      }
+    ,
+    test("a ui:// uri parses back to its text, and anything else says why"):
+      check(Gen.alphaNumericStringBounded(1, 12), Gen.elements(' ', '#', '\t')) { (s, bad) =>
+        assertTrue(
+          UiUri.from(s"ui://$s").map(_.value) == Right(s"ui://$s"),
+          UiUri.from(s"https://$s") == Left(UiUriError.NotUi),
+          UiUri.from(s"ui://$s$bad") == Left(UiUriError.BadCharacter(bad, 5 + s.length)),
+          UiUri.from("ui://") == Left(UiUriError.Empty),
+        )
+      }
     ,
     test("a default port is dropped, so one origin has one rendering"):
       assertTrue(Origin("HTTPS://API.Example.com:443") == Origin("https://api.example.com"))
@@ -76,7 +93,10 @@ object UiMetaLawsSpec extends ZIOSpecDefault:
     test("ui:// and origin literals are checked at compile time"):
       (typeCheck("""UiUri("https://not-a-view")""") <*> typeCheck("""Origin("https://*.example.com")""")).map {
         (uri, origin) =>
-          assertTrue(uri.left.exists(_.contains("not a ui://")), origin.left.exists(_.contains("not a bare origin")))
+          assertTrue(
+            uri.left.exists(_.contains("not a ui://")),
+            origin.left.exists(_.contains("more than scheme://host[:port]")),
+          )
       },
   ) @@ TestAspect.timeout(60.seconds)
 end UiMetaLawsSpec

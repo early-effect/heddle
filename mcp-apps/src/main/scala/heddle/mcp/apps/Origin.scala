@@ -21,34 +21,37 @@ object Origin:
   inline def apply(inline raw: String): Origin = ${ literal('raw) }
 
   /** `https://api.example.com`, `http://localhost:8080`. A path, query, or `*` is a `Left`. */
-  def from(raw: String): Either[String, Origin] =
+  def from(raw: String): Either[OriginError, Origin] =
     raw.indexOf("://") match
-      case -1  => Left(s"not an origin (scheme://host[:port]): $raw")
+      case -1  => Left(OriginError.NoScheme)
       case sep =>
-        val rest = raw.substring(sep + 3)
-        Scheme.values.find(_.render == raw.substring(0, sep).toLowerCase) match
-          case None                                             => Left(s"not a web scheme: $raw")
-          case Some(_) if rest.exists(c => "/?#@*".contains(c)) => Left(s"not a bare origin: $raw")
-          case Some(scheme)                                     =>
-            val (host, port) = splitPort(rest)
-            port.flatMap(build(scheme, host, _))
+        val scheme = raw.substring(0, sep)
+        val rest   = raw.substring(sep + 3)
+        Scheme.values.find(_.render == scheme.toLowerCase) match
+          case None    => Left(OriginError.UnknownScheme(scheme))
+          case Some(s) =>
+            rest.find(c => "/?#@*".contains(c)) match
+              case Some(c) => Left(OriginError.NotBare(c))
+              case None    =>
+                val (host, port) = splitPort(rest)
+                port.flatMap(build(s, host, _))
 
-  private def build(scheme: Scheme, host: String, port: Option[Int]): Either[String, Origin] =
+  private def build(scheme: Scheme, host: String, port: Option[Int]): Either[OriginError, Origin] =
     val h = host.toLowerCase
-    if !validHost(h) then Left(s"not a host: $host")
-    else
-      port.find(p => p < 1 || p > 65535) match
-        case Some(p) => Left(s"not a port: $p")
-        case None    => Right(new Origin(scheme, h, port.filterNot(_ == scheme.defaultPort)))
+    if !validHost(h) then Left(OriginError.BadHost(host))
+    else Right(new Origin(scheme, h, port.filterNot(_ == scheme.defaultPort)))
 
-  private def splitPort(rest: String): (String, Either[String, Option[Int]]) =
+  private def splitPort(rest: String): (String, Either[OriginError, Option[Int]]) =
     val bracket = rest.lastIndexOf(']')
     val colon   = rest.lastIndexOf(':')
     if colon <= bracket then (rest, Right(None))
     else
       val digits = rest.substring(colon + 1)
-      val port   = digits.toIntOption.filter(_ => digits.forall(_.isDigit)).toRight(s"not a port: $digits")
+      val port   = digits.toIntOption
+        .filter(p => digits.forall(_.isDigit) && p >= 1 && p <= 65535)
+        .toRight(OriginError.BadPort(digits))
       (rest.substring(0, colon), port.map(Some(_)))
+  end splitPort
 
   private def validHost(h: String): Boolean =
     if h.startsWith("[") then
@@ -65,7 +68,7 @@ object Origin:
     import quotes.reflect.report
     raw.value.map(from) match
       case None            => report.errorAndAbort("Origin(...) takes a literal; use Origin.from")
-      case Some(Left(e))   => report.errorAndAbort(e)
+      case Some(Left(e))   => report.errorAndAbort(s"not an origin: ${e.message}")
       case Some(Right(ok)) => '{ new Origin(${ schemeExpr(ok.scheme) }, ${ Expr(ok.host) }, ${ Expr(ok.port) }) }
 
   private def schemeExpr(s: Scheme)(using Quotes): Expr[Scheme] =

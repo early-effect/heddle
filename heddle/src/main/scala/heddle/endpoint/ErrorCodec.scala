@@ -31,20 +31,19 @@ final class ErrorCodec[E] private (
   /** `None` when `status` is not one of this codec's statuses. A body whose case answers with another status is a
     * `Left`.
     */
-  def decode(status: Status, raw: Chunk[Byte]): Option[Either[String, E]] =
+  def decode(status: Status, raw: Chunk[Byte]): Option[Either[BodyError, E]] =
     codec.filter(_ => handles(status)).map { c =>
-      c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8)).flatMap { e =>
+      c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8)).left.map(BodyError.Json(_)).flatMap { e =>
         val expected = statusOf(e)
-        if expected.code == status.code then Right(e)
-        else Left(s"error body answers with ${expected.code}, response was ${status.code}")
+        Either.cond(expected.code == status.code, e, BodyError.WrongStatus(expected, status))
       }
     }
 
   /** Reads an error from its JSON alone, for hosts with no status (an MCP `isError` result). `None` when this endpoint
     * declares no typed error.
     */
-  def decodeJson(json: String): Option[Either[String, E]] =
-    codec.map(_.decoder.decodeJson(json))
+  def decodeJson(json: String): Option[Either[BodyError, E]] =
+    codec.map(_.decoder.decodeJson(json).left.map(BodyError.Json(_)))
 end ErrorCodec
 
 object ErrorCodec:

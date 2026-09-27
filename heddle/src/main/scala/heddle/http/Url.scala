@@ -45,20 +45,31 @@ object Url:
   /** Strict: every character must be legal in a URI reference (RFC 3986 §2), and absolute-form needs a known scheme, a
     * well-formed host, and a numeric port. Use this for URLs that arrive as data (headers, config, user input).
     */
-  def decode(raw: String): Either[String, Url] =
+  def decode(raw: String): Either[UrlError, Url] =
     val noFragment = raw.indexOf('#') match
       case -1 => raw
       case i  => raw.substring(0, i)
-    if raw.isEmpty then Left("empty URL")
-    else if !raw.forall(uriChar) then Left(s"illegal character in URL: $raw")
-    else
-      val sep = noFragment.indexOf("://")
-      if sep <= 0 then Right(origin(noFragment))
-      else
-        absolute(noFragment) match
-          case Some(url) if url.host.forall(validHost) && portIsNumeric(noFragment, sep) => Right(url)
-          case _ => Left(s"malformed absolute URL: $raw")
+    val sep = noFragment.indexOf("://")
+    raw.indexWhere(c => !uriChar(c)) match
+      case _ if raw.isEmpty => Left(UrlError.Empty)
+      case -1 if sep <= 0   => Right(origin(noFragment))
+      case -1               =>
+        val scheme = noFragment.substring(0, sep)
+        Scheme.parse(scheme) match
+          case None    => Left(UrlError.UnknownScheme(scheme))
+          case Some(_) =>
+            absolute(noFragment)
+              .filter(url => url.host.forall(validHost) && portIsNumeric(noFragment, sep))
+              .toRight(UrlError.BadAuthority(authorityOf(noFragment, sep)))
+      case at => Left(UrlError.BadCharacter(raw(at), at))
+    end match
   end decode
+
+  private def authorityOf(raw: String, sep: Int): String =
+    val rest = raw.substring(sep + 3)
+    rest.indexWhere(c => c == '/' || c == '?') match
+      case -1 => rest
+      case i  => rest.substring(0, i)
 
   def parse(raw: Chunk[Byte], from: Int, until: Int): Url =
     var q = from
