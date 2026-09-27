@@ -3,47 +3,76 @@ package heddle.crypto
 import heddle.internal.node.{Buffers, Crypto, GenerateKeyOptions, JwkExport, JwkKeyInput, NodeBuffer, SignKeyOptions}
 import java.math.BigInteger
 import scala.scalajs.js
-import zio.{Chunk, UIO, ULayer, ZIO, ZLayer}
+import zio.{Chunk, IO, ULayer, ZIO, ZLayer}
 
+/** Node `crypto` RSA. Node reports failure by throwing, so each call is attempted here and becomes an `RsaError`. */
 private[heddle] object RsaPlatform:
-  def generateSync(bits: Int): RsaKey =
-    val pair = Crypto.generateKeyPairSync("rsa", GenerateKeyOptions(bits))
-    val jwk  = pair.privateKey.exportJwk(JwkExport("jwk"))
-    RsaKey(RsaPublic(b64(jwk.n), b64(jwk.e)), jwk.d.toOption.fold(Chunk.empty[Byte])(b64))
-
-  def signSync(key: RsaKey, payload: Chunk[Byte]): Chunk[Byte] =
-    val ko   = Crypto.createPrivateKey(JwkKeyInput(privateJwk(key), "jwk"))
-    val opts = SignKeyOptions(ko, padding = Crypto.constants.RSA_PKCS1_PADDING)
-    Buffers.fromU8(Crypto.sign("sha256", Buffers.toU8(payload), opts))
-
-  def verifySync(pub: RsaPublic, payload: Chunk[Byte], sigBytes: Chunk[Byte]): Boolean =
-    try
-      val ko   = Crypto.createPublicKey(JwkKeyInput(publicJwk(pub), "jwk"))
-      val opts = SignKeyOptions(ko, padding = Crypto.constants.RSA_PKCS1_PADDING)
-      Crypto.verify("sha256", Buffers.toU8(payload), opts, Buffers.toU8(sigBytes))
-    catch case _: Exception => false
-
   def live: ULayer[Rsa] = ZLayer.succeed(Live)
 
   private object Live extends Rsa:
-    def generate(bits: Int): UIO[RsaKey] =
-      ZIO.succeed(generateSync(bits))
+    def generate(bits: Int): IO[RsaError, RsaKey] =
+      ZIO
+        .attempt {
+          val pair = Crypto.generateKeyPairSync("rsa", GenerateKeyOptions(bits))
+          pair.privateKey.exportJwk(JwkExport("jwk"))
+        }
+        .mapError(failed(RsaOperation.Generate))
+        .flatMap { jwk =>
+          jwk.d.toOption match
+            case Some(d) => ZIO.succeed(RsaKey(RsaPublic(b64(jwk.n), b64(jwk.e)), b64(d)))
+            case None    => ZIO.fail(RsaError.Failed(RsaOperation.Generate, "Node exported a private key with no d"))
+        }
 
-    def signSha256(key: RsaKey, payload: Chunk[Byte]): UIO[Chunk[Byte]] =
-      ZIO.succeed(signSync(key, payload))
+    def signSha256(key: RsaKey, payload: Chunk[Byte]): IO[RsaError, Chunk[Byte]] =
+      ZIO
+        .fromEither(privateJwk(key))
+        .flatMap { jwk =>
+          ZIO
+            .attempt {
+              val ko   = Crypto.createPrivateKey(JwkKeyInput(jwk, "jwk"))
+              val opts = SignKeyOptions(ko, padding = Crypto.constants.RSA_PKCS1_PADDING)
+              Buffers.fromU8(Crypto.sign("sha256", Buffers.toU8(payload), opts))
+            }
+            .mapError(failed(RsaOperation.Sign))
+        }
 
-    def verifySha256(pub: RsaPublic, payload: Chunk[Byte], sig: Chunk[Byte]): UIO[Boolean] =
-      ZIO.succeed(verifySync(pub, payload, sig))
+    def verifySha256(pub: RsaPublic, payload: Chunk[Byte], sig: Chunk[Byte]): IO[RsaError, Boolean] =
+      ZIO
+        .attempt {
+          val ko = Crypto.createPublicKey(JwkKeyInput(publicJwk(pub), "jwk"))
+          SignKeyOptions(ko, padding = Crypto.constants.RSA_PKCS1_PADDING)
+        }
+        .mapError(failed(RsaOperation.Verify))
+        .flatMap { opts =>
+          ZIO
+            .attempt(Crypto.verify("sha256", Buffers.toU8(payload), opts, Buffers.toU8(sig)))
+            .mapError(failed(RsaOperation.Verify))
+        }
+  end Live
+
+  private def failed(operation: RsaOperation)(cause: Throwable): RsaError =
+    RsaError.Failed(operation, cause.toString)
 
   /** Node `createPrivateKey` rejects RSA JWKs that only have `n`/`e`/`d`. Recover CRT factors. */
-  private def privateJwk(key: RsaKey): js.Dictionary[String] =
-    val n      = integer(key.public.n)
-    val e      = integer(key.public.e)
-    val d      = integer(key.d)
-    val (p, q) = recoverPrimes(n, e, d)
-    val dp     = d.mod(p.subtract(BigInteger.ONE))
-    val dq     = d.mod(q.subtract(BigInteger.ONE))
-    val qi     = q.modInverse(p)
+  private def privateJwk(key: RsaKey): Either[RsaError, js.Dictionary[String]] =
+    val n = integer(key.public.n)
+    val e = integer(key.public.e)
+    val d = integer(key.d)
+    recoverPrimes(n, e, d).toRight(RsaError.Failed(RsaOperation.Sign, "the key's primes cannot be recovered")).map {
+      (p, q) =>
+        privateJwk(n, e, d, p, q)
+    }
+
+  private def privateJwk(
+      n: BigInteger,
+      e: BigInteger,
+      d: BigInteger,
+      p: BigInteger,
+      q: BigInteger,
+  ): js.Dictionary[String] =
+    val dp = d.mod(p.subtract(BigInteger.ONE))
+    val dq = d.mod(q.subtract(BigInteger.ONE))
+    val qi = q.modInverse(p)
     js.Dictionary(
       "kty" -> "RSA",
       "n"   -> b64enc(unsigned(n)),
@@ -64,7 +93,7 @@ private[heddle] object RsaPlatform:
       "e"   -> b64enc(pub.e),
     )
 
-  private def recoverPrimes(n: BigInteger, e: BigInteger, d: BigInteger): (BigInteger, BigInteger) =
+  private def recoverPrimes(n: BigInteger, e: BigInteger, d: BigInteger): Option[(BigInteger, BigInteger)] =
     val one = BigInteger.ONE
     val nm1 = n.subtract(one)
     var t   = d.multiply(e).subtract(one)
@@ -89,7 +118,7 @@ private[heddle] object RsaPlatform:
           i += 1
       aInt += 1
     end while
-    found.getOrElse(throw IllegalArgumentException("could not recover RSA primes"))
+    found
   end recoverPrimes
 
   private def integer(bytes: Chunk[Byte]): BigInteger =

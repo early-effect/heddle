@@ -3,6 +3,7 @@ package example
 import java.nio.file.{Files as JFiles, Path}
 import heddle.*
 import heddle.mcp.Mcp
+import heddle.crypto.Rsa
 import heddle.oauth.jose.SigningKey
 import heddle.oauth.provider.*
 import heddle.oauth.rs.{JwtClaim, JwtVerifier}
@@ -24,27 +25,30 @@ object Main extends ZIOAppDefault:
       _      <- mcp.stdio()
     yield ()).provideLayer(Runtime.removeDefaultLoggers)
 
+  /** Tokens from the embedded provider are for this API, so the verifier accepts exactly that audience. */
   private def runHttp =
-    val key  = SigningKey.generateRsa("op")
-    val meta = s"$issuer/.well-known/oauth-protected-resource"
-    for
+    val meta  = s"$issuer/.well-known/oauth-protected-resource"
+    val serve = for
+      key    <- SigningKey.generateRsa("op")
+      ada    <- Passwords.hash("ada")
+      secret <- Passwords.hash("secret")
       office <- BoxOffice.seed
       stores <- MemoryStores.seed(
-        List(UserRecord("u1", "ada", Passwords.hash("ada"), Map("email" -> "ada@example.test"))),
+        List(UserRecord("u1", "ada", ada, Map("email" -> "ada@example.test"))),
         List(
           ClientRecord("web", None, List(s"$issuer/docs"), Set("authorization_code", "refresh_token")),
           ClientRecord("swagger", None, List(s"$issuer/docs/oauth2-redirect.html"), Set("authorization_code")),
-          ClientRecord("machine", Some(Passwords.hash("secret")), Nil, Set("client_credentials")),
+          ClientRecord("machine", Some(secret), Nil, Set("client_credentials")),
         ),
       )
-      verifier <- JwtVerifier.static(key.publicJwksJson, issuer, "")
+      verifier <- JwtVerifier.static(key.publicJwksJson, issuer, issuer)
       public = publicApi(office)
       writes = writeApi(office)
       meApi  = Api("Box office", "0.1.0").resource(Endpoints.me) { _ =>
         ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
       }
       mcp <- ZIO.fromEither(Mcp.from(public, writes).flatMap(_.withCatalog))
-      op        = Provider.routes(ProviderConfig(issuer), stores, key)
+      op        = Provider.routes(ProviderConfig(issuer, audience = Some(issuer)), stores, key)
       authed    = (writes.routes ++ meApi.routes).provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
       mcpAuthed = mcp.routes.provided(
         Mcp.bearer(meta, List("openid", "profile"))(t =>
@@ -59,10 +63,10 @@ object Main extends ZIOAppDefault:
       _ <- Server.sbtInterruptExit
       _ <- Server
         .serve(routes @@ (Middleware.requestId() ++ Middleware.cors() ++ Middleware.debug))
-        .provide(Server.Config.defaults)
+        .provide(Server.Config.defaults, Rsa.live)
         .catchAllCause(c => if c.isInterruptedOnly then ZIO.unit else ZIO.refailCause(c))
     yield ()
-    end for
+    serve.provide(Rsa.live)
   end runHttp
 
   private[example] def publicApi(office: BoxOffice): Api[Any] =

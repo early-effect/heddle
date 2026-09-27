@@ -8,6 +8,6 @@ final case class JwtClaim(
     audience: List[String],
     scopes: Set[String],
     expiresAt: Instant,
-    issuedAt: Instant,
+    issuedAt: Option[Instant],
     jwtId: Option[String],
 )
