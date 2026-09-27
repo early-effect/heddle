@@ -96,6 +96,7 @@ private[heddle] object Http1:
           .catchSome {
             case HttpError.Io(e) if isClosedByInterrupt(e) => ZIO.succeed(false)
             case HttpError.Io(e) if isSocketTimeout(e)     => ZIO.succeed(false)
+            case HttpError.Timeout                         => ZIO.succeed(false)
           }
 
   private def dispatch[R](routes: Routes[R, Response], request: Request): URIO[R, Response] =

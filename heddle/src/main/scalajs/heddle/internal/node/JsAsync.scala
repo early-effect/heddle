@@ -3,12 +3,10 @@ package heddle.internal.node
 import scala.scalajs.js
 import zio.{Task, ZIO}
 
-/** `js.Promise` into ZIO.
-  *
-  * The [[Conversion]] is `private[heddle]` and lives behind `import JsAsync.given`. It is not on `import heddle.*`.
-  */
+/** `js.Promise` into ZIO. Explicit at every call site; there is no implicit conversion. */
 private[heddle] object JsAsync:
-  def fromPromise[A](promise: js.Promise[A]): Task[A] =
+  /** `promise` is by name: each run of the effect starts it again, so a repeated `reader.read()` reads onward. */
+  def fromPromise[A](promise: => js.Promise[A]): Task[A] =
     ZIO.async[Any, Throwable, A] { register =>
       val onOk: js.Function1[A, Unit] =
         (a: A) => register(ZIO.succeed(a))
@@ -17,9 +15,6 @@ private[heddle] object JsAsync:
       val _ = promise.`then`[Unit](onOk, onErr)
       ()
     }
-
-  given jsPromiseToTask[A]: Conversion[js.Promise[A], Task[A]] =
-    fromPromise(_)
 
   private def toThrowable(err: Any): Throwable =
     err match

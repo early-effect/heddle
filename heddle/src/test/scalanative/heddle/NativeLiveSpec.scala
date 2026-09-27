@@ -28,7 +28,7 @@ object NativeLiveSpec extends ZIOSpecDefault:
               heddle.internal.posix.AsyncFd.writable(fd) *>
                 ZIO
                   .attempt {
-                    val ctx = Ssl.clientCtx()
+                    val ctx = Ssl.clientCtx(Some(NativeTls.certPem))
                     Ssl.connect(ctx, fd, "localhost")
                   }
                   .flatMap(s => heddle.internal.posix.SslIo.handshake(s, accept = false, fd).as((fd, s)))

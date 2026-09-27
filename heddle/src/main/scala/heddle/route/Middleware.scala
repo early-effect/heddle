@@ -2,6 +2,7 @@ package heddle.route
 
 import heddle.auth.Auth
 import heddle.endpoint.ApiKeyIn
+import heddle.error.HttpError
 import heddle.BytesLength
 import heddle.http.{Body, ContentEncoding, Method, Request, Response, Status}
 import heddle.http.header.{BasicCredentials, HeaderName}
@@ -204,20 +205,20 @@ object Middleware:
             case None    => ZIO.succeed(req)
             case Some(d) =>
               req.body.collect
-                .flatMap(bytes => ZIO.attempt(d.decompress(bytes)))
-                .foldZIO(
-                  _ => ZIO.fail(Response.badRequest("Invalid Content-Encoding")),
-                  out =>
-                    if out.length > maxBytes.toLong then
+                .orElseFail(Response.badRequest("Unreadable body"))
+                .flatMap { bytes =>
+                  d.decompress(bytes, maxBytes) match
+                    case Left(HttpError.BodyTooLarge) =>
                       ZIO.fail(Response.text("Decompressed body too large", Status.ContentTooLarge))
-                    else
+                    case Left(_)    => ZIO.fail(Response.badRequest("Invalid Content-Encoding"))
+                    case Right(out) =>
                       ZIO.succeed(
                         req.copy(
                           headers = req.headers.remove(HeaderName.ContentEncoding).remove(HeaderName.ContentLength),
                           body = Body.fromBytes(out, req.body.mediaType),
                         )
-                      ),
-                )
+                      )
+                }
     }
 
   def requireTls: Middleware[Any] =

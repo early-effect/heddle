@@ -201,10 +201,10 @@ object MiddlewareSpec extends ZIOSpecDefault:
             Routes(Method.GET / "j" -> Handler.text(body)) @@ Middleware.compress(minBytes = 16)
           routes(Request.get("/j").withHeader("Accept-Encoding", "gzip")).map { res =>
             val raw = res.body.asBytes
-            val out = Compressor.gunzip(raw)
+            val out = Compressor.gunzip(raw, 1.M)
             assertTrue(
               res.header("Content-Encoding").contains("gzip"),
-              out.toArray.toSeq == body.getBytes.toSeq,
+              out.map(_.toArray.toSeq) == Right(body.getBytes.toSeq),
             )
           }
         ,

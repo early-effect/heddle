@@ -1,7 +1,9 @@
 package heddle.server
 
+import heddle.error.HttpError
 import heddle.http.ContentEncoding
-import heddle.internal.node.Zlib
+import heddle.internal.node.{Zlib, ZlibOptions}
+import scala.scalajs.js
 import scala.scalajs.js.typedarray.Uint8Array
 import zio.Chunk
 import zio.stream.ZStream
@@ -9,8 +11,14 @@ import zio.stream.ZStream
 private[server] object CompressorLive:
   val gzip: Compressor = NodeGzip
 
-  def gunzip(bytes: Chunk[Byte]): Chunk[Byte] =
-    fromU8(Zlib.gunzipSync(toU8(bytes)))
+  def gunzip(bytes: Chunk[Byte], limit: Long): Either[HttpError, Chunk[Byte]] =
+    val cap = math.min(limit + 1, Int.MaxValue.toLong).toDouble
+    try
+      val out = fromU8(Zlib.gunzipSync(toU8(bytes), ZlibOptions(maxOutputLength = cap)))
+      if out.length.toLong > limit then Left(HttpError.BodyTooLarge) else Right(out)
+    catch
+      case js.JavaScriptException(e: js.Error) if e.name == "RangeError" => Left(HttpError.BodyTooLarge)
+      case js.JavaScriptException(e: js.Error) => Left(HttpError.Malformed(s"gzip: ${e.message}"))
 
   private[server] def toU8(bytes: Chunk[Byte]): Uint8Array =
     val a = Uint8Array(bytes.length)

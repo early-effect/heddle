@@ -1,5 +1,7 @@
 package heddle.server
 
+import heddle.BytesLength
+import heddle.error.HttpError
 import heddle.http.ContentEncoding
 import zio.Chunk
 import zio.stream.ZStream
@@ -12,5 +14,6 @@ trait Compressor:
 object Compressor:
   def gzip: Compressor = CompressorLive.gzip
 
-  def gunzip(bytes: Chunk[Byte]): Chunk[Byte] =
-    CompressorLive.gunzip(bytes)
+  /** Inflates at most `limit` bytes. More than that is `BodyTooLarge`; corrupt input is `Malformed`. */
+  def gunzip(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]] =
+    CompressorLive.gunzip(bytes, limit.toLong)

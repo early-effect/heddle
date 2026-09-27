@@ -16,10 +16,10 @@ object ServerHaltSpec extends ZIOSpecDefault:
     }
   )
 
-  private def roundTrip: ZIO[Server.Config, Throwable, String] =
+  private def roundTrip: ZIO[Server.Config, HeddleError | Throwable, String] =
     ZIO.scoped(
       for
-        server <- Server.install(ping).mapError(e => RuntimeException(e.message))
+        server <- Server.install(ping)
         port   <- server.port
         res    <- Client.get(s"http://127.0.0.1:$port/ping")
         body   <- res.body.utf8

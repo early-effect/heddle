@@ -68,7 +68,7 @@ status. A nested `sealed trait` counts as one case covering all of its leaves.
 The body is `JsonCodec[E]`'s encoding: `{"SoldOut":{"showId":1}}` for a case with fields,
 `{"Closed":{}}` for a singleton next to cases with fields, and a bare `"Red"` when every case is a
 singleton. OpenAPI documents each status with that case's schema. `Client.call` reads the status
-back to the typed case, and MCP returns the same body as `isError`. Derived `Schema` follows
+back to the typed case as `CallFailure.Domain(case)`, and MCP returns the same body as `isError`. Derived `Schema` follows
 zio-json's default sum encoding; `@jsonDiscriminator`, `@jsonHint`, or a custom
 `JsonCodecConfiguration` change the wire shape without changing the `Schema`.
 """,

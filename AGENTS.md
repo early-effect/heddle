@@ -28,7 +28,7 @@ Core packages under `heddle/src/main/scala/heddle/`:
 | `endpoint/` | Endpoint, BoundOp, Api, Schema, OpenApi, OpArgs |
 | `Server.scala` | `package heddle` (ZIO Tag). Do not `export Server`. |
 | `server/` | Tls, Files, Compressor, Http2Config, HeddleApp |
-| `client/` | Client |
+| `client/` | Client, ClientError, CallFailure, ClientTls (JVM, Native). `client/internal/` is the shared pooled HTTP/1.1 exchange; platforms only supply a `Connector`. |
 | `error/` | HeddleError, HttpError, ServerError |
 | `auth/` | Basic, Bearer, API key extractors. JWT lives in `heddle-oauth`. |
 | `sse/` `ws/` `datastar/` | Public subpackages. Datastar `readSignals` is an extension on Request, not a Request method. |
@@ -71,4 +71,6 @@ Publishing is CI-only (`usePgpKeyHex` from `PGP_KEY_HEX`; sentinel `MISSING_KEY_
 - Handler is `Request => ZIO[R, E, Response]`. Middleware is `Routes => Routes` via `@@`.
 - Tests: ZIO Test `ZIOSpecDefault`. JSON tests use `zio.json.JsonCodec`.
 - Keep [`example/`](example/) building when you change the public API.
+- Transport and decode failures are typed values (`ClientError`, `CallFailure`, `HttpError`). No `orDie`, `dieMessage`, or `throw` on paths a peer can trigger.
+- Prove a socket, TLS, or interruption claim with a small failing spec (`RawServer` on the JVM, `NativeTlsCloseSpec` style on Native) before changing the code.
 - No AI attribution in commits or PR text.
