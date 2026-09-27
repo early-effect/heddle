@@ -1,8 +1,7 @@
 package heddle.mcp.client
 
-import heddle.endpoint.{BodyError, Endpoint, OpArgs}
-import heddle.http.{Response, Status, Url}
-import heddle.mcp.ToolShapes
+import heddle.endpoint.{Endpoint, OpArgs}
+import heddle.http.Url
 import heddle.mcp.protocol.*
 import zio.*
 import zio.json.*
@@ -54,35 +53,9 @@ object McpSession:
           .fromEither(OpArgs.arguments(doc, ep.toRequest(in, Url.root)))
           .mapError(McpCallFailure.NoArguments(_))
         result <- session.callTool(name, args).mapError(McpCallFailure.Session(_))
-        out    <- if result.failed then ZIO.fail(failure(result)) else success(result)
+        out    <- ToolResults.decode(ep, result)
       yield out
     end apply
-
-    private def failure(result: CallToolResult): McpCallFailure[Err] =
-      val typed = result.structuredContent
-        .map(ToolShapes.error(ep.doc).unwrap)
-        .flatMap(json => ep.errors.decodeJson(json.toJson))
-      typed match
-        case Some(Right(e)) => McpCallFailure.Domain(e)
-        case _              => McpCallFailure.Failed(text(result))
-
-    /** An output schema comes only from a JSON output, which always sets `outputCodec`; `ToolShapes` reads both. */
-    private def success(result: CallToolResult): IO[McpCallFailure[Err], Out] =
-      ToolShapes.output(ep.doc).zip(ep.outputCodec) match
-        case None =>
-          ep.decodeOut(Response.empty(Status.NoContent)).mapError(McpCallFailure.Undecodable(_))
-        case Some((shape, codec)) =>
-          ZIO
-            .fromOption(result.structuredContent)
-            .orElseFail(McpCallFailure.NoStructuredContent)
-            .flatMap(sc =>
-              ZIO
-                .fromEither(codec.decoder.decodeJson(shape.unwrap(sc).toJson))
-                .mapError(e => McpCallFailure.Undecodable(BodyError.Json(e)))
-            )
-
-    private def text(result: CallToolResult): String =
-      result.content.collect { case ContentBlock.Text(t, _) => t }.mkString("\n")
   end CallPartiallyApplied
 
   private[client] def as[A: JsonDecoder](result: Json.Obj): IO[McpError, A] =
