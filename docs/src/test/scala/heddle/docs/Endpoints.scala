@@ -5,6 +5,7 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import specular.*
 import specular.ziotest.DocSpecSuite
+import zio.json.*
 import zio.test.*
 
 object Endpoints extends DocSpecSuite:
@@ -99,6 +100,45 @@ arguments; non-JSON bodies are not promotable.
           BoxOffice.api(store).routes(Request.get("/shows/99")).map(_.status)
         }
       }.assert(status => assertTrue(status == Status.NotFound)),
+    ),
+    section("One description, both directions")(
+      md"""
+An endpoint reads a request into `In` and writes `In` back into a request. Every builder records
+both halves, so `toRequest` is total and a typed client needs nothing but the endpoint value.
+`mapIn` names a tuple as a product and takes the way back too:
+
+```scala
+Endpoint
+  .get("items" / int("id"))
+  .query[Option[String]]("tag")
+  .mapIn(Lookup(_, _))(l => (l.id, l.tag))
+```
+
+The output side is the same. `.out[O]` reads JSON with `O`'s codec, `.outText` reads text,
+`.outEmpty` reads nothing, and no content type is guessed. MCP arguments are a third view:
+`OpArgs.arguments` turns a request into tool arguments and `OpArgs.request` turns them back. The
+suite checks both directions as laws over generated inputs, including path values like `a/b` and
+`50%`, which travel as one encoded segment and never change the route.
+""",
+      exampleZIO {
+        val ep     = Endpoint.get("items" / int("id")).query[Option[String]]("tag").out[String]
+        val routes = ep.implement((id, tag) => zio.ZIO.succeed(s"$id:${tag.getOrElse("-")}"))
+        val req    = ep.toRequest((7, Some("a/b")), Url.root)
+        for
+          args  <- zio.ZIO.fromEither(OpArgs.arguments(ep.doc, req))
+          again <- zio.ZIO.fromEither(OpArgs.request(ep.doc, args))
+          out   <- routes(again).flatMap(res => ep.fromResponse(res).mapError(_.toString))
+        yield (req.url.render, args.toJson, out)
+      }.assert { case (url, args, out) =>
+        assertTrue(url == "/items/7?tag=a%2Fb", args == """{"id":7,"tag":"a/b"}""", out == "7:a/b")
+      },
+      md"""
+A body that streams is not read whole. `Client.call` on an `outSse` endpoint does not compile;
+`Client.subscribe` streams its events and holds the connection for as long as you read.
+""",
+      expectFail("""Client.call(Endpoint.get("ticks").outSse)(())""").assert { errors =>
+        assertTrue(errors.exists(_.message.contains("Read it with Client.subscribe")))
+      },
     ),
   )
 end Endpoints

@@ -6,7 +6,7 @@ import heddle.http.{Body, Form, MediaType, Method, Path, QueryParams, Request, R
 import heddle.http.header.Headers
 import heddle.http.header.TypedHeader
 import heddle.route.{Combine, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
-import heddle.sse.{ServerSentEvent, Sse}
+import heddle.sse.{ServerSentEvent, Sse, SseCodec}
 import zio.json.JsonCodec
 import zio.stream.ZStream
 import zio.{Chunk, IO, ZIO}
@@ -17,18 +17,20 @@ sealed abstract class Endpoint[In, Err, Out]:
   def path: PathCodec[PathIn]
   def decodeIn: (PathIn, Request) => IO[Response, In]
   def encodeOut: Out => Response
+
+  /** Reads a success body back into `Out`. Set by the builder that chose the output, so no content type is guessed. */
+  def decodeOut: Response => IO[String, Out]
   def errors: ErrorCodec[Err]
   def outputCodec: Option[JsonCodec[Out]]
   def doc: EndpointDoc
   def slots: Chunk[Endpoint.InputSlot]
-  def invertible: Boolean
 
   def encodeErr(e: Err): Response = errors.encode(e)
 
   inline def query[Q](name: String)(using codec: QueryCodec[Q]): Endpoint[Combine[In, Q], Err, Out] =
     bindSync(
       (in, req) => codec.decode(req.query.getAll(name)).left.map(Response.badRequest).map(q => zipIn(in, q)),
-      doc.copy(queries = doc.queries :+ ParamDoc(name, "query", codec.required, codec.schema)),
+      doc.copy(queries = doc.queries :+ ParamDoc(name, ParamLocation.Query, codec.required, codec.schema)),
       Endpoint.InputSlot.combine[In, Q] { (piece, acc) =>
         acc.copy(query = acc.query.add(name, codec.encode(piece.asInstanceOf[Q])))
       },
@@ -37,7 +39,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   inline def header[H](name: String)(using codec: HeaderCodec[H]): Endpoint[Combine[In, H], Err, Out] =
     bindSync(
       (in, req) => codec.decode(req.header(name)).left.map(Response.badRequest).map(h => zipIn(in, h)),
-      doc.copy(headers = doc.headers :+ ParamDoc(name, "header", codec.required, codec.schema)),
+      doc.copy(headers = doc.headers :+ ParamDoc(name, ParamLocation.Header, codec.required, codec.schema)),
       Endpoint.InputSlot.combine[In, H] { (piece, acc) =>
         codec.encode(piece.asInstanceOf[H]) match
           case None    => acc
@@ -52,7 +54,9 @@ sealed abstract class Endpoint[In, Err, Out]:
           case None      => Left(Response.badRequest("missing header"))
           case Some(raw) => t.decode(raw).left.map(Response.badRequest).map(a => zipIn(in, a))
       ,
-      doc.copy(headers = doc.headers :+ ParamDoc(t.name.render, "header", required = true, SchemaDoc.Str(None))),
+      doc.copy(headers =
+        doc.headers :+ ParamDoc(t.name.render, ParamLocation.Header, required = true, SchemaDoc.Str(None))
+      ),
       Endpoint.InputSlot.combine[In, A] { (piece, acc) =>
         acc.copy(headers = acc.headers.add(t.name, t.encode(piece.asInstanceOf[A])))
       },
@@ -110,6 +114,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def out[O](status: Status)(using s: Schema[O], j: JsonCodec[O]): Endpoint[In, Err, O] =
     replace(
       encodeOut = o => Response(status).withBody(Body.fromBytes(Endpoint.jsonBytes(o), Some(MediaType.Json))),
+      decodeOut = res => Endpoint.bytes(res).flatMap(raw => ZIO.fromEither(Endpoint.jsonDecode[O](raw))),
       errors = errors,
       doc = doc.copy(responses = Endpoint.replaceSuccess(doc.responses, jsonStatus(status, s.doc))),
       outputCodec = Some(j),
@@ -118,6 +123,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def outText(status: Status = Status.Ok): Endpoint[In, Err, String] =
     replace(
       encodeOut = s => Response.text(s, status),
+      decodeOut = res => Endpoint.bytes(res).map(raw => String(raw.toArray, StandardCharsets.UTF_8)),
       errors = errors,
       doc = doc.copy(responses =
         Endpoint.replaceSuccess(
@@ -128,9 +134,11 @@ sealed abstract class Endpoint[In, Err, Out]:
       outputCodec = Some(summon[JsonCodec[String]]),
     )
 
+  /** A typed client reads this with `Client.subscribe`, not `Client.call`: the body is a stream. */
   def outSse: Endpoint[In, Err, ZStream[Any, Throwable, ServerSentEvent]] =
     replace(
       encodeOut = Sse.response,
+      decodeOut = res => ZIO.succeed(SseCodec.stream(res.body.toStream)),
       errors = errors,
       doc = doc.copy(responses =
         Endpoint.replaceSuccess(
@@ -144,6 +152,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def outEmpty(status: Status = Status.NoContent): Endpoint[In, Err, Unit] =
     replace(
       encodeOut = (_: Unit) => Response.empty(status),
+      decodeOut = _ => ZIO.unit,
       errors = errors,
       doc = doc.copy(responses = Endpoint.replaceSuccess(doc.responses, StatusDoc(status, None, None, status.text))),
       outputCodec = None,
@@ -163,7 +172,7 @@ sealed abstract class Endpoint[In, Err, Out]:
     val responses =
       if doc.security.isEmpty || kept.exists(_.status == Status.Unauthorized) then kept
       else kept :+ Endpoint.unauthorized
-    replace(encodeOut, next, doc.copy(responses = responses), outputCodec)
+    replace(encodeOut, decodeOut, next, doc.copy(responses = responses), outputCodec)
 
   def name(id: String): Endpoint[In, Err, Out] =
     replaceDoc(doc.copy(operationId = Some(id)))
@@ -199,64 +208,37 @@ sealed abstract class Endpoint[In, Err, Out]:
       else doc.responses :+ Endpoint.unauthorized
     replaceDoc(doc.copy(security = doc.security ++ schemes, responses = docs))
 
-  def mapIn[B](f: In => B): Endpoint[B, Err, Out] =
+  /** Renames the input. `from` must undo `to`, so a typed client can still build the request. */
+  def mapIn[B](to: In => B)(from: B => In): Endpoint[B, Err, Out] =
     Endpoint.Impl(
       method,
       path,
-      (pathIn, req) => decodeIn(pathIn, req).map(f),
+      (pathIn, req) => decodeIn(pathIn, req).map(to),
       encodeOut,
+      decodeOut,
       errors,
       outputCodec,
       doc,
-      Chunk.empty,
-      false,
+      slots :+ Endpoint.InputSlot.mapped(from),
     )
 
-  def toRequest(in: In, base: Url): Either[String, Request] =
-    if !invertible then Left("endpoint is not invertible")
-    else
-      var cur: Any = in
-      var acc      = Endpoint.Acc(QueryParams.empty, Headers.empty, Body.empty)
-      var i        = slots.length - 1
-      while i >= 0 do
-        val s             = slots(i)
-        val (prev, piece) = s.peel(cur)
-        acc = s.put(piece, acc)
-        cur = prev
-        i -= 1
-      val encoded = path.encode(cur.asInstanceOf[PathIn])
-      val url     = base.copy(path = Path(base.path.segments ++ encoded.segments), query = acc.query)
-      Right(Request(method, url, acc.headers, acc.body))
+  /** The request `decodeIn` reads back as `in`. Total: every builder records how to put its piece back. */
+  def toRequest(in: In, base: Url): Request =
+    val (pathIn, acc) = slots.foldRight[(Any, Endpoint.Acc)]((in, Endpoint.Acc.empty)) { case (slot, (cur, acc)) =>
+      val (prev, piece) = slot.peel(cur)
+      (prev, slot.put(piece, acc))
+    }
+    val encoded = path.encode(pathIn.asInstanceOf[PathIn])
+    val url     = base.copy(path = Path(base.path.segments ++ encoded.segments), query = acc.query)
+    Request(method, url, acc.headers, acc.body)
 
   def fromResponse(res: Response): IO[CallFailure[Err], Out] =
     if errors.handles(res.status) then decodeFailure(res)
-    else if res.status.isSuccess then decodeSuccess(res)
+    else if res.status.isSuccess then decodeOut(res).mapError(CallFailure.Undecodable(res.status, _))
     else ZIO.fail(CallFailure.Unexpected(res.status))
 
-  private def collected(res: Response): IO[CallFailure[Nothing], Chunk[Byte]] =
-    res.body.collect.mapError(e => CallFailure.Undecodable(res.status, s"unreadable body: ${e.getMessage}"))
-
-  private def decodeSuccess(res: Response): IO[CallFailure[Err], Out] =
-    val ct = doc.responses.find(_.status.isSuccess).flatMap(_.contentType)
-    ct match
-      case Some(mt) if mt.isJson =>
-        outputCodec match
-          case None    => ZIO.fail(CallFailure.Undecodable(res.status, "JSON output has no codec"))
-          case Some(c) =>
-            collected(res).flatMap { raw =>
-              ZIO.fromEither(Endpoint.jsonDecode(raw)(using c)).mapError(CallFailure.Undecodable(res.status, _))
-            }
-      case Some(mt) if mt.mainType == "text" && !mt.isEventStream =>
-        collected(res).map(raw => String(raw.toArray, StandardCharsets.UTF_8).asInstanceOf[Out])
-      case None =>
-        ZIO.succeed(().asInstanceOf[Out])
-      case Some(_) =>
-        collected(res).map(_.asInstanceOf[Out])
-    end match
-  end decodeSuccess
-
   private def decodeFailure(res: Response): IO[CallFailure[Err], Out] =
-    collected(res).flatMap { raw =>
+    Endpoint.bytes(res).mapError(CallFailure.Undecodable(res.status, _)).flatMap { raw =>
       errors.decode(res.status, raw) match
         case None            => ZIO.fail(CallFailure.Unexpected(res.status))
         case Some(Left(msg)) => ZIO.fail(CallFailure.Undecodable(res.status, msg))
@@ -280,11 +262,11 @@ sealed abstract class Endpoint[In, Err, Out]:
             case Right(n)  => ZIO.succeed(n)
         },
       encodeOut,
+      decodeOut,
       errors,
       outputCodec,
       nextDoc,
       slots :+ slot,
-      invertible,
     )
 
   private def bindNext[N](
@@ -297,23 +279,24 @@ sealed abstract class Endpoint[In, Err, Out]:
       path,
       (pathIn, req) => decodeIn(pathIn, req).flatMap(in => next(in, req)),
       encodeOut,
+      decodeOut,
       errors,
       outputCodec,
       nextDoc,
       slots :+ slot,
-      invertible,
     )
 
   private def replace[E1, O1](
       encodeOut: O1 => Response,
+      decodeOut: Response => IO[String, O1],
       errors: ErrorCodec[E1],
       doc: EndpointDoc,
       outputCodec: Option[JsonCodec[O1]],
   ): Endpoint[In, E1, O1] =
-    Endpoint.Impl(method, path, decodeIn, encodeOut, errors, outputCodec, doc, slots, invertible)
+    Endpoint.Impl(method, path, decodeIn, encodeOut, decodeOut, errors, outputCodec, doc, slots)
 
   private def replaceDoc(next: EndpointDoc): Endpoint[In, Err, Out] =
-    replace(encodeOut, errors, next, outputCodec)
+    replace(encodeOut, decodeOut, errors, next, outputCodec)
 
   def implement[R](f: In => ZIO[R, Err, Out]): BoundOp[R, In, Err, Out] =
     val routes = Routes(
@@ -362,6 +345,7 @@ object Endpoint:
       path,
       (pathIn, _) => ZIO.succeed(pathIn),
       _ => Response.empty(Status.NoContent),
+      _ => ZIO.unit,
       ErrorCodec.none,
       None,
       EndpointDoc(
@@ -378,7 +362,6 @@ object Endpoint:
         tags = Nil,
       ),
       Chunk.empty,
-      true,
     )
 
   final class OutErrors[In, E, Out] private[endpoint] (endpoint: Endpoint[In, ?, Out]):
@@ -387,6 +370,10 @@ object Endpoint:
 
   final case class Acc(query: QueryParams, headers: Headers, body: Body)
 
+  object Acc:
+    val empty: Acc = Acc(QueryParams.empty, Headers.empty, Body.empty)
+
+  /** How one builder step splits its input back apart (`peel`) and writes its piece into the request (`put`). */
   final class InputSlot(val peel: Any => (Any, Any), val put: (Any, Acc) => Acc)
 
   object InputSlot:
@@ -396,16 +383,21 @@ object Endpoint:
         put,
       )
 
+    /** A `mapIn` step: writes nothing, and hands `from(b)` to the steps before it. */
+    def mapped[A, B](from: B => A): InputSlot =
+      InputSlot(b => (from(b.asInstanceOf[B]), ()), (_, acc) => acc)
+  end InputSlot
+
   private final class Impl[P, In, Err, Out](
       val method: Method,
       val path: PathCodec[P],
       val decodeIn: (P, Request) => IO[Response, In],
       val encodeOut: Out => Response,
+      val decodeOut: Response => IO[String, Out],
       val errors: ErrorCodec[Err],
       val outputCodec: Option[JsonCodec[Out]],
       val doc: EndpointDoc,
       val slots: Chunk[InputSlot],
-      val invertible: Boolean,
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P
   end Impl
@@ -417,7 +409,7 @@ object Endpoint:
       case PathKind.Int64 => SchemaDoc.Integer(Some("int64"))
       case PathKind.Str   => SchemaDoc.Str(None)
       case PathKind.Uuid  => SchemaDoc.Str(Some("uuid"))
-    ParamDoc(name, "path", required = true, schema)
+    ParamDoc(name, ParamLocation.Path, required = true, schema)
 
   private[heddle] def replaceSuccess(responses: List[StatusDoc], next: StatusDoc): List[StatusDoc] =
     val withoutPlaceholder = responses.filterNot(r => r.status == Status.NoContent && r.schema.isEmpty)
@@ -430,4 +422,7 @@ object Endpoint:
 
   private def jsonDecode[A](raw: Chunk[Byte])(using c: JsonCodec[A]): Either[String, A] =
     c.decoder.decodeJson(String(raw.toArray, StandardCharsets.UTF_8))
+
+  private def bytes(res: Response): IO[String, Chunk[Byte]] =
+    res.body.collect.mapError(e => s"unreadable body: ${e.getMessage}")
 end Endpoint
