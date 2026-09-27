@@ -59,6 +59,35 @@ final class Mcp[-R] private (
       case None         =>
         Right(new Mcp(server, offer.copy(resources = offer.resources ++ served), catalogOps, instructions, path))
 
+  /** Gives the tool named `name` extra `_meta` (merged by key). A promotable operation that is not listed yet, such as
+    * one only an App's view calls, is listed now. A name no operation has is a build error.
+    */
+  def withToolMeta(name: ToolName, meta: Json.Obj): Either[NonEmptyChunk[McpBuildError], Mcp[R]] =
+    def merged(t: ToolCall[R]): ToolCall[R] =
+      val base = t.tool.meta.getOrElse(Json.Obj())
+      val next = Json.Obj(base.fields.filterNot((k, _) => meta.fields.exists(_._1 == k)) ++ meta.fields)
+      ToolCall(t.tool.copy(meta = Some(next)))(t.call)
+    offer.tools.indexWhere(_.tool.name == name) match
+      case -1 =>
+        catalogOps.find(_.endpoint.doc.toolName == name.value) match
+          case None     => Left(NonEmptyChunk(McpBuildError.NoSuchTool(name)))
+          case Some(op) =>
+            ToolCall.bound(op).left.map(NonEmptyChunk(_)).map { t =>
+              new Mcp(server, offer.copy(tools = offer.tools :+ merged(t)), catalogOps, instructions, path)
+            }
+      case i =>
+        Right(
+          new Mcp(
+            server,
+            offer.copy(tools = offer.tools.updated(i, merged(offer.tools(i)))),
+            catalogOps,
+            instructions,
+            path,
+          )
+        )
+    end match
+  end withToolMeta
+
   /** Advertises an extension in `server/discover` and `initialize` capabilities, with its settings. */
   def withExtension(id: ExtensionId, settings: Json.Obj = Json.Obj()): Mcp[R] =
     new Mcp(server, offer.copy(extensions = offer.extensions.updated(id, settings)), catalogOps, instructions, path)

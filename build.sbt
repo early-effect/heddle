@@ -84,6 +84,7 @@ lazy val root = project
   .in(file("."))
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
+      mcpApps.projectRefs ++
       Seq[sbt.ProjectReference](example, bench, docs, docsJS))*
   )
   .settings(
@@ -168,7 +169,7 @@ lazy val mcpProtocol = (projectMatrix in file("mcp-protocol"))
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads)
 
 lazy val mcp = (projectMatrix in file("mcp"))
-  .dependsOn(heddle % "compile->compile;test->test", mcpProtocol)
+  .dependsOn(heddle % "compile->compile;test->test", mcpProtocol % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -252,9 +253,64 @@ lazy val docsJS = project
     MyVersions.docsJs,
   )
 
+lazy val mcpApps = (projectMatrix in file("mcp-apps"))
+  .dependsOn(mcp % "compile->compile;test->test")
+  .settings(commonSettings)
+  .settings(MyVersions.coreTest)
+  .settings(
+    name                 := "heddle-mcp-apps",
+    description          := "MCP Apps (SEP-1865): sheds of typed grants, ui:// resources, and the policy a host clamps",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+
+lazy val browserCheck = taskKey[Unit]("fail if the browser-side MCP surface links a Node module")
+
+/** Links what an MCP App view uses as a browser ES module. Heddle's JS target also serves Node, so a `node:` import
+  * reachable from that surface would break every view; this keeps the split honest.
+  */
+lazy val browser = project
+  .in(file("browser-check"))
+  .enablePlugins(ScalaJSPlugin)
+  .dependsOn(heddle.js(scala3Version), mcp.js(scala3Version), mcpApps.js(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name                            := "heddle-browser-check",
+    publish / skip                  := true,
+    zipxPublish                     := Some(false),
+    scalaJSUseMainModuleInitializer := true,
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.ESModule)),
+    browserCheck := Def.uncached {
+      (Compile / fullLinkJS).value
+      val out   = (Compile / fullLinkJSOutput).value
+      val code  = IO.listFiles(out).filter(_.getName.endsWith(".js")).map(IO.read(_)).mkString("\n")
+      val nodes = """(?:from|import)\s*\(?\s*["'](node:[^"']+|fs|net|tls|zlib|crypto|child_process|process)["']""".r
+        .findAllMatchIn(code)
+        .map(_.group(1))
+        .toList
+        .distinct
+      if nodes.nonEmpty then sys.error(s"browser bundle imports Node modules: ${nodes.mkString(", ")}")
+      streams.value.log.info(s"browser bundle is Node-free (${code.length / 1024} KiB)")
+    },
+  )
+
 lazy val docs = project
   .in(file("docs"))
-  .dependsOn(heddle.jvm(scala3Version), brotli.jvm(scala3Version), oauth.jvm(scala3Version), mcp.jvm(scala3Version))
+  .dependsOn(
+    heddle.jvm(scala3Version),
+    brotli.jvm(scala3Version),
+    oauth.jvm(scala3Version),
+    mcp.jvm(scala3Version),
+    mcpApps.jvm(scala3Version),
+  )
   .enablePlugins(SpecularPlugin)
   .settings(commonSettings)
   .settings(
@@ -311,10 +367,13 @@ lazy val docs = project
 addCommandAlias("docsPreview", "~docs/specularPreview")
 addCommandAlias(
   "testJVM",
-  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; example/testFull; docs/testFull; docs/specularSite",
+  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; mcpApps/testFull; example/testFull; docs/testFull; docs/specularSite",
 )
 addCommandAlias(
   "testJS",
-  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; oauthJS/testFull",
+  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; oauthJS/testFull; browser/browserCheck",
 )
-addCommandAlias("testNative", "heddleNative/testFull; brotliNative/testFull; mcpProtocolNative/testFull; mcpNative/testFull")
+addCommandAlias(
+  "testNative",
+  "heddleNative/testFull; brotliNative/testFull; mcpProtocolNative/testFull; mcpNative/testFull; mcpAppsNative/testFull",
+)

@@ -1,0 +1,156 @@
+package heddle.docs
+
+import heddle.*
+import heddle.docs.fixture.*
+import heddle.mcp.apps.*
+import heddle.mcp.client.McpClient
+import heddle.mcp.protocol.{Implementation, ResourceContents}
+import specular.*
+import specular.ziotest.DocSpecSuite
+import zio.*
+import zio.json.*
+import zio.json.ast.Json
+import zio.test.*
+
+object McpAppsPage extends DocSpecSuite:
+  private val bill = Shed(UiUri("ui://box-office/bill"), "Tonight's bill", Grant.launch(BoxOffice.listShows))(
+    (show = Grant.app(BoxOffice.getShow))
+  )
+
+  private val view = UiDocument("Tonight's bill", "document.getElementById('app').textContent = 'loading'")
+
+  def doc = page("MCP Apps")(
+    md"""
+An MCP App attaches a view to a tool. The server serves the view's HTML as a `ui://` resource.
+A host shows the tool's result in that view, inside a sandboxed iframe, and relays what the view
+asks for over `postMessage`. Heddle's rule for all of it:
+
+> The view is untrusted. The shed is typed. The host decides.
+
+```mermaid
+flowchart LR
+  subgraph Server
+    E[Endpoints] --> T[tools with _meta.ui]
+    E --> R[ui:// view]
+  end
+  subgraph Host
+    P[policy clamp] --> F[sandboxed iframe]
+  end
+  subgraph View
+    V[Scala.js view] --> B[bridge]
+  end
+  R -- resources/read --> P
+  B -- tools/call, gated --> T
+```
+
+The view never names a tool with a string. It picks a grant from its **shed**, and every grant is
+one of the same `Endpoint`s the server binds.
+""",
+    section("The shed")(
+      md"""
+A shed is one view's grants and the policy it asks for. `Grant.launch` is the tool the model
+calls to open the view. `Grant.app` tools are the ones only the view calls, and the host keeps
+them from the model. The tools are a named tuple, so a view calls `_.show`, never `"get_show"`.
+""",
+      exampleValue(bill.grants.map(g => g.toolName -> g.visibility))
+        .assert(gs => assertTrue(gs == List("list_shows" -> Visibility.ModelAndApp, "get_show" -> Visibility.App))),
+      expectFail("""Shed(UiUri("ui://box-office/bill"), "Bill", Grant.launch(BoxOffice.listShows))((show = 42))""")
+        .assert(errors => assertTrue(errors.exists(_.message.contains("must be a Grant")))),
+      expectFail("""UiUri("https://box-office.example/bill")""")
+        .assert(errors => assertTrue(errors.exists(_.message.contains("not a ui://")))),
+    ),
+    section("Serving a view")(
+      md"""
+`mcp.withApp(shed, document)` does the server's part:
+
+- serves the document as the `ui://` resource, with MIME `text/html;profile=mcp-app`
+- marks every granted tool with `_meta.ui` (the view's URI and who may call it)
+- lists the view-only tools, which are not promoted to the model, with `visibility: ["app"]`
+- advertises the MCP Apps extension
+
+`UiDocument` renders the HTML from the view's linked Scala.js script, so the server knows the
+script's CSP hash by construction and publishes it for a host to pin. Read back through
+Heddle's own client, exactly as a host would:
+""",
+      exampleZIO {
+        ZIO.scoped {
+          for
+            store <- BoxOffice.seed
+            mcp   <- ZIO.fromEither(BoxOffice.mcpOf(store))
+            app   <- ZIO.fromEither(mcp.withApp(bill, view))
+            host  <- McpClient
+              .http("http://box-office.test/mcp", McpClient.Settings(Implementation("docs", "1")))
+              .provideSome[Scope](Client.inMemory(app.routes))
+            tools    <- host.listTools
+            contents <- host.readResource(bill.uri.value)
+          yield
+            val marked = tools.map(t => t.name.value -> UiMeta.decodeTool(t.meta)._1.visibility).toMap
+            val html   = contents.collectFirst { case t: ResourceContents.Text => t.text }
+            (marked, html.exists(_.contains("<div id=\"app\"></div>")))
+        }
+      }.assert { (marked, served) =>
+        assertTrue(
+          marked.get("list_shows").contains(Visibility.ModelAndApp),
+          marked.get("get_show").contains(Visibility.App),
+          served,
+        )
+      },
+    ),
+    section("What a view may ask for")(
+      md"""
+A view asks for a `UiPolicy`: which origins it reaches for each network directive, browser
+permissions, a stable origin, and whether it wants a border. `UiPolicy.closed` is the default:
+no network, no permissions, a fresh opaque origin. A host allows a `HostPolicy`, and the view
+gets the ask **clamped** by the allowance. The clamp only takes away, and `narrowed` says what it
+took so the host can log it:
+""",
+      exampleValue {
+        val weather = Origin("https://api.weather.example")
+        val tracker = Origin("https://tracker.example")
+        val ask     = UiPolicy(Network(connect = Set(weather, tracker)), permissions = Set(Permission.Camera))
+        val host    = HostPolicy(
+          NetworkAllowance(Admit.Only(Set(weather)), Admit.none, Admit.none, Admit.none),
+          permissions = Set.empty,
+          stable = StableOrigins.Refuse,
+        )
+        val clamp = Clamp[UiPolicy, HostPolicy]
+        (clamp.clamp(ask, host), clamp.narrowed(ask, host))
+      }.assert { (granted, taken) =>
+        assertTrue(
+          granted.network.connect == Set(Origin("https://api.weather.example")),
+          granted.permissions.isEmpty,
+          taken.length == 2,
+        )
+      },
+      md"""
+The clamp's laws are checked over generated policies:
+
+| Law | Meaning |
+| --- | --- |
+| Only narrows | The result never grants more than the ask |
+| Idempotent | Clamping twice by one allowance is clamping once |
+| Identity and zero | `HostPolicy.open` changes nothing; `HostPolicy.closed` leaves an isolated view |
+| Monotone | A wider allowance never yields a narrower result |
+| Honest audit | `narrowed` is empty exactly when nothing was taken |
+""",
+    ),
+    section("Reading any server's _meta.ui")(
+      md"""
+A host reads `_meta.ui` from servers it does not control, so decoding is total and never
+permissive. What it cannot trust, it drops and reports: a wildcard origin, a path, an unknown
+permission, a bad `ui://` URI. It also reads the legacy `ui/resourceUri` key, as the spec asks.
+""",
+      exampleZIO {
+        val meta =
+          """{"ui":{"csp":{"connectDomains":["https://api.example.com","https://*.cdn.example.com"]},"permissions":{"camera":{},"teleport":{}}}}"""
+        ZIO.fromEither(meta.fromJson[Json.Obj]).map(obj => UiMeta.decodeResource(Some(obj)))
+      }.assert { (policy, problems) =>
+        assertTrue(
+          policy.network.connect == Set(Origin("https://api.example.com")),
+          policy.permissions == Set(Permission.Camera),
+          problems.length == 2,
+        )
+      },
+    ),
+  )
+end McpAppsPage

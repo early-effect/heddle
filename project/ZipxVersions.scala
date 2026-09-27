@@ -16,8 +16,7 @@ object MyVersions extends ZipxVersions:
   val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
-  val scalaJavaTime     = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
-  val scalaJavaTimeTzdb = scalaJavaTime.mod("scala-java-time-tzdb")
+  val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
 
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.17.0")
   val specularZioTest = specular.mod("specular-zio-test").test
@@ -37,7 +36,8 @@ object MyVersions extends ZipxVersions:
   def brotliTest = library(brotliDec)
   def docsTest   = library(specularZioTest, specularTheme, ascentCss)
   def docsJs     = library(specular, ascentJs, ascentCss, zio)
-  def javaTime   = library(scalaJavaTime, scalaJavaTimeTzdb)
+  /** Heddle reads only `Instant` and UTC offsets, so region time zones (tzdb) stay the application's choice. */
+  def javaTime   = library(scalaJavaTime)
   def jsRuntime  = javaTime
 
   def nativeTestInterface: Seq[Setting[?]] =
