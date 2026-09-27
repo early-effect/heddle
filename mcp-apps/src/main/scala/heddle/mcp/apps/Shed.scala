@@ -29,12 +29,13 @@ object AllGrants:
     def list(v: G *: T): List[Grant[?, ?, ?]] = v.head :: rest.list(v.tail)
 
 /** The set of grants one `ui://` view may use, and the policy it asks its host for. The view calls a tool by picking it
-  * from `tools` (`bridge.call(_.inc)`), so a grant from another shed is not reachable.
+  * from `tools` (`bridge.call(_.inc)`), so a grant from another shed is not reachable. `L` is the launch grant's own
+  * type, so a view renders the launch tool's input and result with their real types.
   */
-final case class Shed[N <: Tuple, V <: Tuple](
+final case class Shed[L <: Grant[?, ?, ?], N <: Tuple, V <: Tuple](
     uri: UiUri,
     title: String,
-    launch: Grant[?, ?, ?],
+    launch: L,
     tools: NamedTuple[N, V],
     policy: UiPolicy,
 )(using all: AllGrants[V]):
@@ -43,18 +44,18 @@ final case class Shed[N <: Tuple, V <: Tuple](
   /** The launch grant first, then the view's tools in declaration order. */
   def grants: List[Grant[?, ?, ?]] = launch :: all.list(tools.toTuple)
 
-  def withPolicy(next: UiPolicy): Shed[N, V] = copy(policy = next)
+  def withPolicy(next: UiPolicy): Shed[L, N, V] = copy(policy = next)
 end Shed
 
 object Shed:
   /** Pins the uri, title, and launch tool; `apply` takes the view's tools as a named tuple. */
-  def apply(uri: UiUri, title: String, launch: Grant[?, ?, ?]): Builder = Builder(uri, title, launch)
+  def apply[L <: Grant[?, ?, ?]](uri: UiUri, title: String, launch: L): Builder[L] = Builder(uri, title, launch)
 
-  final class Builder(uri: UiUri, title: String, launch: Grant[?, ?, ?]):
-    def apply[N <: Tuple, V <: Tuple](tools: NamedTuple[N, V])(using AllGrants[V]): Shed[N, V] =
+  final class Builder[L <: Grant[?, ?, ?]](uri: UiUri, title: String, launch: L):
+    def apply[N <: Tuple, V <: Tuple](tools: NamedTuple[N, V])(using AllGrants[V]): Shed[L, N, V] =
       Shed(uri, title, launch, tools, UiPolicy.closed)
 
   /** A view with no tools of its own: it renders the launch result and calls nothing. */
-  def only(uri: UiUri, title: String, launch: Grant[?, ?, ?]): Shed[EmptyTuple, EmptyTuple] =
+  def only[L <: Grant[?, ?, ?]](uri: UiUri, title: String, launch: L): Shed[L, EmptyTuple, EmptyTuple] =
     Shed(uri, title, launch, NamedTuple.Empty, UiPolicy.closed)
 end Shed
