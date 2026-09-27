@@ -152,5 +152,52 @@ permission, a bad `ui://` URI. It also reads the legacy `ui/resourceUri` key, as
         )
       },
     ),
+    section("The view protocol")(
+      md"""
+A view and its host speak JSON-RPC over `postMessage`: the SEP-1865 `ui/*` methods plus MCP's
+own `tools/call`, `resources/read`, and `ping`. Heddle models each direction as a closed enum,
+so a message is a value, and one heddle does not know is a typed refusal:
+
+| Enum | Direction | Messages |
+| --- | --- | --- |
+| `ViewRequest` | view to host | `Initialize`, `OpenLink`, `DownloadFile`, `SendMessage`, `RequestDisplayMode`, `UpdateModelContext`, `CallTool`, `ReadResource`, `Ping` |
+| `ViewNotification` | view to host | `Initialized`, `SizeChanged`, `RequestTeardown`, `Log` |
+| `HostNotification` | host to view | `ToolInput`, `ToolInputPartial`, `ToolResult`, `ToolCancelled`, `HostContextChanged` |
+| `HostRequest` | host to view | `ResourceTeardown` |
+| `SandboxMessage` | host and relay only | `ProxyReady`, `ResourceReady` |
+
+Each encodes to a JSON-RPC `Message` and decodes back from one. A `ui/message` must come from the
+user, a download may carry only resources, and a tool name must be a tool name; anything else is
+`UiError.BadParams` naming the method and the reason.
+
+The host context arrives whole in the `ui/initialize` result, then in parts: a
+`host-context-changed` notification names only what changed, and `merge` applies it. The standard
+theme variables are the typed `HostVar` enum, container sizes are an `Extent` per side (fixed,
+bounded, or free), and fields a newer host sends that this revision does not know are kept in
+`extra`.
+""",
+      exampleValue {
+        val start = """{"theme":"light","displayMode":"inline","containerDimensions":{"width":400,"maxHeight":600}}"""
+        val patch = """{"theme":"dark","styles":{"variables":{"--color-text-primary":"#fafafa"}}}"""
+        for
+          context <- start.fromJson[heddle.mcp.apps.ui.HostContext]
+          change  <- patch.fromJson[heddle.mcp.apps.ui.HostContext]
+        yield context.merge(change)
+      }.assert { merged =>
+        import heddle.mcp.apps.ui.*
+        assertTrue(
+          merged.map(_.theme) == Right(Some(Theme.Dark)),
+          merged.map(_.displayMode) == Right(Some(DisplayMode.Inline)),
+          merged.map(_.containerDimensions) == Right(Some(ContainerDimensions(Extent.AtMost(600), Extent.Fixed(400)))),
+          merged.map(_.styles.map(_.variables)) == Right(Some(Map(HostVar.ColorTextPrimary -> "#fafafa"))),
+        )
+      },
+      exampleValue {
+        import heddle.mcp.apps.ui.*
+        ViewRequest.decode("ui/message", Json.Obj("role" -> Json.Str("assistant"), "content" -> Json.Arr()))
+      }.assert { refused =>
+        assertTrue(refused.left.toOption.map(_.message).contains("ui/message: role must be user, not assistant"))
+      },
+    ),
   )
 end McpAppsPage
