@@ -33,7 +33,7 @@ object BuildSite extends DocsSite:
   final case class HttpNav(http: Http.type, stays: WhatStaysOpen.type, endpoints: Endpoints.type)
 
   @navLabel("Agents")
-  final case class AgentsNav(agents: Agents.type)
+  final case class AgentsNav(agents: Agents.type, apps: McpAppsPage.type)
 
   @navLabel("Auth")
   final case class AuthNav(auth: Auth.type)

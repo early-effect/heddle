@@ -24,13 +24,15 @@ their own packages.
 Core (ZIO only):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.4.1"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.5.0"
 ```
 
-Optional artifacts, same version: `heddle-mcp`, `heddle-mcp-protocol`, `heddle-oauth`, `heddle-brotli`.
+Optional artifacts, same version: `heddle-mcp`, `heddle-mcp-protocol`, `heddle-mcp-apps`, `heddle-oauth`,
+`heddle-brotli`.
 
-Cross-build: `%%` is JVM. Use `%%%` for Scala.js and Scala Native. `heddle`, `heddle-mcp`, and
-`heddle-mcp-protocol` publish on all three. `heddle-oauth` is JVM and JS. `HeddleApp` is JVM-only.
+Cross-build: `%%` is JVM. Use `%%%` for Scala.js and Scala Native. `heddle`, `heddle-mcp`,
+`heddle-mcp-protocol`, and `heddle-mcp-apps` publish on all three. `heddle-oauth` is JVM and JS.
+`HeddleApp` is JVM-only.
 
 ## Routes
 
@@ -76,6 +78,7 @@ url = "http://localhost:8080/mcp"
 | `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM, JS, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp-protocol` | zio-json | MCP wire types and codecs: JSON-RPC messages, requests, tools, results, resources |
 | `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
+| `heddle-mcp-apps` | heddle-mcp | MCP Apps: sheds of typed grants, `ui://` views, `_meta.ui`, and the policy a host clamps |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
 
