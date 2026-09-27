@@ -45,35 +45,49 @@ object MiddlewareSpec extends ZIOSpecDefault:
           },
       ),
       suite("cors")(
-        test("adds Access-Control-Allow-Origin from the request Origin"):
+        test("the default policy answers * and never reflects an origin or offers credentials"):
           val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.cors()
-          routes(Request.get("/x").withHeader("Origin", "http://localhost")).map { res =>
-            assertTrue(res.header("Access-Control-Allow-Origin").contains("http://localhost"))
+          (routes(Request.get("/x").withHeader("Origin", "https://evil.example")) <*> routes(Request.get("/x"))).map {
+            (withOrigin, without) =>
+              assertTrue(
+                withOrigin.header("Access-Control-Allow-Origin").contains("*"),
+                withOrigin.header("Access-Control-Allow-Credentials").isEmpty,
+                without.header("Access-Control-Allow-Origin").contains("*"),
+              )
           }
         ,
-        test("answers OPTIONS preflight"):
-          val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.cors()
-          routes(Request(Method.OPTIONS, Url.parse("/x")).withHeader("Origin", "http://localhost")).map { res =>
+        test("a listed origin is echoed with credentials when asked, an unlisted one gets nothing, and both vary"):
+          val policy = Middleware.CorsOrigins.Only(Set("https://app.example"), Middleware.CorsCredentials.Include)
+          val routes =
+            Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.cors(Middleware.CorsConfig(origins = policy))
+          (routes(Request.get("/x").withHeader("Origin", "https://app.example")) <*>
+            routes(Request.get("/x").withHeader("Origin", "https://evil.example"))).map { (listed, unlisted) =>
             assertTrue(
-              res.status == Status.NoContent,
-              res.header("Access-Control-Allow-Methods").exists(_.contains("GET")),
+              listed.header("Access-Control-Allow-Origin").contains("https://app.example"),
+              listed.header("Access-Control-Allow-Credentials").contains("true"),
+              listed.header("Vary").contains("Origin"),
+              unlisted.header("Access-Control-Allow-Origin").isEmpty,
+              unlisted.header("Access-Control-Allow-Credentials").isEmpty,
+              unlisted.header("Vary").contains("Origin"),
             )
           }
         ,
-        test("echoes credentials when configured"):
-          val cors   = Middleware.cors(Middleware.CorsConfig(allowOrigin = "http://localhost", allowCredentials = true))
-          val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ cors
-          routes(Request.get("/x").withHeader("Origin", "http://localhost")).map { res =>
+        test("a preflight names the allowed methods, headers, and max age; a plain OPTIONS reaches the handler"):
+          val routes = Routes(
+            Method.GET / "x"     -> Handler.text("ok"),
+            Method.OPTIONS / "x" -> Handler.text("options"),
+          ) @@ Middleware.cors()
+          val pre = Request(Method.OPTIONS, Url.parse("/x"))
+            .withHeader("Origin", "https://app.example")
+            .withHeader("Access-Control-Request-Method", "POST")
+          (routes(pre) <*> routes(Request(Method.OPTIONS, Url.parse("/x")))).map { (preflight, plain) =>
             assertTrue(
-              res.header("Access-Control-Allow-Origin").contains("http://localhost"),
-              res.header("Access-Control-Allow-Credentials").contains("true"),
+              preflight.status == Status.NoContent,
+              preflight.header("Access-Control-Allow-Methods").exists(_.split(", ").contains("POST")),
+              preflight.header("Access-Control-Allow-Headers").exists(_.contains("Authorization")),
+              preflight.header("Access-Control-Max-Age").contains("86400"),
+              plain.body.text.contains("options"),
             )
-          }
-        ,
-        test("falls back to * when Origin is missing"):
-          val routes = Routes(Method.GET / "x" -> Handler.text("ok")) @@ Middleware.cors()
-          routes(Request.get("/x")).map { res =>
-            assertTrue(res.header("Access-Control-Allow-Origin").contains("*"))
           },
       ),
       suite("intercept")(
@@ -197,6 +211,26 @@ object MiddlewareSpec extends ZIOSpecDefault:
             ) @@ Middleware.decompress()
           val req = Request.post("/echo", Body.fromBytes(enc)).withHeader("Content-Encoding", "gzip")
           routes(req).map(res => assertTrue(res.body.text.contains(raw)))
+        ,
+        test("decompress refuses a coding it cannot decode with 415, never passing it on as plain"):
+          val routes = Routes(Method.POST / "echo" -> Handler.text("reached")) @@ Middleware.decompress()
+          ZIO
+            .foreach(List("zstd", "gzip, br"))(coding =>
+              routes(
+                Request
+                  .post("/echo", Body.fromBytes(Chunk.fromArray("x".getBytes)))
+                  .withHeader("Content-Encoding", coding)
+              )
+            )
+            .map(rs => assertTrue(rs.forall(_.status == Status.UnsupportedMediaType)))
+        ,
+        test("compress honours q=0 and never answers a coding the client did not offer"):
+          val routes = Routes(Method.GET / "j" -> Handler.json("\"" + "n" * 2048 + "\"")) @@ Middleware.compress()
+          ZIO
+            .foreach(List("zstd", "gzip;q=0", "*;q=1, gzip;q=0", "identity"))(offer =>
+              routes(Request.get("/j").withHeader("Accept-Encoding", offer))
+            )
+            .map(rs => assertTrue(rs.forall(_.header("Content-Encoding").isEmpty)))
         ,
         test("gzip JSON when Accept-Encoding offers gzip"):
           val body   = "n" * 2048

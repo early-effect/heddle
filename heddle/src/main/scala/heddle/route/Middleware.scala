@@ -198,11 +198,14 @@ object Middleware:
       decompressors: Chunk[Decompressor] = Chunk(Decompressor.gzip),
   ): Middleware[Any] =
     interceptZIO { req =>
-      req.header("Content-Encoding").map(_.trim.toLowerCase).filter(_.nonEmpty) match
-        case None | Some("identity") => ZIO.succeed(req)
-        case Some(token)             =>
-          decompressors.find(_.encoding.token == token) match
-            case None    => ZIO.succeed(req)
+      req.headers.contentEncoding.filter(_ != ContentEncoding.Identity) match
+        case Chunk() => ZIO.succeed(req)
+        case codings =>
+          // RFC 9110 §15.5.16: a coding this server cannot decode is 415, never a compressed body handed on as plain.
+          (if codings.length == 1 then codings.headOption else None).flatMap(c =>
+            decompressors.find(_.encoding == c)
+          ) match
+            case None    => ZIO.fail(Response.text("Unsupported Content-Encoding", Status.UnsupportedMediaType))
             case Some(d) =>
               req.body.collect
                 .orElseFail(Response.badRequest("Unreadable body"))
@@ -231,21 +234,37 @@ object Middleware:
 
   def cors(): Middleware[Any] = cors(CorsConfig())
 
+  /** CORS (Fetch §3.2). A preflight is an `OPTIONS` naming `Access-Control-Request-Method`; any other request is
+    * handled, then answered with the origin policy.
+    */
   def cors(config: CorsConfig): Middleware[Any] =
     wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
-        val origin = req.header("Origin")
-        if req.method == Method.OPTIONS then ZIO.succeed(preflight(origin, config))
-        else handler.run(req).map(addCors(_, origin, config))
+        val origin = req.headers.get(HeaderName.Origin)
+        if req.method == Method.OPTIONS && req.headers.get(HeaderName.AccessControlRequestMethod).isDefined then
+          ZIO.succeed(preflight(origin, config))
+        else handler.run(req).map(allowOrigin(_, origin, config.origins))
       }
     }
 
+  /** Which origins may read responses. */
+  enum CorsOrigins:
+    /** Every origin, answered with `*`. Browsers refuse credentials with `*`, so this policy offers none. */
+    case Any
+
+    /** Exactly these serialized origins (`https://app.example`), echoed back with `Vary: Origin`. */
+    case Only(origins: Set[String], credentials: CorsCredentials = CorsCredentials.Omit)
+
+  /** Whether a listed origin may send cookies and `Authorization` and read the answer. */
+  enum CorsCredentials:
+    case Omit, Include
+
   final case class CorsConfig(
-      allowOrigin: String = "*",
-      allowMethods: String = "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
-      allowHeaders: String = "Content-Type, Authorization, X-Request-Id",
-      allowCredentials: Boolean = false,
-      maxAgeSeconds: Int = 86400,
+      origins: CorsOrigins = CorsOrigins.Any,
+      methods: Set[Method] =
+        Set(Method.GET, Method.POST, Method.PUT, Method.PATCH, Method.DELETE, Method.OPTIONS, Method.HEAD),
+      headers: Set[HeaderName] = Set(HeaderName.ContentType, HeaderName.Authorization, HeaderName("X-Request-Id")),
+      maxAge: Duration = 1.day,
   )
 
   private def applyCompress(
@@ -295,9 +314,9 @@ object Middleware:
   end skipCompress
 
   private def pick(req: Request, compressors: Chunk[Compressor]): Option[Compressor] =
-    val offered = req.headers.acceptEncoding
-    if offered.contains(ContentEncoding.Other) then compressors.headOption
-    else offered.flatMap(enc => compressors.find(_.encoding == enc)).headOption
+    ContentEncoding
+      .negotiate(req.headers.get(HeaderName.AcceptEncoding), compressors.map(_.encoding))
+      .flatMap(e => compressors.find(_.encoding == e))
 
   extension (res: Response)
     private def removeLength: Response =
@@ -309,16 +328,24 @@ object Middleware:
         Routes.wrap(routes)(f[R1, E])
 
   private def preflight(origin: Option[String], config: CorsConfig): Response =
-    addCors(Response.empty(Status.NoContent), origin, config)
-      .withHeader("Access-Control-Allow-Methods", config.allowMethods)
-      .withHeader("Access-Control-Allow-Headers", config.allowHeaders)
-      .withHeader("Access-Control-Max-Age", config.maxAgeSeconds.toString)
+    allowOrigin(Response.empty(Status.NoContent), origin, config.origins)
+      .withHeader(HeaderName.AccessControlAllowMethods, config.methods.toList.map(_.render).sorted.mkString(", "))
+      .withHeader(HeaderName.AccessControlAllowHeaders, config.headers.toList.map(_.render).sorted.mkString(", "))
+      .withHeader(HeaderName.AccessControlMaxAge, config.maxAge.toSeconds.toString)
 
-  private def addCors(response: Response, origin: Option[String], config: CorsConfig): Response =
-    val allow =
-      if config.allowOrigin == "*" then origin.getOrElse("*")
-      else config.allowOrigin
-    val withOrigin = response.withHeader("Access-Control-Allow-Origin", allow)
-    if config.allowCredentials then withOrigin.withHeader("Access-Control-Allow-Credentials", "true")
-    else withOrigin
+  /** `*` for any origin; a listed origin echoed, with `Vary: Origin` either way so a cache never hands one origin's
+    * answer to another.
+    */
+  private def allowOrigin(response: Response, origin: Option[String], origins: CorsOrigins): Response =
+    origins match
+      case CorsOrigins.Any                  => response.withHeader(HeaderName.AccessControlAllowOrigin, "*")
+      case CorsOrigins.Only(allowed, creds) =>
+        val varied = response.withHeader(HeaderName.Vary, HeaderName.Origin.render)
+        origin.filter(allowed.contains) match
+          case None    => varied
+          case Some(o) =>
+            val granted = varied.withHeader(HeaderName.AccessControlAllowOrigin, o)
+            creds match
+              case CorsCredentials.Include => granted.withHeader(HeaderName.AccessControlAllowCredentials, "true")
+              case CorsCredentials.Omit    => granted
 end Middleware

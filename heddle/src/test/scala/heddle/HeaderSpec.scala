@@ -88,7 +88,7 @@ object HeaderSpec extends ZIOSpecDefault:
           assertTrue(
             sc.is(_.some).name == "id",
             sc.is(_.some).value == "x",
-            sc.is(_.some).secure,
+            sc.is(_.some).flags.contains(CookieFlag.Secure),
             sc.is(_.some).sameSite.contains(SameSite.Lax),
             sc.is(_.some).expires.isEmpty,
             sc.is(_.some).maxAge.isEmpty,
@@ -124,7 +124,13 @@ object HeaderSpec extends ZIOSpecDefault:
         ,
         test("Set-Cookie render round-trips SameSite Secure HttpOnly"):
           val sc =
-            SetCookie("sid", "abc", path = Some("/"), secure = true, httpOnly = true, sameSite = Some(SameSite.Lax))
+            SetCookie(
+              "sid",
+              "abc",
+              path = Some("/"),
+              flags = Set(CookieFlag.Secure, CookieFlag.HttpOnly, CookieFlag.Partitioned),
+              sameSite = Some(SameSite.Lax),
+            )
           val raw  = SetCookie.render(sc)
           val back = SetCookie.parse(raw)
           assertTrue(

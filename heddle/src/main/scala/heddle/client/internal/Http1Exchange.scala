@@ -2,7 +2,7 @@ package heddle.client.internal
 
 import heddle.client.{Authority, Client, ClientError, Target}
 import heddle.error.{HttpError, WireError}
-import heddle.http.{Body, HttpVersion, Method, Response, Status}
+import heddle.http.{Body, HttpVersion, Method, Response, Status, TransferCoding}
 import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
 import heddle.internal.duplex.ByteConn
@@ -89,16 +89,18 @@ private[heddle] object Http1Exchange:
   def framing(method: Method, head: Head): Either[WireError, Framing] =
     val code = head.status.code
     if method == Method.HEAD || code / 100 == 1 || code == 204 || code == 304 then Right(Framing.NoBody)
-    else if head.headers.get(HeaderName.TransferEncoding).exists(_.toLowerCase.contains("chunked")) then
-      Right(Framing.Chunked)
+    else if head.headers.transferEncoding.lastOption.contains(TransferCoding.Chunked) then Right(Framing.Chunked)
+    // RFC 9112 §6.3: a response whose last coding is not chunked runs until the connection closes.
+    else if head.headers.transferEncoding.nonEmpty then Right(Framing.UntilClose)
     else
       head.headers.get(HeaderName.ContentLength) match
         case None      => Right(Framing.UntilClose)
         case Some(raw) => Ascii.decimal(raw).map(Framing.Length(_)).toRight(WireError.BadContentLength(raw))
+  end framing
 
   def reuse(request: Headers, head: Head, framing: Framing): Reuse =
-    val closes    = (h: Headers) => h.get(HeaderName.Connection).exists(_.toLowerCase.contains("close"))
-    val keepAlive = head.headers.get(HeaderName.Connection).exists(_.toLowerCase.contains("keep-alive"))
+    val closes    = (h: Headers) => h.connection.contains("close")
+    val keepAlive = head.headers.connection.contains("keep-alive")
     val persists  = head.version match
       case HttpVersion.Http11 => true
       case _                  => keepAlive

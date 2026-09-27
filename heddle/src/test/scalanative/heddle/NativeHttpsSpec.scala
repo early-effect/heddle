@@ -13,14 +13,6 @@ import zio.test.*
 object NativeHttpsSpec extends ZIOSpecDefault:
   def spec =
     suite("Native HTTPS")(
-      test("getDynamic sees Tls from pem layer"):
-        ZIO.scoped {
-          ZIO
-            .environmentWith[Any](_.getDynamic[Tls])
-            .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
-            .map(got => assertTrue(got.isDefined))
-        }
-      ,
       test("a plain accept then Tls.server answers a raw TLS GET"):
         ZIO.scoped {
           for
@@ -47,8 +39,8 @@ object NativeHttpsSpec extends ZIOSpecDefault:
       test("Server.install plus a client that trusts the test certificate"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         ZIO.scoped {
-          Server
-            .install(routes, local)
+          ZIO
+            .serviceWithZIO[Tls](Server.install(routes, local, _))
             .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap { server =>
               server.port.flatMap { port =>
@@ -64,8 +56,8 @@ object NativeHttpsSpec extends ZIOSpecDefault:
       test("the system trust store rejects a self-signed peer"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         ZIO.scoped {
-          Server
-            .install(routes, local)
+          ZIO
+            .serviceWithZIO[Tls](Server.install(routes, local, _))
             .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap(_.port)
             .flatMap(port => Client.get(s"https://127.0.0.1:$port/health").either)

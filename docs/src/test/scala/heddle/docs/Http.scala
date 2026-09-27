@@ -60,10 +60,11 @@ Why that split exists is on [What stays open](what-stays-open.html).
     ),
     section("Server")(
       md"""
-`Server.install` / `Server.serve` are ordinary ZIO fibers on every platform. JVM accept
-defaults to Loom (`JvmScheduler.Loom`); `JvmScheduler.Default` still binds. JS is Node
-`net` / `tls`. Native is POSIX sockets plus OpenSSL. TLS is a compose-time layer, not a
-protocol flag: `Server.serve(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))`.
+`Server.install` / `Server.serve` are ordinary ZIO fibers on every platform. The JVM runs
+connections on virtual threads and falls back to the default executor where it cannot. JS is
+Node `net` / `tls`. Native is POSIX sockets plus OpenSSL. TLS is in the type:
+`Server.serveTls(app).provide(Server.Config.defaults, Tls.pem(certPem, keyPem))` needs a `Tls`,
+and `Server.install(routes, config, tls)` takes one.
 The layer reads the PEM at startup on every platform, so a missing block is a `TlsError`
 before the first connection, not a failed handshake later.
 HTTP/2 (ALPN `h2`) is the JVM bind. JS and Native serve HTTP/1.1 on that same `Routes`

@@ -144,7 +144,7 @@ object Provider:
                     SetCookie(
                       "op_session",
                       sid,
-                      httpOnly = true,
+                      flags = Set(heddle.http.header.CookieFlag.HttpOnly),
                       path = Some("/"),
                       sameSite = Some(heddle.http.header.SameSite.Lax),
                     )

@@ -78,8 +78,8 @@ object JsLiveSpec extends ZIOSpecDefault:
       test("HTTPS Server.install answers HTTP/1.1"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         ZIO.scoped {
-          Server
-            .install(routes, local)
+          ZIO
+            .serviceWithZIO[Tls](Server.install(routes, local, _))
             .provideSomeLayer[Scope](Tls.pem(TestTls.certPem, TestTls.keyPem))
             .flatMap { server =>
               server.port.flatMap { port =>

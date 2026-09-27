@@ -2,7 +2,7 @@ package heddle.internal.engine
 
 import java.nio.charset.StandardCharsets
 import heddle.error.{HttpError, WireError}
-import heddle.http.{Body, HttpVersion, MediaType, Method, Request, Response, Status, Url}
+import heddle.http.{Body, HttpVersion, MediaType, Method, Request, Response, Status, TransferCoding, Url}
 import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
 import heddle.route.Routes
@@ -102,7 +102,11 @@ private[heddle] object Http1:
   private def dispatch[R](routes: Routes[R, Response], request: Request): URIO[R, Response] =
     routes(request).catchAllCause { cause =>
       if cause.isInterruptedOnly then ZIO.interrupt
-      else ZIO.succeed(Response.internalServerError(cause.prettyPrint))
+      // The cause is for the operator's log; the client learns only that the server failed.
+      else
+        ZIO
+          .logErrorCause(s"${request.method.render} ${request.url.render} failed", cause)
+          .as(Response.internalServerError())
     }
 
   private def persist(req: Request): Boolean =
@@ -114,11 +118,15 @@ private[heddle] object Http1:
   private def connectionClose(res: Response): Boolean =
     res.header(Ascii.Connection).exists(isClose)
 
+  /** `Connection` is a list of options (RFC 9110 §7.6.1): `keep-alive, close` closes. */
   private def isClose(v: String): Boolean =
-    (v eq Ascii.Close) || v.equalsIgnoreCase(Ascii.Close)
+    (v eq Ascii.Close) || hasOption(v, Ascii.Close)
 
   private def isKeepAlive(v: String): Boolean =
-    (v eq Ascii.KeepAlive) || v.equalsIgnoreCase(Ascii.KeepAlive)
+    (v eq Ascii.KeepAlive) || hasOption(v, Ascii.KeepAlive)
+
+  private def hasOption(v: String, option: String): Boolean =
+    v.split(',').exists(_.trim.equalsIgnoreCase(option))
 
   private def readRequest(
       src: ConnBuf,
@@ -151,26 +159,32 @@ private[heddle] object Http1:
       headers: Headers,
       config: Server.Config,
   ): IO[HttpError, (Body, IO[HttpError, Unit])] =
-    if chunked(headers) then chunkedBody(src, headers, config)
-    else
-      headers.get(Ascii.ContentLength) match
-        case None      => ZIO.succeed(Body.empty -> ZIO.unit)
-        case Some(raw) =>
-          Ascii.decimal(raw) match
-            case None => ZIO.fail(HttpError.Malformed(WireError.BadContentLength(raw)))
-            case Some(n) if n > config.maxBodyBytes.toLong => ZIO.fail(HttpError.BodyTooLarge)
-            case Some(0)                                   => ZIO.succeed(Body.empty -> ZIO.unit)
-            case Some(n)                                   =>
-              Ref.make(n).map { left =>
-                val body     = Body.Stream(src.takeBytes(left, config.chunkSize.toInt), headers.contentType, Some(n))
-                val leftover = left.get.flatMap(src.drop)
-                (body, leftover)
-              }
+    headers.get(Ascii.TransferEncoding) match
+      case Some(_) if headers.get(Ascii.ContentLength).isDefined =>
+        ZIO.fail(HttpError.Malformed(WireError.ConflictingFraming))
+      case Some(raw) if headers.transferEncoding != Chunk(TransferCoding.Chunked) =>
+        ZIO.fail(HttpError.Malformed(WireError.UnsupportedTransferCoding(raw)))
+      case Some(_) => chunkedBody(src, headers, config)
+      case None    => lengthBody(src, headers, config)
 
-  private def chunked(headers: Headers): Boolean =
-    headers.get(Ascii.TransferEncoding).exists { v =>
-      (v eq Ascii.Chunked) || v.equalsIgnoreCase(Ascii.Chunked) || v.toLowerCase.contains(Ascii.Chunked)
-    }
+  private def lengthBody(
+      src: ConnBuf,
+      headers: Headers,
+      config: Server.Config,
+  ): IO[HttpError, (Body, IO[HttpError, Unit])] =
+    headers.get(Ascii.ContentLength) match
+      case None      => ZIO.succeed(Body.empty -> ZIO.unit)
+      case Some(raw) =>
+        Ascii.decimal(raw) match
+          case None => ZIO.fail(HttpError.Malformed(WireError.BadContentLength(raw)))
+          case Some(n) if n > config.maxBodyBytes.toLong => ZIO.fail(HttpError.BodyTooLarge)
+          case Some(0)                                   => ZIO.succeed(Body.empty -> ZIO.unit)
+          case Some(n)                                   =>
+            Ref.make(n).map { left =>
+              val body     = Body.Stream(src.takeBytes(left, config.chunkSize.toInt), headers.contentType, Some(n))
+              val leftover = left.get.flatMap(src.drop)
+              (body, leftover)
+            }
 
   private def chunkedBody(
       src: ConnBuf,
