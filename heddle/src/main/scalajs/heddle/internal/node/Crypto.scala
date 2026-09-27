@@ -56,6 +56,9 @@ private[heddle] object Crypto extends js.Object:
 
   def createHash(algorithm: String): Hash = js.native
 
+  def pbkdf2Sync(password: String, salt: Uint8Array, iterations: Int, keylen: Int, digest: String): Uint8Array =
+    js.native
+
   def generateKeyPairSync(typ: String, options: GenerateKeyOptions): KeyPair = js.native
 
   def createPrivateKey(opts: JwkKeyInput): KeyObject = js.native

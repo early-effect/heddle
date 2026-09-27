@@ -146,6 +146,7 @@ the message.
 | `ToolName.from`, `ExtensionId.from` | `ToolNameError`, `ExtensionIdError` |
 | `UiUri.from`, `Origin.from` | `UiUriError`, `OriginError` |
 | `Jose.verify`, `Jose.parseJwks` | `JoseError`, carried by `OAuthError.InvalidToken` |
+| `Rsa`, `Jose.sign` | `RsaError`, carried by `OAuthError.Crypto` |
 
 A literal checks the same rules at compile time: `ToolName("no spaces")` does not compile, and
 the compiler prints the message the runtime `from` would have returned.

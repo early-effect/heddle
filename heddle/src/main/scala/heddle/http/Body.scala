@@ -1,7 +1,7 @@
 package heddle.http
 
 import java.nio.charset.StandardCharsets
-import zio.{Chunk, Task, ZIO}
+import zio.{Chunk, Task, UIO, ZIO}
 import zio.stream.ZStream
 
 enum Body:
@@ -91,7 +91,11 @@ object Body:
   def form(form: Form): Body =
     text(form.render, MediaType.FormUrlEncoded)
 
-  def multipart(fields: Chunk[FormField], boundary: String = Multipart.boundary()): Body =
+  /** A `multipart/form-data` body under a fresh random boundary. */
+  def multipart(fields: Chunk[FormField]): UIO[Body] =
+    Multipart.boundary.map(multipart(fields, _))
+
+  def multipart(fields: Chunk[FormField], boundary: String): Body =
     val bytes = Multipart.encode(fields, boundary)
     fromBytes(bytes, Some(MediaType("multipart", "form-data", params = List("boundary" -> boundary))))
 end Body

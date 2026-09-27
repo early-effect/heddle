@@ -1,18 +1,23 @@
 package heddle.oauth.provider
 
-import heddle.crypto.{Base64Url, DigestPlatform}
+import heddle.crypto.{Base64Url, DigestPlatform, Rsa, RsaError}
 import heddle.http.{Form, Method, Request, Response, Status}
 import heddle.http.header.{Authorization, AuthScheme, BasicCredentials, SetCookie}
 import heddle.http.header.Authorization.given
-import heddle.oauth.jose.{Jose, SigningKey}
+import heddle.internal.Ids
+import heddle.oauth.jose.{Expected, Jose, SigningKey, TokenClaims}
 import heddle.route.{Handler, Routes}
 import heddle.route.PathDsl.*
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-import zio.{Chunk, durationInt, Clock, UIO, ZIO}
+import zio.{Chunk, durationInt, Clock, UIO, URIO, ZIO}
+import zio.json.*
+import zio.json.ast.Json
 
+/** `audience` is the resource access tokens are for (RFC 8707); unset, each token names the client it was issued to. */
 final case class ProviderConfig(
     issuer: String,
+    audience: Option[String] = None,
     accessTokenTtl: zio.Duration = 15.minutes,
     refreshTokenTtl: zio.Duration = 8.hours,
     idTokenTtl: zio.Duration = 15.minutes,
@@ -21,7 +26,7 @@ final case class ProviderConfig(
 )
 
 object Provider:
-  def routes(config: ProviderConfig, stores: ProviderStores, key: SigningKey): Routes[Any, Nothing] =
+  def routes(config: ProviderConfig, stores: ProviderStores, key: SigningKey): Routes[Rsa, Nothing] =
     val iss = config.issuer.stripSuffix("/")
     Routes(
       Method.GET / ".well-known" / "openid-configuration" -> Handler { (_: Request) =>
@@ -40,7 +45,26 @@ object Provider:
   end routes
 
   private def discovery(iss: String): String =
-    s"""{"issuer":"$iss","authorization_endpoint":"$iss/authorize","token_endpoint":"$iss/token","userinfo_endpoint":"$iss/userinfo","jwks_uri":"$iss/jwks.json","introspection_endpoint":"$iss/introspect","revocation_endpoint":"$iss/revoke","response_types_supported":["code","code id_token"],"grant_types_supported":["authorization_code","client_credentials","refresh_token"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["RS256"],"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post","none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["openid","profile","email","offline_access"]}"""
+    def strs(xs: String*) = Json.Arr(Chunk.fromIterable(xs.map(Json.Str(_))))
+    Json
+      .Obj(
+        "issuer"                                -> Json.Str(iss),
+        "authorization_endpoint"                -> Json.Str(s"$iss/authorize"),
+        "token_endpoint"                        -> Json.Str(s"$iss/token"),
+        "userinfo_endpoint"                     -> Json.Str(s"$iss/userinfo"),
+        "jwks_uri"                              -> Json.Str(s"$iss/jwks.json"),
+        "introspection_endpoint"                -> Json.Str(s"$iss/introspect"),
+        "revocation_endpoint"                   -> Json.Str(s"$iss/revoke"),
+        "response_types_supported"              -> strs("code", "code id_token"),
+        "grant_types_supported"                 -> strs("authorization_code", "client_credentials", "refresh_token"),
+        "subject_types_supported"               -> strs("public"),
+        "id_token_signing_alg_values_supported" -> strs("RS256"),
+        "token_endpoint_auth_methods_supported" -> strs("client_secret_basic", "client_secret_post", "none"),
+        "code_challenge_methods_supported"      -> strs("S256"),
+        "scopes_supported"                      -> strs("openid", "profile", "email", "offline_access"),
+      )
+      .toJson
+  end discovery
 
   private def authorize(config: ProviderConfig, stores: ProviderStores, req: Request): UIO[Response] =
     val q         = req.query
@@ -60,11 +84,12 @@ object Provider:
           case None                                          => ZIO.succeed(Response.badRequest("unknown client"))
           case Some(c) if !c.redirectUris.contains(redirect) =>
             ZIO.succeed(Response.badRequest("redirect_uri mismatch"))
-          case Some(_) if method.exists(_ != "S256") && challenge.isDefined =>
+          case Some(_) if challenge.isDefined && !method.contains("S256") =>
             ZIO.succeed(Response.badRequest("code_challenge_method must be S256"))
+          case Some(c) if c.secretHash.isEmpty && challenge.isEmpty =>
+            ZIO.succeed(Response.badRequest("a public client must send a PKCE code_challenge"))
           case Some(_) =>
-            val code = heddle.internal.Ids.uuid().toString.replace("-", "")
-            Clock.instant.flatMap { now =>
+            (Ids.token <*> Clock.instant).flatMap { (code, now) =>
               stores.codes
                 .put(
                   AuthCode(
@@ -79,9 +104,8 @@ object Provider:
                   )
                 )
                 .as {
-                  val loc = redirect + (if redirect.contains("?") then "&" else "?") +
-                    s"code=$code" + state.map(s => s"&state=$s").getOrElse("")
-                  Response.redirect(loc)
+                  val params = Form((List("code" -> code) ++ state.map("state" -> _).toList)*)
+                  Response.redirect(redirect + (if redirect.contains("?") then "&" else "?") + params.render)
                 }
             }
         }
@@ -106,12 +130,11 @@ object Provider:
     withForm(req) { form =>
       val user   = form.get("username").getOrElse("")
       val pass   = form.get("password").getOrElse("")
-      val resume = form.get("resume").getOrElse("/")
+      val resume = form.get("resume").filter(isLocalPath).getOrElse("/")
       stores.users.authenticate(user, pass).flatMap {
         case None    => ZIO.succeed(Response.text("invalid credentials", Status.Unauthorized))
         case Some(u) =>
-          val sid = heddle.internal.Ids.uuid().toString
-          Clock.instant.flatMap { now =>
+          (Ids.token <*> Clock.instant).flatMap { (sid, now) =>
             stores.sessions
               .put(SessionRec(sid, u.id, now.plusMillis(config.sessionTtl.toMillis)))
               .as(
@@ -136,7 +159,7 @@ object Provider:
       stores: ProviderStores,
       key: SigningKey,
       req: Request,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     withForm(req) { form =>
       clientOf(stores, req, form).flatMap {
         case None    => ZIO.succeed(Response.unauthorized("invalid_client"))
@@ -155,7 +178,7 @@ object Provider:
       key: SigningKey,
       client: ClientRecord,
       form: Form,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     val code = form.get("code").getOrElse("")
     val uri  = form.get("redirect_uri").getOrElse("")
     val ver  = form.get("code_verifier")
@@ -167,7 +190,7 @@ object Provider:
             ZIO.succeed(Response.badRequest("invalid_grant"))
           else if ac.codeChallenge.exists(ch => !ver.exists(v => pkceOk(v, ch))) then
             ZIO.succeed(Response.badRequest("invalid_grant"))
-          else issue(config, stores, key, client, ac.userId, ac.scopes, ac.nonce, now)
+          else issue(config, stores, key, client, Grant(ac.userId, ac.scopes, ac.nonce), now)
         }
     }
   end authCodeGrant
@@ -177,12 +200,19 @@ object Provider:
       key: SigningKey,
       client: ClientRecord,
       form: Form,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     if client.secretHash.isEmpty then ZIO.succeed(Response.unauthorized("confidential client required"))
     else
-      val scope = form.get("scope").map(_.split(" ").filter(_.nonEmpty).toSet).getOrElse(Set.empty)
-      val token = Jose.sign(key, client.id, config.issuer.stripSuffix("/"), client.id, scope, config.accessTokenTtl)
-      ZIO.succeed(jsonToken(token, None, None, config.accessTokenTtl.toSeconds))
+      val scope  = form.get("scope").map(_.split(" ").filter(_.nonEmpty).toSet).getOrElse(Set.empty)
+      val claims =
+        TokenClaims(
+          client.id,
+          config.issuer.stripSuffix("/"),
+          config.audience.getOrElse(client.id),
+          scope,
+          config.accessTokenTtl,
+        )
+      signed(Jose.sign(key, claims).map(jsonToken(_, None, None, config.accessTokenTtl.toSeconds)))
 
   private def refreshGrant(
       config: ProviderConfig,
@@ -190,7 +220,7 @@ object Provider:
       key: SigningKey,
       client: ClientRecord,
       form: Form,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     val tok = form.get("refresh_token").getOrElse("")
     stores.tokens.takeRefresh(tok).flatMap {
       case None                               => ZIO.succeed(Response.badRequest("invalid_grant"))
@@ -198,7 +228,7 @@ object Provider:
       case Some(r)                            =>
         Clock.instant.flatMap { now =>
           if now.isAfter(r.exp) then ZIO.succeed(Response.badRequest("invalid_grant"))
-          else issue(config, stores, key, client, r.userId, r.scopes, None, now)
+          else issue(config, stores, key, client, Grant(r.userId, r.scopes, None), now)
         }
     }
   end refreshGrant
@@ -208,59 +238,87 @@ object Provider:
       stores: ProviderStores,
       key: SigningKey,
       client: ClientRecord,
-      userId: String,
-      scopes: Set[String],
-      nonce: Option[String],
+      grant: Grant,
       now: Instant,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     val iss    = config.issuer.stripSuffix("/")
-    val access = Jose.sign(key, userId, iss, client.id, scopes, config.accessTokenTtl)
-    val idTok  =
-      if scopes.contains("openid") then
-        Some(Jose.sign(key, userId, iss, client.id, scopes, config.idTokenTtl, nonce.map("nonce" -> _).toMap))
-      else None
+    val access =
+      TokenClaims(grant.userId, iss, config.audience.getOrElse(client.id), grant.scopes, config.accessTokenTtl)
+    val idTok = Option.when(grant.scopes.contains("openid"))(
+      TokenClaims(grant.userId, iss, client.id, grant.scopes, config.idTokenTtl, grant.nonce.map("nonce" -> _).toMap)
+    )
     val refresh =
-      if scopes.contains("offline_access") || scopes.contains("openid") then
-        Some(heddle.internal.Ids.uuid().toString.replace("-", ""))
-      else None
-    val put =
-      refresh match
-        case None     => ZIO.unit
-        case Some(rt) =>
+      if grant.scopes.contains("offline_access") || grant.scopes.contains("openid") then Ids.token.asSome
+      else ZIO.none
+    signed(
+      for
+        a  <- Jose.sign(key, access)
+        id <- ZIO.foreach(idTok)(Jose.sign(key, _))
+        rt <- refresh
+        _  <- ZIO.foreachDiscard(rt) { t =>
           stores.tokens.putRefresh(
-            RefreshRec(rt, client.id, userId, scopes, rt, now.plusMillis(config.refreshTokenTtl.toMillis))
+            RefreshRec(t, client.id, grant.userId, grant.scopes, t, now.plusMillis(config.refreshTokenTtl.toMillis))
           )
-    put.as(jsonToken(access, refresh, idTok, config.accessTokenTtl.toSeconds))
+        }
+      yield jsonToken(a, rt, id, config.accessTokenTtl.toSeconds)
+    )
   end issue
+
+  /** Whom a token is for and what it may do. */
+  private final case class Grant(userId: String, scopes: Set[String], nonce: Option[String])
+
+  /** A signing failure is the provider's own fault: `500 server_error`. */
+  private def signed(response: ZIO[Rsa, RsaError, Response]): URIO[Rsa, Response] =
+    response.catchAll(e => ZIO.logError(e.message).as(Response.internalServerError("server_error")))
 
   private def userinfo(
       config: ProviderConfig,
       stores: ProviderStores,
       key: SigningKey,
       req: Request,
-  ): UIO[Response] =
+  ): URIO[Rsa, Response] =
     bearer(req) match
       case None      => ZIO.succeed(Response.unauthorized())
       case Some(tok) =>
-        Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
-          case Left(_)  => ZIO.succeed(Response.unauthorized())
-          case Right(c) =>
-            stores.users.byId(c.subject).map {
-              case None    => Response.notFound()
-              case Some(u) =>
-                val email = u.claims.getOrElse("email", s"${u.username}@example.test")
-                Response.json(s"""{"sub":"${u.id}","preferred_username":"${u.username}","email":"$email"}""")
-            }
+        Jose
+          .verify(tok, key.jwks, Expected(config.issuer.stripSuffix("/"), None))
+          .foldZIO(
+            _ => ZIO.succeed(Response.unauthorized()),
+            c =>
+              stores.users.byId(c.subject).map {
+                case None    => Response.notFound()
+                case Some(u) =>
+                  val email = u.claims.getOrElse("email", s"${u.username}@example.test")
+                  Response.json(
+                    Json
+                      .Obj(
+                        "sub"                -> Json.Str(u.id),
+                        "preferred_username" -> Json.Str(u.username),
+                        "email"              -> Json.Str(email),
+                      )
+                      .toJson
+                  )
+              },
+          )
 
-  private def introspect(config: ProviderConfig, key: SigningKey, req: Request): UIO[Response] =
+  private def introspect(config: ProviderConfig, key: SigningKey, req: Request): URIO[Rsa, Response] =
     withForm(req) { form =>
       val tok = form.get("token").getOrElse("")
-      ZIO.succeed(
-        Jose.verify(tok, key.jwks, config.issuer.stripSuffix("/"), "") match
-          case Left(_)  => Response.json("""{"active":false}""")
-          case Right(c) =>
-            Response.json(s"""{"active":true,"sub":"${c.subject}","scope":"${c.scopes.mkString(" ")}"}""")
-      )
+      Jose
+        .verify(tok, key.jwks, Expected(config.issuer.stripSuffix("/"), None))
+        .fold(
+          _ => Response.json(Json.Obj("active" -> Json.Bool(false)).toJson),
+          c =>
+            Response.json(
+              Json
+                .Obj(
+                  "active" -> Json.Bool(true),
+                  "sub"    -> Json.Str(c.subject),
+                  "scope"  -> Json.Str(c.scopes.mkString(" ")),
+                )
+                .toJson
+            ),
+        )
     }
 
   private def revoke(stores: ProviderStores, req: Request): UIO[Response] =
@@ -276,12 +334,12 @@ object Provider:
     id match
       case None      => ZIO.succeed(None)
       case Some(cid) =>
-        stores.clients.byId(cid).map {
-          case None    => None
+        stores.clients.byId(cid).flatMap {
+          case None    => ZIO.none
           case Some(c) =>
             c.secretHash match
-              case None    => Some(c)
-              case Some(h) => if secret.exists(Passwords.check(_, h)) then Some(c) else None
+              case None    => ZIO.some(c)
+              case Some(h) => ZIO.blocking(ZIO.succeed(secret.exists(Passwords.check(_, h)))).map(Option.when(_)(c))
         }
     end match
   end clientOf
@@ -303,7 +361,7 @@ object Provider:
     Base64Url.encode(digest) == challenge
 
   /** An unreadable form is the client's error, `400 invalid_request` (RFC 6749 §5.2), not a defect. */
-  private def withForm(req: Request)(use: Form => UIO[Response]): UIO[Response] =
+  private def withForm[R](req: Request)(use: Form => URIO[R, Response]): URIO[R, Response] =
     req.body.asForm.foldZIO(_ => ZIO.succeed(Response.badRequest("invalid_request")), use)
 
   private def bearer(req: Request): Option[String] =
@@ -312,11 +370,19 @@ object Provider:
       case _                                                       => None
 
   private def jsonToken(access: String, refresh: Option[String], idToken: Option[String], expires: Long): Response =
-    val extra =
-      refresh.map(r => s""","refresh_token":"$r"""").getOrElse("") +
-        idToken.map(t => s""","id_token":"$t"""").getOrElse("")
-    Response.json(s"""{"access_token":"$access","token_type":"Bearer","expires_in":$expires$extra}""")
+    val fields =
+      Chunk(
+        "access_token" -> Json.Str(access),
+        "token_type"   -> Json.Str("Bearer"),
+        "expires_in"   -> Json.Num(expires),
+      ) ++ Chunk.fromIterable(refresh.map("refresh_token" -> Json.Str(_))) ++
+        Chunk.fromIterable(idToken.map("id_token" -> Json.Str(_)))
+    Response.json(Json.Obj(fields).toJson)
+
+  /** A path on this server: `/login?resume=//evil.example` or `https://...` would make the login an open redirect. */
+  private def isLocalPath(s: String): Boolean =
+    s.startsWith("/") && !s.startsWith("//") && !s.contains('\\')
 
   private def escape(s: String): String =
-    s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
+    s.replace("&", "&amp;").replace("\"", "&quot;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
 end Provider

@@ -1,53 +1,68 @@
 package heddle.crypto
 
 import java.math.BigInteger
-import java.security.{KeyFactory, KeyPairGenerator, Signature}
+import java.security.{KeyFactory, KeyPairGenerator, Signature, SignatureException}
 import java.security.interfaces.{RSAPrivateKey, RSAPublicKey}
 import java.security.spec.{RSAPrivateKeySpec, RSAPublicKeySpec}
-import zio.{Chunk, UIO, ULayer, ZIO, ZLayer}
+import zio.{Chunk, IO, ULayer, ZIO, ZLayer}
 
+/** JCA RSA. The JCA reports failure by throwing, so each call is attempted here and becomes an `RsaError`. */
 private[heddle] object RsaPlatform:
-  def generateSync(bits: Int): RsaKey =
-    val gen = KeyPairGenerator.getInstance("RSA")
-    gen.initialize(bits)
-    val kp   = gen.generateKeyPair()
-    val pub  = kp.getPublic.asInstanceOf[RSAPublicKey]
-    val priv = kp.getPrivate.asInstanceOf[RSAPrivateKey]
-    RsaKey(
-      RsaPublic(unsigned(pub.getModulus), unsigned(pub.getPublicExponent)),
-      unsigned(priv.getPrivateExponent),
-    )
-  end generateSync
-
-  def signSync(key: RsaKey, payload: Chunk[Byte]): Chunk[Byte] =
-    val spec = RSAPrivateKeySpec(modulus(key.public.n), integer(key.d))
-    val priv = KeyFactory.getInstance("RSA").generatePrivate(spec)
-    val sig  = Signature.getInstance("SHA256withRSA")
-    sig.initSign(priv)
-    sig.update(payload.toArray)
-    Chunk.fromArray(sig.sign())
-
-  def verifySync(pub: RsaPublic, payload: Chunk[Byte], sigBytes: Chunk[Byte]): Boolean =
-    try
-      val spec = RSAPublicKeySpec(modulus(pub.n), integer(pub.e))
-      val key  = KeyFactory.getInstance("RSA").generatePublic(spec)
-      val sig  = Signature.getInstance("SHA256withRSA")
-      sig.initVerify(key)
-      sig.update(payload.toArray)
-      sig.verify(sigBytes.toArray)
-    catch case _: Exception => false
-
   def live: ULayer[Rsa] = ZLayer.succeed(Live)
 
   private object Live extends Rsa:
-    def generate(bits: Int): UIO[RsaKey] =
-      ZIO.succeed(generateSync(bits))
+    def generate(bits: Int): IO[RsaError, RsaKey] =
+      ZIO
+        .attemptBlocking {
+          val gen = KeyPairGenerator.getInstance("RSA")
+          gen.initialize(bits)
+          gen.generateKeyPair()
+        }
+        .mapError(failed(RsaOperation.Generate))
+        .flatMap { kp =>
+          (kp.getPublic, kp.getPrivate) match
+            case (pub: RSAPublicKey, priv: RSAPrivateKey) =>
+              ZIO.succeed(
+                RsaKey(
+                  RsaPublic(unsigned(pub.getModulus), unsigned(pub.getPublicExponent)),
+                  unsigned(priv.getPrivateExponent),
+                )
+              )
+            case _ => ZIO.fail(RsaError.Failed(RsaOperation.Generate, "the provider made a key that is not RSA"))
+        }
 
-    def signSha256(key: RsaKey, payload: Chunk[Byte]): UIO[Chunk[Byte]] =
-      ZIO.succeed(signSync(key, payload))
+    def signSha256(key: RsaKey, payload: Chunk[Byte]): IO[RsaError, Chunk[Byte]] =
+      ZIO
+        .attempt {
+          val spec = RSAPrivateKeySpec(integer(key.public.n), integer(key.d))
+          val sig  = Signature.getInstance("SHA256withRSA")
+          sig.initSign(KeyFactory.getInstance("RSA").generatePrivate(spec))
+          sig.update(payload.toArray)
+          Chunk.fromArray(sig.sign())
+        }
+        .mapError(failed(RsaOperation.Sign))
 
-    def verifySha256(pub: RsaPublic, payload: Chunk[Byte], sig: Chunk[Byte]): UIO[Boolean] =
-      ZIO.succeed(verifySync(pub, payload, sig))
+    def verifySha256(pub: RsaPublic, payload: Chunk[Byte], sig: Chunk[Byte]): IO[RsaError, Boolean] =
+      ZIO
+        .attempt {
+          val key = KeyFactory.getInstance("RSA").generatePublic(RSAPublicKeySpec(integer(pub.n), integer(pub.e)))
+          val v   = Signature.getInstance("SHA256withRSA")
+          v.initVerify(key)
+          v.update(payload.toArray)
+          v
+        }
+        .mapError(failed(RsaOperation.Verify))
+        .flatMap { v =>
+          // A signature of the wrong length or encoding is one that does not match.
+          ZIO.attempt(v.verify(sig.toArray)).catchAll {
+            case _: SignatureException => ZIO.succeed(false)
+            case other                 => ZIO.fail(failed(RsaOperation.Verify)(other))
+          }
+        }
+  end Live
+
+  private def failed(operation: RsaOperation)(cause: Throwable): RsaError =
+    RsaError.Failed(operation, cause.toString)
 
   private def unsigned(n: BigInteger): Chunk[Byte] =
     val raw = n.toByteArray
@@ -56,6 +71,4 @@ private[heddle] object RsaPlatform:
 
   private def integer(bytes: Chunk[Byte]): BigInteger =
     BigInteger(1, bytes.toArray)
-
-  private def modulus(bytes: Chunk[Byte]): BigInteger = integer(bytes)
 end RsaPlatform

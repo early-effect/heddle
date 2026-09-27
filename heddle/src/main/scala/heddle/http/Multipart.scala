@@ -2,7 +2,7 @@ package heddle.http
 
 import java.nio.charset.StandardCharsets
 import java.util.Arrays
-import zio.{Chunk, Ref, ZIO}
+import zio.{Chunk, Ref, UIO, ZIO}
 import zio.stream.ZStream
 
 enum FormField:
@@ -18,8 +18,9 @@ object Multipart:
   private val Crlf: Array[Byte]  = Array('\r', '\n').map(_.toByte)
   private val Close: Array[Byte] = Array('-', '-').map(_.toByte)
 
-  def boundary(): String =
-    "----heddleFormBoundary" + heddle.internal.Ids.uuid().toString.replace("-", "")
+  /** A fresh boundary: 128 random bits, which no field's bytes will repeat by chance. */
+  val boundary: UIO[String] =
+    heddle.internal.Ids.token.map("----heddleFormBoundary" + _)
 
   def parse(bytes: Chunk[Byte], boundary: String): Either[MultipartError, Chunk[FormField]] =
     val (fields, _, err) = takeComplete(bytes, boundary, finish = true)

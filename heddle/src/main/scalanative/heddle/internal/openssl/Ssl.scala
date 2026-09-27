@@ -1,7 +1,6 @@
 package heddle.internal.openssl
 
 import heddle.internal.posix.{Interest, Transfer}
-import java.io.IOException
 import scala.annotation.unused
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
@@ -20,41 +19,6 @@ private[heddle] object Ssl:
       )
     out
   end sha256
-
-  def rsaGenerate(bits: Int): (Array[Byte], Array[Byte], Array[Byte]) =
-    init()
-    Zone {
-      val ctx = crypto.EVP_PKEY_CTX_new_id(EvpPkeyRsa, null)
-      if ctx == null then throw fail("EVP_PKEY_CTX_new_id")
-      try
-        if crypto.EVP_PKEY_keygen_init(ctx) != 1 then throw fail("EVP_PKEY_keygen_init")
-        if crypto.EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, bits) != 1 then throw fail("rsa_keygen_bits")
-        val pp = alloc[Ptr[Byte]]()
-        !pp = null
-        if crypto.EVP_PKEY_keygen(ctx, pp) != 1 || !pp == null then throw fail("EVP_PKEY_keygen")
-        val pkey = !pp
-        try
-          val n = bnParam(pkey, c"n")
-          val e = bnParam(pkey, c"e")
-          val d = bnParam(pkey, c"d")
-          (n, e, d)
-        finally crypto.EVP_PKEY_free(pkey)
-      finally crypto.EVP_PKEY_CTX_free(ctx)
-      end try
-    }
-  end rsaGenerate
-
-  def rsaSign(n: Array[Byte], e: Array[Byte], d: Array[Byte], payload: Array[Byte]): Array[Byte] =
-    init()
-    val pkey = fromRsa(n, e, Some(d))
-    try digestSign(pkey, payload)
-    finally crypto.EVP_PKEY_free(pkey)
-
-  def rsaVerify(n: Array[Byte], e: Array[Byte], payload: Array[Byte], sig: Array[Byte]): Boolean =
-    init()
-    val pkey = fromRsa(n, e, None)
-    try digestVerify(pkey, payload, sig)
-    finally crypto.EVP_PKEY_free(pkey)
 
   final class Ctx private[openssl] (
       private[openssl] val ptr: Ptr[Byte],
@@ -203,9 +167,7 @@ private[heddle] object Ssl:
     end if
   end attach
 
-  private val EvpPkeyRsa = 6
-
-  private def init(): Unit =
+  private[openssl] def init(): Unit =
     val _ = ssl.OPENSSL_init_ssl(0.toUSize.asInstanceOf[CUnsignedLong], null)
 
   private def ascii(s: String): Array[Byte] =
@@ -250,92 +212,17 @@ private[heddle] object Ssl:
       result
   end withBio
 
-  private def fromRsa(n: Array[Byte], e: Array[Byte], d: Option[Array[Byte]]): Ptr[Byte] =
-    val rsa = crypto.RSA_new()
-    if rsa == null then throw fail("RSA_new")
-    val bnN = bin2bn(n)
-    val bnE = bin2bn(e)
-    val bnD = d.map(bin2bn).getOrElse(null.asInstanceOf[Ptr[Byte]])
-    if crypto.RSA_set0_key(rsa, bnN, bnE, bnD) != 1 then
-      crypto.BN_free(bnN)
-      crypto.BN_free(bnE)
-      if bnD != null then crypto.BN_free(bnD)
-      crypto.RSA_free(rsa)
-      throw fail("RSA_set0_key")
-    val pkey = crypto.EVP_PKEY_new()
-    if pkey == null then
-      crypto.RSA_free(rsa)
-      throw fail("EVP_PKEY_new")
-    if crypto.EVP_PKEY_assign(pkey, EvpPkeyRsa, rsa) != 1 then
-      crypto.EVP_PKEY_free(pkey)
-      crypto.RSA_free(rsa)
-      throw fail("EVP_PKEY_assign")
-    pkey
-  end fromRsa
-
-  private def digestSign(pkey: Ptr[Byte], payload: Array[Byte]): Array[Byte] =
-    val ctx = crypto.EVP_MD_CTX_new()
-    if ctx == null then throw fail("EVP_MD_CTX_new")
-    try
-      Zone {
-        if crypto.EVP_DigestSignInit(ctx, null, crypto.EVP_sha256(), null, pkey) != 1 then
-          throw fail("EVP_DigestSignInit")
-        val siglen = alloc[CSize]()
-        !siglen = 0.toUSize
-        val data = if payload.isEmpty then null else payload.at(0)
-        if crypto.EVP_DigestSign(ctx, null, siglen, data, payload.length.toUSize) != 1 then
-          throw fail("EVP_DigestSign size")
-        val sig = new Array[Byte]((!siglen).toInt)
-        if crypto.EVP_DigestSign(ctx, sig.at(0), siglen, data, payload.length.toUSize) != 1 then
-          throw fail("EVP_DigestSign")
-        sig
-      }
-    finally crypto.EVP_MD_CTX_free(ctx)
-    end try
-  end digestSign
-
-  private def digestVerify(pkey: Ptr[Byte], payload: Array[Byte], sig: Array[Byte]): Boolean =
-    val ctx = crypto.EVP_MD_CTX_new()
-    if ctx == null then throw fail("EVP_MD_CTX_new")
-    try
-      if crypto.EVP_DigestVerifyInit(ctx, null, crypto.EVP_sha256(), null, pkey) != 1 then
-        throw fail("EVP_DigestVerifyInit")
-      val data = if payload.isEmpty then null else payload.at(0)
-      crypto.EVP_DigestVerify(ctx, sig.at(0), sig.length.toUSize, data, payload.length.toUSize) == 1
-    catch case _: Exception => false
-    finally crypto.EVP_MD_CTX_free(ctx)
-  end digestVerify
-
-  private def bnParam(pkey: Ptr[Byte], name: CString): Array[Byte] =
-    Zone {
-      val bn = alloc[Ptr[Byte]]()
-      !bn = null
-      if crypto.EVP_PKEY_get_bn_param(pkey, name, bn) != 1 || !bn == null then throw fail("EVP_PKEY_get_bn_param")
-      try bn2bin(!bn)
-      finally crypto.BN_free(!bn)
-    }
-
-  private def bin2bn(bytes: Array[Byte]): Ptr[Byte] =
-    val p = crypto.BN_bin2bn(bytes.at(0).asInstanceOf[Ptr[CUnsignedChar]], bytes.length, null)
-    if p == null then throw fail("BN_bin2bn")
-    p
-
-  private def bn2bin(bn: Ptr[Byte]): Array[Byte] =
-    val n = (crypto.BN_num_bits(bn) + 7) / 8
-    val a = new Array[Byte](n.max(1))
-    val _ = crypto.BN_bn2bin(bn, a.at(0).asInstanceOf[Ptr[CUnsignedChar]])
-    a
-
   /** Reads OpenSSL's error queue now, before a cleanup call can change it. */
-  private def failed(function: String): SslError =
+  private[openssl] def failed(function: String): SslError =
     Zone {
       val buf = alloc[CChar](256)
       crypto.ERR_error_string_n(crypto.ERR_get_error(), buf, 256.toUSize)
       SslError.Failed(function, fromCString(buf))
     }
 
-  // The RSA helpers above still throw; T6 rebuilds RSA as a service with typed errors on every platform.
-  private def fail(op: String): IOException = failed(op).exception
+  /** `dst.length` bytes from OpenSSL's CSPRNG, or `false` when it cannot produce them. */
+  def randomBytes(dst: Array[Byte]): Boolean =
+    dst.isEmpty || crypto.RAND_bytes(dst.at(0).asInstanceOf[Ptr[CUnsignedChar]], dst.length) == 1
 
   @extern
   private object ssl:
@@ -371,8 +258,9 @@ private[heddle] object Ssl:
   private val CtrlSetTlsextHostname = 55
 
   @extern
-  private object crypto:
+  private[openssl] object crypto:
     def SHA256(d: Ptr[CUnsignedChar], n: CSize, md: Ptr[CUnsignedChar]): Ptr[CUnsignedChar] = extern
+    def RAND_bytes(buf: Ptr[CUnsignedChar], num: CInt): CInt                                = extern
     def EVP_PKEY_CTX_new_id(id: CInt, e: Ptr[Byte]): Ptr[Byte]                              = extern
     def EVP_PKEY_CTX_free(ctx: Ptr[Byte]): Unit                                             = extern
     def EVP_PKEY_keygen_init(ctx: Ptr[Byte]): CInt                                          = extern

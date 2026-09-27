@@ -49,10 +49,12 @@ object Http:
 
   private def sessionPost[R](engine: Engine[R], req: Request, msg: Message): ZIO[R, Nothing, Response] =
     val opening = method(msg).contains(Methods.Initialize)
-    val sid     = if opening then Some(heddle.internal.Ids.uuid().toString) else req.headers.get(Envelope.SessionHeader)
-    engine.respond(msg, req.headers, Era.Session).map { out =>
+    val sid     =
+      if opening then heddle.internal.Ids.uuid.map(id => Some(id.toString))
+      else ZIO.succeed(req.headers.get(Envelope.SessionHeader))
+    (sid <*> engine.respond(msg, req.headers, Era.Session)).map { (id, out) =>
       val res = accepted(out)
-      sid.fold(res)(res.withHeader(Envelope.SessionHeader, _))
+      id.fold(res)(res.withHeader(Envelope.SessionHeader, _))
     }
 
   private def method(msg: Message): Option[String] =

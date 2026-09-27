@@ -1,9 +1,7 @@
 package heddle.oauth.provider
 
-import heddle.crypto.DigestPlatform
-import java.nio.charset.StandardCharsets
 import java.time.Instant
-import zio.{Chunk, Ref, UIO}
+import zio.{Ref, UIO}
 
 final case class UserRecord(
     id: String,
@@ -68,26 +66,6 @@ trait SessionStore:
   def put(rec: SessionRec): UIO[Unit]
   def get(id: String): UIO[Option[SessionRec]]
 
-object Passwords:
-  def hash(plain: String): String =
-    val d = DigestPlatform.sha256Sync(Chunk.fromArray(plain.getBytes(StandardCharsets.UTF_8)))
-    "sha256:" + hex(d.toArray)
-
-  private def hex(bytes: Array[Byte]): String =
-    val digits = "0123456789abcdef"
-    val out    = Array.ofDim[Char](bytes.length * 2)
-    var i      = 0
-    while i < bytes.length do
-      val v = bytes(i) & 0xff
-      out(i * 2) = digits.charAt(v >>> 4)
-      out(i * 2 + 1) = digits.charAt(v & 0x0f)
-      i += 1
-    String(out)
-  end hex
-
-  def check(plain: String, stored: String): Boolean = hash(plain) == stored
-end Passwords
-
 object MemoryStores:
   def seed(users: List[UserRecord], clients: List[ClientRecord]): UIO[ProviderStores] =
     for
@@ -101,7 +79,7 @@ object MemoryStores:
         def byUsername(name: String)                         = u.get.map(_.values.find(_.username == name))
         def byId(id: String)                                 = u.get.map(_.get(id))
         def authenticate(username: String, password: String) =
-          byUsername(username).map(_.filter(rec => Passwords.check(password, rec.passwordHash)))
+          byUsername(username).flatMap(Passwords.authenticate(password, _)(_.passwordHash))
       val clients = new ClientStore:
         def byId(id: String) = c.get.map(_.get(id))
       val codes = new CodeStore:

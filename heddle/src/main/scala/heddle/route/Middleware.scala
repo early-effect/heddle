@@ -177,9 +177,9 @@ object Middleware:
   def requestId(headerName: String): Middleware[Any] =
     wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
       Handler { req =>
-        val id     = req.header(headerName).getOrElse(newRequestId)
-        val tagged = req.withHeader(headerName, id)
-        handler.run(tagged).map(_.withHeader(headerName, id))
+        req.header(headerName).fold(heddle.internal.Ids.uuid.map(_.toString))(ZIO.succeed(_)).flatMap { id =>
+          handler.run(req.withHeader(headerName, id)).map(_.withHeader(headerName, id))
+        }
       }
     }
 
@@ -228,9 +228,6 @@ object Middleware:
         else ZIO.succeed(Response.empty(Status.Forbidden).withHeader("Connection", "close"))
       }
     }
-
-  private def newRequestId: String =
-    heddle.internal.Ids.uuid().toString
 
   def cors(): Middleware[Any] = cors(CorsConfig())
 
