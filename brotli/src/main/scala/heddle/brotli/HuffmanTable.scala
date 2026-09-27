@@ -30,12 +30,13 @@ private[brotli] object HuffmanTable:
     buildInto(table, 0, rootBits, codeLengths)
     Table(table, 0)
 
+  /** A code whose lengths failed validation is never built: the reader has failed, and an empty table reads 0. */
   def readCode(br: BitReader, alphabetSize: Int): Table =
     val lengths = Array.ofDim[Int](alphabetSize)
     val kind    = br.readBits(2)
     if kind == 1 then readSimple(br, lengths, alphabetSize)
     else readComplex(br, kind, lengths, alphabetSize)
-    build(lengths, TableBits)
+    if br.ok then build(lengths, TableBits) else Table(Array.ofDim[Int](MaxTableSize), 0)
 
   private def readSimple(br: BitReader, lengths: Array[Int], alphabetSize: Int): Unit =
     var maxBitsCounter = alphabetSize - 1
@@ -54,14 +55,13 @@ private[brotli] object HuffmanTable:
     nsym match
       case 1 => ()
       case 2 =>
-        if symbols(0) == symbols(1) then throw BrotliException("duplicate simple symbol")
+        if symbols(0) == symbols(1) then br.fail(BrotliError.DuplicateSymbol)
         lengths(symbols(1)) = 1
       case 3 =>
         if symbols(0) == symbols(1) || symbols(0) == symbols(2) || symbols(1) == symbols(2) then
-          throw BrotliException("duplicate simple symbol")
+          br.fail(BrotliError.DuplicateSymbol)
       case _ =>
-        if Set(symbols(0), symbols(1), symbols(2), symbols(3)).size != 4 then
-          throw BrotliException("duplicate simple symbol")
+        if Set(symbols(0), symbols(1), symbols(2), symbols(3)).size != 4 then br.fail(BrotliError.DuplicateSymbol)
         if br.readBits(1) == 1 then
           lengths(symbols(2)) = 3
           lengths(symbols(3)) = 3
@@ -92,8 +92,8 @@ private[brotli] object HuffmanTable:
         space -= 32 >> v
         ncode += 1
       i += 1
-    if !(ncode == 1 || space == 0) then throw BrotliException("Can't readHuffmanCode")
-    readCodeLengths(br, clcl, lengths, alphabetSize)
+    if ncode == 1 || space == 0 then readCodeLengths(br, clcl, lengths, alphabetSize)
+    else br.fail(BrotliError.IncompleteCode)
   end readComplex
 
   private def readCodeLengths(br: BitReader, clcl: Array[Int], lengths: Array[Int], numSymbols: Int): Unit =
@@ -104,7 +104,7 @@ private[brotli] object HuffmanTable:
     var repeat        = 0
     var repeatCodeLen = 0
     var space         = 32768
-    while symbol < numSymbols && space > 0 do
+    while symbol < numSymbols && space > 0 && br.ok do
       val p = br.peekBits(5)
       br.dropBits(table(p) >>> 16)
       val codeLen = table(p) & 0xffff
@@ -127,16 +127,17 @@ private[brotli] object HuffmanTable:
           repeat <<= extraBits
         repeat += br.readBits(extraBits) + 3
         val delta = repeat - old
-        if symbol + delta > numSymbols then throw BrotliException("symbol + repeatDelta > numSymbols")
-        var k = 0
-        while k < delta do
-          lengths(symbol) = repeatCodeLen
-          symbol += 1
-          k += 1
-        if repeatCodeLen != 0 then space -= delta << (15 - repeatCodeLen)
+        if symbol + delta > numSymbols then br.fail(BrotliError.RepeatOverflow)
+        else
+          var k = 0
+          while k < delta do
+            lengths(symbol) = repeatCodeLen
+            symbol += 1
+            k += 1
+          if repeatCodeLen != 0 then space -= delta << (15 - repeatCodeLen)
       end if
     end while
-    if space != 0 then throw BrotliException("Unused space")
+    if space != 0 then br.fail(BrotliError.IncompleteCode)
   end readCodeLengths
 
   private def getNextKey(key: Int, len: Int): Int =
@@ -154,12 +155,10 @@ private[brotli] object HuffmanTable:
 
   private def nextTableBitSize(count: Array[Int], len0: Int, rootBits: Int): Int =
     var len  = len0
-    var left = 1 << (len - rootBits)
-    while len < MaxLength do
-      left -= count(len)
-      if left <= 0 then return len - rootBits
+    var left = (1 << (len - rootBits)) - count(len)
+    while len < MaxLength && left > 0 do
       len += 1
-      left <<= 1
+      left = (left << 1) - count(len)
     len - rootBits
 
   private def buildInto(root: Array[Int], tableOffset: Int, rootBits: Int, codeLengths: Array[Int]): Unit =
@@ -186,45 +185,45 @@ private[brotli] object HuffmanTable:
     var tableBits = rootBits
     var tableSize = 1 << tableBits
     var totalSize = tableSize
+    var key       = 0
     if offset(MaxLength) == 1 then
-      var key = 0
       while key < totalSize do
         root(tableOffset + key) = sorted(0)
         key += 1
-      return
-    var key = 0
-    symbol = 0
-    len = 1
-    var step = 2
-    while len <= rootBits do
-      while count(len) > 0 do
-        replicate(root, tableOffset + key, step, tableSize, (len << 16) | sorted(symbol))
-        symbol += 1
-        key = getNextKey(key, len)
-        count(len) -= 1
-      len += 1
-      step <<= 1
-    val mask          = totalSize - 1
-    var low           = -1
-    var currentOffset = tableOffset
-    len = rootBits + 1
-    step = 2
-    while len <= MaxLength do
-      while count(len) > 0 do
-        if (key & mask) != low then
-          currentOffset += tableSize
-          tableBits = nextTableBitSize(count, len, rootBits)
-          tableSize = 1 << tableBits
-          totalSize += tableSize
-          low = key & mask
-          root(tableOffset + low) = ((tableBits + rootBits) << 16) | (currentOffset - tableOffset - low)
-        replicate(root, currentOffset + (key >> rootBits), step, tableSize, ((len - rootBits) << 16) | sorted(symbol))
-        symbol += 1
-        key = getNextKey(key, len)
-        count(len) -= 1
+    else
+      symbol = 0
+      len = 1
+      var step = 2
+      while len <= rootBits do
+        while count(len) > 0 do
+          replicate(root, tableOffset + key, step, tableSize, (len << 16) | sorted(symbol))
+          symbol += 1
+          key = getNextKey(key, len)
+          count(len) -= 1
+        len += 1
+        step <<= 1
+      val mask          = totalSize - 1
+      var low           = -1
+      var currentOffset = tableOffset
+      len = rootBits + 1
+      step = 2
+      while len <= MaxLength do
+        while count(len) > 0 do
+          if (key & mask) != low then
+            currentOffset += tableSize
+            tableBits = nextTableBitSize(count, len, rootBits)
+            tableSize = 1 << tableBits
+            totalSize += tableSize
+            low = key & mask
+            root(tableOffset + low) = ((tableBits + rootBits) << 16) | (currentOffset - tableOffset - low)
+          replicate(root, currentOffset + (key >> rootBits), step, tableSize, ((len - rootBits) << 16) | sorted(symbol))
+          symbol += 1
+          key = getNextKey(key, len)
+          count(len) -= 1
+        end while
+        len += 1
+        step <<= 1
       end while
-      len += 1
-      step <<= 1
-    end while
+    end if
   end buildInto
 end HuffmanTable

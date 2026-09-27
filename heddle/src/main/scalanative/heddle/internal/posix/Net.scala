@@ -1,6 +1,5 @@
 package heddle.internal.posix
 
-import java.io.IOException
 import scala.scalanative.posix.arpa.inet.*
 import scala.scalanative.posix.errno.{EAGAIN, EINPROGRESS, EINTR, EWOULDBLOCK, errno}
 import scala.scalanative.posix.fcntl
@@ -12,7 +11,6 @@ import scala.scalanative.posix.netinet.tcp.*
 import scala.scalanative.posix.poll
 import scala.scalanative.posix.pollOps.*
 import scala.scalanative.posix.signal as psignal
-import scala.scalanative.posix.string.strerror
 import scala.scalanative.posix.sys.socket
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
@@ -44,59 +42,53 @@ private[heddle] object Net:
   private lazy val sigpipeIgnored: Unit =
     val _ = psignal.signal(psignal.SIGPIPE, psignal.SIG_IGN)
 
-  def listen(host: String, port: Int, backlog: Int, reuse: Boolean): Int =
+  def listen(host: String, port: Int, backlog: Int, reuse: Boolean): Either[NetError, Int] =
     sigpipeIgnored
-    Zone {
-      val fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-      if fd < 0 then throw io("socket")
-      try
-        if reuse then setInt(fd, socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        setNonBlocking(fd)
-        val addr = alloc[sockaddr_in]()
-        fill(addr, host, port)
-        val rc = socket.bind(fd, addr.asInstanceOf[Ptr[socket.sockaddr]], sizeof[sockaddr_in].toUInt)
-        if rc != 0 then throw io(s"bind $host:$port")
-        if socket.listen(fd, backlog) != 0 then throw io("listen")
-        fd
-      catch
-        case e: Throwable =>
-          unistd.close(fd)
-          throw e
-      end try
+    withSocket(socket.AF_INET) { fd =>
+      Zone {
+        for
+          _    <- if reuse then setInt(fd, socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) else Right(())
+          _    <- setNonBlocking(fd)
+          addr <- ipv4(host, port)
+          _ <- check(socket.bind(fd, addr.asInstanceOf[Ptr[socket.sockaddr]], sizeof[sockaddr_in].toUInt), Syscall.Bind)
+          _ <- check(socket.listen(fd, backlog), Syscall.Listen)
+        yield ()
+      }
     }
   end listen
 
-  def connect(host: String, port: Int): Int =
+  /** Starts a non-blocking connect to an IPv4 literal. Wait for `AsyncFd.writable`, then read `socketError`. */
+  def connect(host: String, port: Int): Either[NetError, Int] =
     sigpipeIgnored
-    Zone {
-      val fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-      if fd < 0 then throw io("socket")
-      try
-        setNonBlocking(fd)
-        val addr = alloc[sockaddr_in]()
-        fill(addr, host, port)
-        val rc = socket.connect(fd, addr.asInstanceOf[Ptr[socket.sockaddr]], sizeof[sockaddr_in].toUInt)
-        if rc != 0 && !inProgress then throw io(s"connect $host:$port")
-        fd
-      catch
-        case e: Throwable =>
-          unistd.close(fd)
-          throw e
-      end try
+    withSocket(socket.AF_INET) { fd =>
+      Zone {
+        for
+          _    <- setNonBlocking(fd)
+          addr <- ipv4(host, port)
+          _    <- started(socket.connect(fd, addr.asInstanceOf[Ptr[socket.sockaddr]], sizeof[sockaddr_in].toUInt))
+        yield ()
+      }
     }
   end connect
 
-  def connectInProgress: Boolean = inProgress
+  /** Starts a non-blocking connect. Wait for `AsyncFd.writable`, then read `socketError`. */
+  def connect(addr: SockAddr): Either[NetError, Int] =
+    sigpipeIgnored
+    withSocket(addr.family) { fd =>
+      setNonBlocking(fd).flatMap { _ =>
+        started(socket.connect(fd, addr.bytes.at(0).asInstanceOf[Ptr[socket.sockaddr]], addr.bytes.length.toUInt))
+      }
+    }
 
   /** Blocking `getaddrinfo`. Each address is copied out so it outlives the call. */
-  def resolve(host: String, port: Int): Chunk[SockAddr] =
+  def resolve(host: String, port: Int): Either[NetError, Chunk[SockAddr]] =
     Zone {
       val hints = alloc[netdb.addrinfo]()
       hints.ai_socktype = socket.SOCK_STREAM
       val res = alloc[Ptr[netdb.addrinfo]]()
       val rc  = Gai.getaddrinfo(toCString(host), toCString(port.toString), hints, res)
-      if rc != 0 then throw IOException(s"resolve $host: ${fromCString(netdb.gai_strerror(rc))}")
-      try
+      if rc != 0 then Left(NetError.Unresolved(host, fromCString(netdb.gai_strerror(rc))))
+      else
         val out = Chunk.newBuilder[SockAddr]
         var ai  = !res
         while ai != null do
@@ -110,113 +102,59 @@ private[heddle] object Net:
           out += SockAddr(ai.ai_family, bytes)
           ai = ai.ai_next
         end while
-        out.result()
-      finally netdb.freeaddrinfo(!res)
-      end try
+        netdb.freeaddrinfo(!res)
+        Right(out.result())
+      end if
     }
 
-  /** Starts a non-blocking connect. Wait for `AsyncFd.writable`, then read `socketError`. */
-  def connect(addr: SockAddr): Int =
-    sigpipeIgnored
-    val fd = socket.socket(addr.family, socket.SOCK_STREAM, 0)
-    if fd < 0 then throw io("socket")
-    try
-      setNonBlocking(fd)
-      val rc =
-        socket.connect(fd, addr.bytes.at(0).asInstanceOf[Ptr[socket.sockaddr]], addr.bytes.length.toUInt)
-      if rc != 0 && !inProgress then throw io("connect")
-      fd
-    catch
-      case e: Throwable =>
-        unistd.close(fd)
-        throw e
-    end try
-  end connect
-
-  def socketError(fd: Int): Int =
+  /** The pending error of a connect that `AsyncFd.writable` says has finished; `0` is success. */
+  def socketError(fd: Int): Either[NetError, Int] =
     Zone {
       val v   = alloc[CInt]()
       val len = alloc[socket.socklen_t]()
       !v = 0
       !len = sizeof[CInt].toUInt
       val rc = socket.getsockopt(fd, socket.SOL_SOCKET, socket.SO_ERROR, v.asInstanceOf[Ptr[Byte]], len)
-      if rc != 0 then throw io("SO_ERROR")
-      !v
+      check(rc, Syscall.SocketError).map(_ => !v)
     }
 
-  def accept(listenFd: Int): Int =
+  /** An accepted, non-blocking descriptor, or `None` when no connection is waiting. */
+  def accept(listenFd: Int): Either[NetError, Option[Int]] =
     Zone {
       val addr    = alloc[sockaddr_in]()
       val addrlen = alloc[socket.socklen_t]()
       !addrlen = sizeof[sockaddr_in].toUInt
       val fd = socket.accept(listenFd, addr.asInstanceOf[Ptr[socket.sockaddr]], addrlen)
-      if fd < 0 then
-        if wouldBlock then -1
-        else throw io("accept")
-      else
-        setNonBlocking(fd)
-        fd
+      if fd >= 0 then
+        setNonBlocking(fd) match
+          case Left(e)  => close(fd); Left(e)
+          case Right(_) => Right(Some(fd))
+      else if wouldBlock then Right(None)
+      else Left(failed(Syscall.Accept))
     }
 
-  def wouldBlock: Boolean =
-    errno == EAGAIN || errno == EWOULDBLOCK
-
-  private def inProgress: Boolean =
-    errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK
-
-  /** Non-blocking. `timeoutMs = 0` does not occupy a blocking thread. */
-  def pollIn(fd: Int, timeoutMs: Int): Boolean =
+  /** Blocks in `poll` until one of `fds` is ready for its `events`, and returns each fd's `revents`. */
+  def pollReady(fds: Array[Int], events: Array[Int], timeoutMs: Int): Either[NetError, Array[Int]] =
     Zone {
-      val pfd = alloc[poll.struct_pollfd]()
-      pfd.fd = fd
-      pfd.events = poll.POLLIN.toShort
-      pfd.revents = 0.toShort
-      val n = poll.poll(pfd, 1.toUInt, timeoutMs)
-      if n < 0 then
-        if errno == EINTR then pollIn(fd, timeoutMs)
-        else throw io("poll")
-      else n > 0
+      val pfds = alloc[poll.struct_pollfd](fds.length.max(1))
+      var i    = 0
+      while i < fds.length do
+        val p = pfds + i
+        p.fd = fds(i)
+        p.events = events(i).toShort
+        p.revents = 0.toShort
+        i += 1
+      val n = poll.poll(pfds, fds.length.toUInt, timeoutMs)
+      if n < 0 && errno == EINTR then pollReady(fds, events, timeoutMs)
+      else if n < 0 then Left(failed(Syscall.Poll))
+      else Right(Array.tabulate(fds.length)(k => (pfds + k).revents.toInt & 0xffff))
     }
 
-  def pollOut(fd: Int, timeoutMs: Int): Boolean =
-    Zone {
-      val pfd = alloc[poll.struct_pollfd]()
-      pfd.fd = fd
-      pfd.events = poll.POLLOUT.toShort
-      pfd.revents = 0.toShort
-      val n = poll.poll(pfd, 1.toUInt, timeoutMs)
-      if n < 0 then
-        if errno == EINTR then pollOut(fd, timeoutMs)
-        else throw io("poll")
-      else n > 0
-    }
+  val PollIn: Int  = poll.POLLIN
+  val PollOut: Int = poll.POLLOUT
 
-  /** Block in `poll` until any of `fds` is ready. Returns the ready fds. */
-  def pollReady(fds: Array[Int], timeoutMs: Int): Array[Int] =
-    if fds.isEmpty then Array.empty
-    else
-      Zone {
-        val pfds = alloc[poll.struct_pollfd](fds.length)
-        var i    = 0
-        while i < fds.length do
-          val p = pfds + i
-          p.fd = fds(i)
-          p.events = (poll.POLLIN | poll.POLLOUT).toShort
-          p.revents = 0.toShort
-          i += 1
-        val n = poll.poll(pfds, fds.length.toUInt, timeoutMs)
-        if n < 0 then
-          if errno == EINTR then pollReady(fds, timeoutMs)
-          else throw io("poll")
-        else
-          val out = scala.collection.mutable.ArrayBuffer.empty[Int]
-          i = 0
-          while i < fds.length do
-            if (pfds + i).revents.toInt != 0 then out += fds(i)
-            i += 1
-          out.toArray
-        end if
-      }
+  /** Readiness that wakes every waiter, so each one sees the failure on its next call. */
+  val PollFailed: Int = poll.POLLHUP | poll.POLLERR | poll.POLLNVAL
 
   def localPort(fd: Int): Int =
     Zone {
@@ -231,58 +169,91 @@ private[heddle] object Net:
     if fd >= 0 then
       val _ = unistd.close(fd)
 
-  def read(fd: Int, dst: Array[Byte], off: Int, len: Int): Int =
-    if len <= 0 then 0
+  def read(fd: Int, dst: Array[Byte], off: Int, len: Int): Either[NetError, Transfer] =
+    if len <= 0 then Right(Transfer.Moved(0))
     else
       val n = unistd.read(fd, dst.at(off), len.toUSize).toLong
-      if n < 0 then
-        if errno == EINTR then read(fd, dst, off, len)
-        else if wouldBlock then -2
-        else throw io("read")
-      else n.toInt
+      if n > 0 then Right(Transfer.Moved(n.toInt))
+      else if n == 0 then Right(Transfer.Eof)
+      else if errno == EINTR then read(fd, dst, off, len)
+      else if wouldBlock then Right(Transfer.Blocked(Interest.Read))
+      else Left(failed(Syscall.Read))
 
-  def write(fd: Int, src: Array[Byte], off: Int, len: Int): Int =
-    if len <= 0 then 0
+  def write(fd: Int, src: Array[Byte], off: Int, len: Int): Either[NetError, Transfer] =
+    if len <= 0 then Right(Transfer.Moved(0))
     else
       val n = unistd.write(fd, src.at(off), len.toUSize).toLong
-      if n < 0 then
-        if errno == EINTR then write(fd, src, off, len)
-        else if wouldBlock then -2
-        else throw io("write")
-      else n.toInt
+      if n > 0 then Right(Transfer.Moved(n.toInt))
+      else if n == 0 then Right(Transfer.Blocked(Interest.Write))
+      else if errno == EINTR then write(fd, src, off, len)
+      else if wouldBlock then Right(Transfer.Blocked(Interest.Write))
+      else Left(failed(Syscall.Write))
 
-  def setTcpNoDelay(fd: Int, on: Boolean): Unit =
+  def setTcpNoDelay(fd: Int, on: Boolean): Either[NetError, Unit] =
     setInt(fd, IPPROTO_TCP, TCP_NODELAY, if on then 1 else 0)
 
-  def setKeepAlive(fd: Int, on: Boolean): Unit =
+  def setKeepAlive(fd: Int, on: Boolean): Either[NetError, Unit] =
     setInt(fd, socket.SOL_SOCKET, socket.SO_KEEPALIVE, if on then 1 else 0)
 
-  def setNonBlocking(fd: Int): Unit =
+  def setNonBlocking(fd: Int): Either[NetError, Unit] =
     val flags = fcntl.fcntl(fd, fcntl.F_GETFL, 0)
-    if flags < 0 then throw io("F_GETFL")
-    if fcntl.fcntl(fd, fcntl.F_SETFL, flags | fcntl.O_NONBLOCK) < 0 then throw io("O_NONBLOCK")
+    if flags < 0 then Left(failed(Syscall.GetFlags))
+    else check(fcntl.fcntl(fd, fcntl.F_SETFL, flags | fcntl.O_NONBLOCK), Syscall.SetFlags)
 
-  private def setInt(fd: Int, level: CInt, opt: CInt, value: Int): Unit =
+  /** A pipe whose two ends are non-blocking: `(read, write)`. */
+  def pipe(): Either[NetError, (Int, Int)] =
+    Zone {
+      val fds = alloc[CInt](2)
+      if unistd.pipe(fds) != 0 then Left(failed(Syscall.Pipe))
+      else
+        val (r, w) = (!fds, !(fds + 1))
+        setNonBlocking(r).flatMap(_ => setNonBlocking(w)) match
+          case Left(e)  => close(r); close(w); Left(e)
+          case Right(_) => Right((r, w))
+    }
+
+  /** Opens a socket and runs `setup` on it; the socket is closed unless `setup` succeeds. */
+  private def withSocket(family: Int)(setup: Int => Either[NetError, Unit]): Either[NetError, Int] =
+    val fd = socket.socket(family, socket.SOCK_STREAM, 0)
+    if fd < 0 then Left(failed(Syscall.Socket))
+    else
+      setup(fd) match
+        case Left(e)  => close(fd); Left(e)
+        case Right(_) => Right(fd)
+
+  private def wouldBlock: Boolean =
+    errno == EAGAIN || errno == EWOULDBLOCK
+
+  /** A non-blocking connect that has not finished yet is started, not failed. */
+  private def started(rc: CInt): Either[NetError, Unit] =
+    if rc == 0 || errno == EINPROGRESS || wouldBlock then Right(()) else Left(failed(Syscall.Connect))
+
+  private def check(rc: CInt, call: Syscall): Either[NetError, Unit] =
+    if rc < 0 then Left(failed(call)) else Right(())
+
+  /** Reads `errno` now, before a cleanup call can overwrite it. */
+  private def failed(call: Syscall): NetError = NetError.Failed(call, errno)
+
+  private def setInt(fd: Int, level: CInt, opt: CInt, value: Int): Either[NetError, Unit] =
     Zone {
       val v = alloc[CInt]()
       !v = value
-      val rc = socket.setsockopt(fd, level, opt, v.asInstanceOf[Ptr[Byte]], sizeof[CInt].toUInt)
-      if rc != 0 then throw io(s"setsockopt $opt")
+      check(socket.setsockopt(fd, level, opt, v.asInstanceOf[Ptr[Byte]], sizeof[CInt].toUInt), Syscall.SetOption)
     }
 
-  private def fill(addr: Ptr[sockaddr_in], host: String, port: Int)(using Zone): Unit =
-    addr.sin_family = socket.AF_INET.toUShort
-    addr.sin_port = htons(port.toUShort)
+  private def ipv4(host: String, port: Int)(using Zone): Either[NetError, Ptr[sockaddr_in]] =
     val ip  = if host == "0.0.0.0" || host == "*" then "0.0.0.0" else host
     val raw = inet_addr(toCString(ip))
-    if raw == 0xffffffff.toUInt && ip != "255.255.255.255" then throw IOException(s"bad bind host: $host")
-    addr.sin_addr._1 = raw
+    if raw == 0xffffffff.toUInt && ip != "255.255.255.255" then Left(NetError.NotAnAddress(host))
+    else
+      val addr = alloc[sockaddr_in]()
+      addr.sin_family = socket.AF_INET.toUShort
+      addr.sin_port = htons(port.toUShort)
+      addr.sin_addr._1 = raw
+      Right(addr)
+  end ipv4
 
   private def ntohPort(p: in_port_t): Int =
     val x = p.toInt
     ((x & 0xff) << 8) | ((x >> 8) & 0xff)
-
-  private def io(op: String): IOException =
-    val msg = fromCString(strerror(errno))
-    IOException(s"$op: $msg")
 end Net

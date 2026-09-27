@@ -8,6 +8,8 @@ import zio.*
   * complete the waiter. That is libuv's loop without linking libuv.
   */
 private[heddle] object AsyncFd:
-  def readable(fd: Int): Task[Unit] = Poller.readable(fd)
+  def readable(fd: Int): IO[NetError, Unit] = Poller.await(fd, Interest.Read)
 
-  def writable(fd: Int): Task[Unit] = Poller.writable(fd)
+  def writable(fd: Int): IO[NetError, Unit] = Poller.await(fd, Interest.Write)
+
+  def ready(fd: Int, on: Interest): IO[NetError, Unit] = Poller.await(fd, on)

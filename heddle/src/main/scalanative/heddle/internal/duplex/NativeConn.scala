@@ -2,7 +2,7 @@ package heddle.internal.duplex
 
 import heddle.error.HttpError
 import heddle.internal.openssl.Ssl
-import heddle.internal.posix.{AsyncFd, Net}
+import heddle.internal.posix.{AsyncFd, FfiError, Interest, Net, Transfer}
 import java.nio.ByteBuffer
 import zio.*
 
@@ -10,55 +10,48 @@ import zio.*
   * each park on the poller instead.
   */
 private[heddle] final class NativeConn(val fd: Int, ssl: Option[Ssl.Session]) extends ByteConn:
-  @volatile private var closed                  = false
-  @volatile private var readTimeout: Duration   = Duration.Infinity
-  def read(dst: ByteBuffer): IO[HttpError, Int] =
-    def attempt: IO[HttpError, Option[Int]] =
-      ZIO
-        .attempt {
-          val n   = dst.remaining()
-          val tmp = new Array[Byte](n)
-          val got =
-            ssl match
-              case Some(s) => s.read(tmp, 0, n)
-              case None    => Net.read(fd, tmp, 0, n)
-          if got == -2 || got == -3 then None
-          else
-            if got > 0 then dst.put(tmp, 0, got)
-            Some(if got == 0 then -1 else got)
-        }
-        .mapError(HttpError.Io(_))
-    def loop: IO[HttpError, Int] =
-      attempt.flatMap {
-        case Some(n) => ZIO.succeed(n)
-        case None    => parkRead *> loop
-      }
-    loop
-  end read
+  @volatile private var closed                = false
+  @volatile private var readTimeout: Duration = Duration.Infinity
 
+  /** The bytes read, or `-1` at end of stream. */
+  def read(dst: ByteBuffer): IO[HttpError, Int] =
+    ZIO.suspendSucceed {
+      val n                                = dst.remaining()
+      val tmp                              = new Array[Byte](n)
+      def pull: Either[FfiError, Transfer] =
+        ssl match
+          case Some(s) => s.read(tmp, 0, n)
+          case None    => Net.read(fd, tmp, 0, n)
+      def loop: IO[HttpError, Int] =
+        ZIO.suspendSucceed(ZIO.fromEither(pull)).mapError(e => HttpError.Io(e.exception)).flatMap {
+          case Transfer.Moved(got)  => ZIO.succeed { dst.put(tmp, 0, got); got }
+          case Transfer.Eof         => ZIO.succeed(-1)
+          case Transfer.Blocked(on) => park(on) *> loop
+        }
+      loop
+    }
+
+  /** Plain sockets block a write on writability; TLS may block it on either direction. */
   def write(chunk: Chunk[Byte]): Task[Unit] =
     if chunk.isEmpty then ZIO.unit
     else
-      val arr                        = chunk.toArray
+      val arr                                        = chunk.toArray
+      def push(off: Int): Either[FfiError, Transfer] =
+        ssl match
+          case Some(s) => s.write(arr, off, arr.length - off)
+          case None    => Net.write(fd, arr, off, arr.length - off)
       def loop(off: Int): Task[Unit] =
         if off >= arr.length then ZIO.unit
         else
-          ZIO
-            .attempt {
-              ssl match
-                case Some(s) => s.write(arr, off, arr.length - off)
-                case None    => Net.write(fd, arr, off, arr.length - off)
-            }
-            .flatMap { n =>
-              if n == -2 then AsyncFd.readable(fd) *> loop(off)
-              else if n == -3 then AsyncFd.writable(fd) *> loop(off)
-              else if n <= 0 then ZIO.fail(java.io.IOException("write returned 0"))
-              else loop(off + n)
-            }
+          ZIO.suspendSucceed(ZIO.fromEither(push(off))).mapError(_.exception).flatMap {
+            case Transfer.Moved(n)    => loop(off + n)
+            case Transfer.Blocked(on) => AsyncFd.ready(fd, on).mapError(_.exception) *> loop(off)
+            case Transfer.Eof         => ZIO.fail(java.io.IOException("the TLS peer closed before the write finished"))
+          }
       loop(0)
 
-  private def parkRead: IO[HttpError, Unit] =
-    val park    = AsyncFd.readable(fd).mapError(HttpError.Io(_))
+  private def park(on: Interest): IO[HttpError, Unit] =
+    val park    = AsyncFd.ready(fd, on).mapError(e => HttpError.Io(e.exception))
     val timeout = readTimeout
     if timeout == Duration.Infinity || timeout.toNanos <= 0L then park
     else park.timeoutFail(HttpError.Timeout)(timeout)

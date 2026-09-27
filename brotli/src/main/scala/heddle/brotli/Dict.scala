@@ -15,22 +15,18 @@ private[brotli] object Dict:
   val SizeBitsByLength: Array[Int] =
     Array(0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5)
 
-  val data: Array[Byte] = resourceBytes("dictionary.bin")
-
-  val contextLookup: Array[Int] =
-    val raw = resourceBytes("context-lookup.bin")
-    val out = Array.ofDim[Int](raw.length / 2)
-    var i   = 0
-    while i < out.length do
-      out(i) = (raw(i * 2) & 0xff) | ((raw(i * 2 + 1) & 0xff) << 8)
-      i += 1
-    out
+  /** The 122,784-byte dictionary and the literal context lookup table, read once from the jar. */
+  lazy val loaded: Either[BrotliError, (Array[Byte], Array[Int])] =
+    for
+      data <- resourceBytes("dictionary.bin")
+      raw  <- resourceBytes("context-lookup.bin")
+    yield (data, Array.tabulate(raw.length / 2)(i => (raw(i * 2) & 0xff) | ((raw(i * 2 + 1) & 0xff) << 8)))
 
   val LookupOffsets: Array[Int] = Array(1024, 1536, 1280, 1536, 0, 256, 768, 512)
 
-  private def resourceBytes(name: String): Array[Byte] =
-    val in = getClass.getResourceAsStream(s"/heddle/brotli/$name")
-    if in == null then throw IllegalStateException(s"missing resource heddle/brotli/$name")
-    try in.readAllBytes()
-    finally in.close()
+  def resourceBytes(name: String): Either[BrotliError, Array[Byte]] =
+    Option(getClass.getResourceAsStream(s"/heddle/brotli/$name")).toRight(BrotliError.MissingResource(name)).map { in =>
+      try in.readAllBytes()
+      finally in.close()
+    }
 end Dict

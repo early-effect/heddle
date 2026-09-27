@@ -45,9 +45,9 @@ private[heddle] object Nio:
               scratch.limit(n)
               scratch
             else ByteBuffer.wrap(chunk.toArray)
+        // A blocking channel writes at least one byte per call, and a closed one throws.
         while buf.hasRemaining do
-          val w = ch.write(buf)
-          if w < 0 then throw java.io.IOException("channel closed during write")
+          val _ = ch.write(buf)
         ()
       }
 

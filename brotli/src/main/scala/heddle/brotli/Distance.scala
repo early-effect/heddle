@@ -9,22 +9,20 @@ private[brotli] object Distance:
 
   def encode(d: Int): Encoded =
     var dcode = 16
-    while dcode < Alphabet do
+    while dcode < Alphabet && !covers(dcode, d) do dcode += 1
+    if dcode < Alphabet then
       val ndistbits = extraBits(dcode)
-      val hcode     = dcode - 16
-      val offset    = ((2 + (hcode & 1)) << ndistbits) - 4
-      val span      = 1 << ndistbits
-      if d >= offset + 1 && d <= offset + span then return Encoded(dcode, ndistbits, d - offset - 1)
-      dcode += 1
-    Encoded(16, 1, 0)
-  end encode
+      Encoded(dcode, ndistbits, d - offset(dcode) - 1)
+    else Encoded(16, 1, 0)
 
-  def decode(symbol: Int, extra: Int): Int =
-    if symbol < 16 then throw IllegalArgumentException(s"short code $symbol")
-    val ndistbits = extraBits(symbol)
-    val hcode     = symbol - 16
-    val offset    = ((2 + (hcode & 1)) << ndistbits) - 4
-    offset + extra + 1
+  /** The distance a long code and its extra bits name. Codes under 16 are short codes, relative to the ring. */
+  def decode(symbol: Int, extra: Int): Option[Int] =
+    Option.when(symbol >= 16)(offset(symbol) + extra + 1)
+
+  private def covers(dcode: Int, d: Int): Boolean =
+    d >= offset(dcode) + 1 && d <= offset(dcode) + (1 << extraBits(dcode))
+
+  private def offset(symbol: Int): Int = ((2 + ((symbol - 16) & 1)) << extraBits(symbol)) - 4
 
   def extraBits(symbol: Int): Int = 1 + ((symbol - 16) >> 1)
 end Distance

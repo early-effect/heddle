@@ -13,11 +13,14 @@ final class Tls private (ctx: Ssl.Ctx):
     conn match
       case n: NativeConn =>
         ZIO
-          .attempt(Ssl.accept(ctx, n.fd))
+          .suspendSucceed(ZIO.fromEither(Ssl.accept(ctx, n.fd)))
           .flatMap { session =>
-            SslIo.handshake(session, accept = true, n.fd).as(Tls.Session(NativeConn.tls(n.fd, session), ""))
+            SslIo
+              .handshake(session, accept = true, n.fd)
+              .onError(_ => ZIO.succeed(session.close()))
+              .as(Tls.Session(NativeConn.tls(n.fd, session), ""))
           }
-          .mapError(HttpError.Io(_))
+          .mapError(e => HttpError.Io(e.exception))
       case _ =>
         ZIO.fail(HttpError.Io(IllegalArgumentException("TLS server needs a native connection")))
     end match
@@ -30,5 +33,8 @@ object Tls:
   def pem(certPem: String, keyPem: String): ZLayer[Any, TlsError, Tls] =
     ZLayer.fromZIO(
       (ZIO.fromEither(Pem.body(certPem, "CERTIFICATE")) *> ZIO.fromEither(Pem.body(keyPem, "PRIVATE KEY"))) *>
-        ZIO.attempt(Tls(Ssl.serverCtx(certPem, keyPem))).mapError(TlsError.Unusable(_))
+        ZIO
+          .suspendSucceed(ZIO.fromEither(Ssl.serverCtx(certPem, keyPem)))
+          .mapBoth(e => TlsError.Unusable(e.exception), Tls(_))
     )
+end Tls

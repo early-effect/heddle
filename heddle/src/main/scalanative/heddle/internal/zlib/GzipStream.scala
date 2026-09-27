@@ -1,6 +1,5 @@
 package heddle.internal.zlib
 
-import java.io.IOException
 import scala.scalanative.libc.stdlib
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
@@ -64,22 +63,28 @@ private[heddle] object GzipStream:
   private val OutBuffer      = 16 * 1024
 
   def stream(in: ZStream[Any, Throwable, Byte]): ZStream[Any, Throwable, Byte] =
-    ZStream.scoped(ZIO.acquireRelease(ZIO.attempt(open()))(s => ZIO.succeed(close(s)))).flatMap { strm =>
-      val body = in.chunks.filter(_.nonEmpty).mapZIO(c => ZIO.attempt(run(strm, c, ZSyncFlush)))
-      val end  = ZStream.fromZIO(ZIO.attempt(run(strm, Chunk.empty, ZFinish)))
+    val opened =
+      ZIO.acquireRelease(ZIO.suspendSucceed(ZIO.fromEither(open())).mapError(_.exception))(s => ZIO.succeed(close(s)))
+    ZStream.scoped(opened).flatMap { strm =>
+      def step(input: Chunk[Byte], flush: Int) =
+        ZIO.suspendSucceed(ZIO.fromEither(run(strm, input, flush))).mapError(_.exception)
+      val body = in.chunks.filter(_.nonEmpty).mapZIO(step(_, ZSyncFlush))
+      val end  = ZStream.fromZIO(step(Chunk.empty, ZFinish))
       (body ++ end).flattenChunks
     }
+  end stream
 
-  private def open(): Ptr[Z.Stream] =
+  private def open(): Either[ZlibError, Ptr[Z.Stream]] =
     val size = sizeof[Z.Stream]
     val strm = stdlib.calloc(1.toUSize, size).asInstanceOf[Ptr[Z.Stream]]
-    if strm == null then throw IOException("zlib: out of memory")
-    val rc =
-      Z.deflateInit2_(strm, DefaultLevel, ZDeflated, GzipWindowBits, MemLevel, 0, Z.zlibVersion(), size.toInt)
-    if rc != ZOk then
-      stdlib.free(strm.asInstanceOf[Ptr[Byte]])
-      throw IOException(s"zlib: deflateInit2 failed ($rc)")
-    strm
+    if strm == null then Left(ZlibError.OutOfMemory)
+    else
+      val rc =
+        Z.deflateInit2_(strm, DefaultLevel, ZDeflated, GzipWindowBits, MemLevel, 0, Z.zlibVersion(), size.toInt)
+      if rc == ZOk then Right(strm)
+      else
+        stdlib.free(strm.asInstanceOf[Ptr[Byte]])
+        Left(ZlibError.Failed("deflateInit2", rc))
   end open
 
   private def close(strm: Ptr[Z.Stream]): Unit =
@@ -87,25 +92,35 @@ private[heddle] object GzipStream:
     stdlib.free(strm.asInstanceOf[Ptr[Byte]])
 
   /** Feeds `input` and drains output until zlib has nothing more for this flush mode. */
-  private def run(strm: Ptr[Z.Stream], input: Chunk[Byte], flush: Int): Chunk[Byte] =
+  private def run(strm: Ptr[Z.Stream], input: Chunk[Byte], flush: Int): Either[ZlibError, Chunk[Byte]] =
     val src = input.toArray
     val out = new Array[Byte](OutBuffer)
     val acc = Chunk.newBuilder[Byte]
     strm._1 = if src.isEmpty then null else src.at(0)
     strm._2 = src.length.toUInt
-    var more = true
+    var failed = Option.empty[ZlibError]
+    var more   = true
     while more do
       strm._4 = out.at(0)
       strm._5 = OutBuffer.toUInt
       val rc = Z.deflate(strm, flush)
-      if rc != ZOk && rc != ZStreamEnd && rc != ZBufError then throw IOException(s"zlib: deflate failed ($rc)")
-      val produced = OutBuffer - strm._5.toInt
-      var i        = 0
-      while i < produced do
-        acc += out(i)
-        i += 1
-      more = if flush == ZFinish then rc != ZStreamEnd else produced == OutBuffer
+      if rc != ZOk && rc != ZStreamEnd && rc != ZBufError then
+        failed = Some(ZlibError.Failed("deflate", rc))
+        more = false
+      else
+        val produced = OutBuffer - strm._5.toInt
+        var i        = 0
+        while i < produced do
+          acc += out(i)
+          i += 1
+        more = if flush == ZFinish then rc != ZStreamEnd else produced == OutBuffer
+      end if
     end while
-    acc.result()
+    failed.toLeft(acc.result())
   end run
 end GzipStream
+
+/** A zlib call that returned an error code. */
+private[heddle] enum ZlibError(val message: String) extends heddle.internal.posix.FfiError:
+  case OutOfMemory                         extends ZlibError("zlib: out of memory")
+  case Failed(function: String, code: Int) extends ZlibError(s"zlib: $function failed ($code)")
