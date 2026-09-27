@@ -20,31 +20,39 @@ private[brotli] object Decoder:
   private val BlockLenExtra =
     Array(2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24)
 
-  /** Throws `BrotliException` on corrupt input and `OverLimit` before output would pass `limit` bytes. */
-  def decode(data: Array[Byte], limit: Long): Array[Byte] =
-    val br      = BitReader(data)
+  /** Total: corrupt input is its `BrotliError`, and output that would pass `limit` bytes is `OverLimit`. */
+  def decode(data: Array[Byte], limit: Long): Either[BrotliError, Array[Byte]] =
+    for
+      (dict, lookup) <- Dict.loaded
+      transforms     <- WordTransform.all
+      out            <- run(BitReader(data), limit, Tables(dict, lookup, transforms))
+    yield out
+
+  private final class Tables(val dict: Array[Byte], val lookup: Array[Int], val transforms: Array[WordTransform])
+
+  private def run(br: BitReader, limit: Long, tables: Tables): Either[BrotliError, Array[Byte]] =
     val wbits   = windowBits(br)
     val maxBack = (1 << wbits) - 16
     val out     = ArrayBuffer.empty[Byte]
     val distRb  = Array(16, 15, 11, 4)
     var distI   = 0
     var last    = false
-    while !last do
+    while !last && br.ok do
       val hdr = metablock(br)
       last = hdr.last
-      if !hdr.metadata && out.length.toLong + hdr.length > limit then throw OverLimit()
-      if hdr.length == 0 then ()
+      if !hdr.metadata && out.length.toLong + hdr.length > limit then br.fail(BrotliError.OverLimit)
+      else if hdr.length == 0 || !br.ok then ()
       else if hdr.metadata then
         br.jumpToByteBoundary()
         val _ = br.copyBytes(hdr.length)
       else if hdr.uncompressed then
         br.jumpToByteBoundary()
         out ++= br.copyBytes(hdr.length)
-      else distI = compressed(br, out, hdr.length, maxBack, distRb, distI)
+      else distI = compressed(br, out, hdr.length, maxBack, distRb, distI, tables)
     end while
     br.jumpToByteBoundary()
-    out.toArray
-  end decode
+    br.failure.toLeft(out.toArray)
+  end run
 
   private def windowBits(br: BitReader): Int =
     if br.readBits(1) == 0 then 16
@@ -60,29 +68,31 @@ private[brotli] object Decoder:
 
   private def metablock(br: BitReader): Header =
     val last = br.readBits(1) == 1
-    if last && br.readBits(1) != 0 then return Header(true, 0, false, false)
-    val nibbles = br.readBits(2) + 4
-    if nibbles == 7 then
-      if br.readBits(1) != 0 then throw BrotliException("corrupted reserved bit")
-      val sizeBytes = br.readBits(2)
-      var len       = 0
-      var i         = 0
-      while i < sizeBytes do
-        val bits = br.readBits(8)
-        if bits == 0 && i + 1 == sizeBytes && sizeBytes > 1 then throw BrotliException("exuberant nibble")
-        len |= bits << (i * 8)
-        i += 1
-      Header(last, if sizeBytes == 0 then 0 else len + 1, uncompressed = false, metadata = true)
+    if last && br.readBits(1) != 0 then Header(true, 0, false, false)
     else
-      var len = 0
-      var i   = 0
-      while i < nibbles do
-        val bits = br.readBits(4)
-        if bits == 0 && i + 1 == nibbles && nibbles > 4 then throw BrotliException("exuberant nibble")
-        len |= bits << (i * 4)
-        i += 1
-      val uncomp = if last then false else br.readBits(1) == 1
-      Header(last, len + 1, uncomp, metadata = false)
+      val nibbles = br.readBits(2) + 4
+      if nibbles == 7 then
+        if br.readBits(1) != 0 then br.fail(BrotliError.ReservedBit)
+        val sizeBytes = br.readBits(2)
+        var len       = 0
+        var i         = 0
+        while i < sizeBytes do
+          val bits = br.readBits(8)
+          if bits == 0 && i + 1 == sizeBytes && sizeBytes > 1 then br.fail(BrotliError.ExuberantNibble)
+          len |= bits << (i * 8)
+          i += 1
+        Header(last, if sizeBytes == 0 then 0 else len + 1, uncompressed = false, metadata = true)
+      else
+        var len = 0
+        var i   = 0
+        while i < nibbles do
+          val bits = br.readBits(4)
+          if bits == 0 && i + 1 == nibbles && nibbles > 4 then br.fail(BrotliError.ExuberantNibble)
+          len |= bits << (i * 4)
+          i += 1
+        val uncomp = if last then false else br.readBits(1) == 1
+        Header(last, len + 1, uncomp, metadata = false)
+      end if
     end if
   end metablock
 
@@ -99,6 +109,7 @@ private[brotli] object Decoder:
       maxBack: Int,
       distRb: Array[Int],
       distI0: Int,
+      tables: Tables,
   ): Int =
     var mlen       = mlen0
     val ntype      = Array.ofDim[Int](3)
@@ -133,6 +144,7 @@ private[brotli] object Decoder:
     var distSlice             = 0
     var litTreeIdx            = 0
     var cmdTree               = cmdTrees(0)
+    val lookup                = tables.lookup
     var ctxOff1               = Dict.LookupOffsets(ctxModes(0))
     var ctxOff2               = Dict.LookupOffsets(ctxModes(0) + 1)
     var distI                 = distI0
@@ -157,7 +169,7 @@ private[brotli] object Decoder:
       btype
     end switchType
 
-    while mlen > 0 do
+    while mlen > 0 && br.ok do
       if blen(1) == 0 then
         val bt = switchType(1)
         cmdTree = cmdTrees(bt)
@@ -174,7 +186,7 @@ private[brotli] object Decoder:
       val copyLen    = Command.CopyBase(copyCode) + br.readBits(Command.CopyExtra(copyCode))
       var ins        = 0
       if trivialLit then
-        while ins < insertLen do
+        while ins < insertLen && br.ok do
           if blen(0) == 0 then
             val bt = switchType(0)
             ctxSlice = bt << LiteralCtxBits
@@ -185,7 +197,7 @@ private[brotli] object Decoder:
           out += litTrees(litTreeIdx).read(br).toByte
           ins += 1
       else
-        while ins < insertLen do
+        while ins < insertLen && br.ok do
           if blen(0) == 0 then
             val bt = switchType(0)
             ctxSlice = bt << LiteralCtxBits
@@ -193,68 +205,74 @@ private[brotli] object Decoder:
             ctxOff2 = Dict.LookupOffsets(ctxModes(bt) + 1)
           val p1  = if out.isEmpty then 0 else out(out.length - 1) & 0xff
           val p2  = if out.length < 2 then 0 else out(out.length - 2) & 0xff
-          val idx = litMap(ctxSlice + (Dict.contextLookup(ctxOff1 + p1) | Dict.contextLookup(ctxOff2 + p2))) & 0xff
+          val idx = litMap(ctxSlice + (lookup(ctxOff1 + p1) | lookup(ctxOff2 + p2))) & 0xff
           blen(0) -= 1
           out += litTrees(idx).read(br).toByte
           ins += 1
       end if
       mlen -= insertLen
-      if mlen <= 0 then return distI
-      if distCode < 0 then
-        if blen(2) == 0 then
-          val bt = switchType(2)
-          distSlice = bt << DistanceCtxBits
-        blen(2) -= 1
-        val dctx = if copyLen > 4 then 3 else copyLen - 2
-        distCode = distTrees(distMap(distSlice + dctx) & 0xff).read(br)
-        if distCode >= nDirect then
-          distCode -= nDirect
-          val postfix = distCode & postfixMask
-          distCode >>>= postfixBits
-          val n      = (distCode >>> 1) + 1
-          val offset = ((2 + (distCode & 1)) << n) - 4
-          distCode = nDirect + postfix + ((offset + br.readBits(n)) << postfixBits)
-      end if
-      val distance = translateShort(distCode, distRb, distI)
-      if distance < 0 then throw BrotliException("negative distance")
-      val maxDistance = math.min(out.length, maxBack)
-      if distCode > 0 then
-        distRb(distI & 3) = distance
-        distI += 1
-      if distance > maxDistance then
-        if copyLen < Dict.MinWordLength || copyLen > Dict.MaxWordLength then
-          throw BrotliException("invalid backward reference")
-        val wordOff = Dict.OffsetsByLength(copyLen)
-        val shift   = Dict.SizeBitsByLength(copyLen)
-        val wordId  = distance - maxDistance - 1
-        val wordIdx = wordId & ((1 << shift) - 1)
-        val txIdx   = wordId >>> shift
-        if txIdx >= WordTransform.all.length then throw BrotliException("invalid backward reference")
-        val tmp  = Array.ofDim[Byte](Dict.MaxTransformed)
-        val nout = WordTransform(
-          tmp,
-          0,
-          Dict.data,
-          wordOff + wordIdx * copyLen,
-          copyLen,
-          WordTransform.all(txIdx),
-        )
-        var k = 0
-        while k < nout do
-          out += tmp(k)
-          k += 1
-        mlen -= nout
-      else
-        if copyLen > mlen then throw BrotliException("invalid backward reference")
-        var k = 0
-        while k < copyLen do
-          out += out(out.length - distance)
-          k += 1
-        mlen -= copyLen
+      if mlen > 0 && br.ok then
+        if distCode < 0 then
+          if blen(2) == 0 then
+            val bt = switchType(2)
+            distSlice = bt << DistanceCtxBits
+          blen(2) -= 1
+          val dctx = if copyLen > 4 then 3 else copyLen - 2
+          distCode = distTrees(distMap(distSlice + dctx) & 0xff).read(br)
+          if distCode >= nDirect then
+            distCode -= nDirect
+            val postfix = distCode & postfixMask
+            distCode >>>= postfixBits
+            val n      = (distCode >>> 1) + 1
+            val offset = ((2 + (distCode & 1)) << n) - 4
+            distCode = nDirect + postfix + ((offset + br.readBits(n)) << postfixBits)
+        end if
+        val distance    = translateShort(distCode, distRb, distI)
+        val maxDistance = math.min(out.length, maxBack)
+        if distance <= 0 then br.fail(BrotliError.BadDistance)
+        else
+          if distCode > 0 then
+            distRb(distI & 3) = distance
+            distI += 1
+          if distance > maxDistance then mlen -= dictionaryWord(br, out, distance - maxDistance - 1, copyLen, tables)
+          else if copyLen > mlen then br.fail(BrotliError.BadReference)
+          else
+            var k = 0
+            while k < copyLen do
+              out += out(out.length - distance)
+              k += 1
+            mlen -= copyLen
+          end if
+        end if
       end if
     end while
     distI
   end compressed
+
+  /** Appends a transformed static-dictionary word and returns its length, or fails the reader and returns 0. */
+  private def dictionaryWord(br: BitReader, out: ArrayBuffer[Byte], wordId: Int, copyLen: Int, tables: Tables): Int =
+    if copyLen < Dict.MinWordLength || copyLen > Dict.MaxWordLength then
+      br.fail(BrotliError.BadReference)
+      0
+    else
+      val shift   = Dict.SizeBitsByLength(copyLen)
+      val wordIdx = wordId & ((1 << shift) - 1)
+      val txIdx   = wordId >>> shift
+      if txIdx >= tables.transforms.length then
+        br.fail(BrotliError.BadReference)
+        0
+      else
+        val tmp  = Array.ofDim[Byte](Dict.MaxTransformed)
+        val from = Dict.OffsetsByLength(copyLen) + wordIdx * copyLen
+        val nout = WordTransform(tmp, 0, tables.dict, from, copyLen, tables.transforms(txIdx))
+        var k    = 0
+        while k < nout do
+          out += tmp(k)
+          k += 1
+        nout
+      end if
+    end if
+  end dictionaryWord
 
   private def readBlockLength(table: HuffmanTable.Table, br: BitReader): Int =
     val code = table.read(br)
@@ -266,32 +284,32 @@ private[brotli] object Decoder:
       ring(idx) + DistShortValue(code)
     else code - DistanceShort + 1
 
+  /** A context map whose every entry names one of its `ntrees` trees. */
   private def contextMap(br: BitReader, size: Int): (Array[Byte], Int) =
     val ntrees = varLenByte(br) + 1
     val map    = Array.ofDim[Byte](size)
-    if ntrees == 1 then return (map, 1)
-    val rle    = br.readBits(1) == 1
-    val maxRun = if rle then br.readBits(4) + 1 else 0
-    val table  = HuffmanTable.readCode(br, ntrees + maxRun)
-    var i      = 0
-    while i < size do
-      val code = table.read(br)
-      if code == 0 then
-        map(i) = 0
-        i += 1
-      else if code <= maxRun then
-        var reps = (1 << code) + br.readBits(code)
-        while reps != 0 do
-          if i >= size then throw BrotliException("corrupted context map")
+    if ntrees > 1 then
+      val rle    = br.readBits(1) == 1
+      val maxRun = if rle then br.readBits(4) + 1 else 0
+      val table  = HuffmanTable.readCode(br, ntrees + maxRun)
+      var i      = 0
+      while i < size && br.ok do
+        val code = table.read(br)
+        if code == 0 then
           map(i) = 0
           i += 1
-          reps -= 1
-      else
-        map(i) = (code - maxRun).toByte
-        i += 1
-      end if
-    end while
-    if br.readBits(1) == 1 then inverseMtf(map)
+        else if code <= maxRun then
+          val reps = (1 << code) + br.readBits(code)
+          if i + reps > size then br.fail(BrotliError.BadContextMap)
+          else i += reps
+        else
+          map(i) = (code - maxRun).toByte
+          i += 1
+        end if
+      end while
+      if br.readBits(1) == 1 then inverseMtf(map)
+      if map.exists(v => (v & 0xff) >= ntrees) then br.fail(BrotliError.BadContextMap)
+    end if
     (map, ntrees)
   end contextMap
 

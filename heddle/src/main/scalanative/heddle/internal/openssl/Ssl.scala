@@ -1,5 +1,6 @@
 package heddle.internal.openssl
 
+import heddle.internal.posix.{Interest, Transfer}
 import java.io.IOException
 import scala.annotation.unused
 import scala.scalanative.unsafe.*
@@ -76,127 +77,130 @@ private[heddle] object Ssl:
           ptr = null
       }
 
-    def read(dst: Array[Byte], off: Int, len: Int): Int =
-      if len <= 0 || ptr == null then 0
+    def read(dst: Array[Byte], off: Int, len: Int): Either[SslError, Transfer] =
+      if ptr == null then Right(Transfer.Eof)
+      else if len <= 0 then Right(Transfer.Moved(0))
       else
         val n = ssl.SSL_read(ptr, scratch.at(0), math.min(len, scratch.length))
-        if n <= 0 then wantOrEof(n, "SSL_read")
+        if n <= 0 then outcome(n, "SSL_read")
         else
           System.arraycopy(scratch, 0, dst, off, n)
-          n
+          Right(Transfer.Moved(n))
 
-    def write(src: Array[Byte], off: Int, len: Int): Int =
-      if len <= 0 || ptr == null then 0
+    def write(src: Array[Byte], off: Int, len: Int): Either[SslError, Transfer] =
+      if ptr == null then Left(SslError.ClosedSession)
+      else if len <= 0 then Right(Transfer.Moved(0))
       else
         val n = math.min(len, scratch.length)
         System.arraycopy(src, off, scratch, 0, n)
         val wrote = ssl.SSL_write(ptr, scratch.at(0), n)
-        if wrote <= 0 then wantOrEof(wrote, "SSL_write") else wrote
+        if wrote <= 0 then outcome(wrote, "SSL_write") else Right(Transfer.Moved(wrote))
 
-    def handshake(accept: Boolean): Int =
-      if ptr == null then throw fail("SSL handshake on closed session")
-      val n = if accept then ssl.SSL_accept(ptr) else ssl.SSL_connect(ptr)
-      if n == 1 then 1 else wantOrEof(n, if accept then "SSL_accept" else "SSL_connect")
+    /** `None` once the handshake is done, or the readiness it waits for. */
+    def handshake(accept: Boolean): Either[SslError, Option[Interest]] =
+      val function = if accept then "SSL_accept" else "SSL_connect"
+      if ptr == null then Left(SslError.ClosedSession)
+      else
+        val n = if accept then ssl.SSL_accept(ptr) else ssl.SSL_connect(ptr)
+        if n == 1 then Right(None)
+        else
+          outcome(n, function).flatMap {
+            case Transfer.Blocked(on) => Right(Some(on))
+            case _                    => Left(SslError.PeerClosed(function))
+          }
+    end handshake
 
-    private def wantOrEof(n: Int, op: String): Int =
-      val err = ssl.SSL_get_error(ptr, n)
-      if err == ErrorZeroReturn then 0
-      else if err == ErrorWantRead then -2
-      else if err == ErrorWantWrite then -3
-      else throw fail(s"$op $err")
+    private def outcome(n: Int, function: String): Either[SslError, Transfer] =
+      ssl.SSL_get_error(ptr, n) match
+        case ErrorZeroReturn => Right(Transfer.Eof)
+        case ErrorWantRead   => Right(Transfer.Blocked(Interest.Read))
+        case ErrorWantWrite  => Right(Transfer.Blocked(Interest.Write))
+        case code            => Left(failed(s"$function (SSL_get_error $code)"))
   end Session
 
-  def serverCtx(certPem: String, keyPem: String): Ctx =
+  def serverCtx(certPem: String, keyPem: String): Either[SslError, Ctx] =
     init()
     val ctx = ssl.SSL_CTX_new(ssl.TLS_server_method())
-    if ctx == null then throw fail("SSL_CTX_new")
-    try
-      val pinned = loadPem(ctx, certPem, keyPem)
-      Ctx(ctx, pinned)
-    catch
-      case e: Throwable =>
-        ssl.SSL_CTX_free(ctx)
-        throw e
+    if ctx == null then Left(failed("SSL_CTX_new"))
+    else
+      loadPem(ctx, certPem, keyPem) match
+        case Left(e) =>
+          ssl.SSL_CTX_free(ctx)
+          Left(e)
+        case Right(pinned) => Right(Ctx(ctx, pinned))
   end serverCtx
 
   /** Verifies the peer against `trustPem` when given, otherwise against the system's default trust store. */
-  def clientCtx(trustPem: Option[String]): Ctx =
+  def clientCtx(trustPem: Option[String]): Either[SslError, Ctx] =
     init()
     val ctx = ssl.SSL_CTX_new(ssl.TLS_client_method())
-    if ctx == null then throw fail("SSL_CTX_new")
-    try
+    if ctx == null then Left(failed("SSL_CTX_new"))
+    else
       ssl.SSL_CTX_set_verify(ctx, VerifyPeer, null)
-      trustPem match
+      val trusted = trustPem match
         case None =>
-          if ssl.SSL_CTX_set_default_verify_paths(ctx) != 1 then throw fail("SSL_CTX_set_default_verify_paths")
+          if ssl.SSL_CTX_set_default_verify_paths(ctx) == 1 then Right(())
+          else Left(failed("SSL_CTX_set_default_verify_paths"))
         case Some(pem) => trust(ctx, pem)
-      Ctx(ctx, Array.empty)
-    catch
-      case e: Throwable =>
-        ssl.SSL_CTX_free(ctx)
-        throw e
-    end try
+      trusted match
+        case Left(e) =>
+          ssl.SSL_CTX_free(ctx)
+          Left(e)
+        case Right(_) => Right(Ctx(ctx, Array.empty))
+    end if
   end clientCtx
 
-  def accept(ctx: Ctx, fd: Int): Session = attach(ctx, fd, host = None)
+  def accept(ctx: Ctx, fd: Int): Either[SslError, Session] = attach(ctx, fd, host = None)
 
   /** A client session that checks the peer certificate names `host` (a DNS name or an IP literal). */
-  def connect(ctx: Ctx, fd: Int, host: String): Session =
-    val session = attach(ctx, fd, Some(host))
-    try
-      Zone {
-        val ok =
-          if isIpLiteral(host) then
-            crypto.X509_VERIFY_PARAM_set1_ip_asc(ssl.SSL_get0_param(session.ptrOrNull), toCString(host))
-          else ssl.SSL_set1_host(session.ptrOrNull, toCString(host))
-        if ok != 1 then throw fail("set verify host")
+  def connect(ctx: Ctx, fd: Int, host: String): Either[SslError, Session] =
+    attach(ctx, fd, Some(host)).flatMap { session =>
+      val ok = Zone {
+        if isIpLiteral(host) then
+          crypto.X509_VERIFY_PARAM_set1_ip_asc(ssl.SSL_get0_param(session.ptrOrNull), toCString(host))
+        else ssl.SSL_set1_host(session.ptrOrNull, toCString(host))
       }
-      session
-    catch
-      case e: Throwable =>
+      if ok == 1 then Right(session)
+      else
+        val e = failed("set verify host")
         session.close()
-        throw e
-    end try
-  end connect
+        Left(e)
+    }
 
   private def isIpLiteral(host: String): Boolean =
     host.contains(':') || host.forall(c => c.isDigit || c == '.')
 
-  private def trust(ctx: Ptr[Byte], pem: String): Unit =
+  private def trust(ctx: Ptr[Byte], pem: String): Either[SslError, Unit] =
     val store = ssl.SSL_CTX_get_cert_store(ctx)
-    val bio   = memBio(ascii(pem))
-    try
+    withBio(ascii(pem)) { bio =>
       var added = 0
       var cert  = crypto.PEM_read_bio_X509(bio, null, null, null)
       while cert != null do
-        try if crypto.X509_STORE_add_cert(store, cert) == 1 then added += 1
-        finally crypto.X509_free(cert)
+        if crypto.X509_STORE_add_cert(store, cert) == 1 then added += 1
+        crypto.X509_free(cert)
         cert = crypto.PEM_read_bio_X509(bio, null, null, null)
       crypto.ERR_clear_error()
-      if added == 0 then throw IOException("trust PEM holds no certificates")
-    finally
-      val _ = crypto.BIO_free(bio)
-    end try
+      if added == 0 then Left(SslError.NoTrustedCertificates) else Right(())
+    }
   end trust
 
-  def handshake(session: Session, accept: Boolean): Int = session.handshake(accept)
+  def handshake(session: Session, accept: Boolean): Either[SslError, Option[Interest]] = session.handshake(accept)
 
-  private def attach(ctx: Ctx, fd: Int, host: Option[String]): Session =
+  private def attach(ctx: Ctx, fd: Int, host: Option[String]): Either[SslError, Session] =
     val s = ssl.SSL_new(ctx.ptr)
-    if s == null then throw fail("SSL_new")
-    try
-      if ssl.SSL_set_fd(s, fd) != 1 then throw fail("SSL_set_fd")
+    if s == null then Left(failed("SSL_new"))
+    else if ssl.SSL_set_fd(s, fd) != 1 then
+      val e = failed("SSL_set_fd")
+      ssl.SSL_free(s)
+      Left(e)
+    else
       host.filterNot(isIpLiteral).foreach { name =>
         Zone {
           val _ = ssl.SSL_ctrl(s, CtrlSetTlsextHostname, 0, toCString(name).asInstanceOf[Ptr[Byte]])
         }
       }
-      Session(s, ctx)
-    catch
-      case e: Throwable =>
-        ssl.SSL_free(s)
-        throw e
-    end try
+      Right(Session(s, ctx))
+    end if
   end attach
 
   private val EvpPkeyRsa = 6
@@ -212,39 +216,39 @@ private[heddle] object Ssl:
       i += 1
     a
 
-  private def loadPem(ctx: Ptr[Byte], certPem: String, keyPem: String): Array[Array[Byte]] =
+  private def loadPem(ctx: Ptr[Byte], certPem: String, keyPem: String): Either[SslError, Array[Array[Byte]]] =
     val certBytes = ascii(certPem)
     val keyBytes  = ascii(keyPem)
-    val certBio   = memBio(certBytes)
-    val keyBio    = memBio(keyBytes)
-    try
-      val cert = crypto.PEM_read_bio_X509(certBio, null, null, null)
-      val key  = crypto.PEM_read_bio_PrivateKey(keyBio, null, null, null)
-      if cert == null then throw fail("PEM_read_bio_X509")
-      if key == null then throw fail("PEM_read_bio_PrivateKey")
-      try
-        if ssl.SSL_CTX_use_certificate(ctx, cert) != 1 then throw fail("SSL_CTX_use_certificate")
-        if ssl.SSL_CTX_use_PrivateKey(ctx, key) != 1 then throw fail("SSL_CTX_use_PrivateKey")
-        if ssl.SSL_CTX_check_private_key(ctx) != 1 then throw fail("SSL_CTX_check_private_key")
-      finally
-        crypto.X509_free(cert)
-        crypto.EVP_PKEY_free(key)
-    finally
-      val _ = crypto.BIO_free(certBio)
-      val _ = crypto.BIO_free(keyBio)
-    end try
-    Array(certBytes, keyBytes)
+    withBio(certBytes) { certBio =>
+      withBio(keyBytes) { keyBio =>
+        val cert = crypto.PEM_read_bio_X509(certBio, null, null, null)
+        val key  = crypto.PEM_read_bio_PrivateKey(keyBio, null, null, null)
+        val used =
+          if cert == null then Left(failed("PEM_read_bio_X509"))
+          else if key == null then Left(failed("PEM_read_bio_PrivateKey"))
+          else if ssl.SSL_CTX_use_certificate(ctx, cert) != 1 then Left(failed("SSL_CTX_use_certificate"))
+          else if ssl.SSL_CTX_use_PrivateKey(ctx, key) != 1 then Left(failed("SSL_CTX_use_PrivateKey"))
+          else if ssl.SSL_CTX_check_private_key(ctx) != 1 then Left(failed("SSL_CTX_check_private_key"))
+          else Right(Array(certBytes, keyBytes))
+        if cert != null then crypto.X509_free(cert)
+        if key != null then crypto.EVP_PKEY_free(key)
+        used
+      }
+    }
   end loadPem
 
-  /** Copy `bytes` into an OpenSSL memory BIO. `BIO_new_mem_buf` does not copy. */
-  private def memBio(bytes: Array[Byte]): Ptr[Byte] =
+  /** Copies `bytes` into an OpenSSL memory BIO for `use`, and frees it after. `BIO_new_mem_buf` does not copy. */
+  private def withBio[A](bytes: Array[Byte])(use: Ptr[Byte] => Either[SslError, A]): Either[SslError, A] =
     val bio = crypto.BIO_new(crypto.BIO_s_mem())
-    if bio == null then throw fail("BIO_new")
-    val n = crypto.BIO_write(bio, bytes.at(0), bytes.length)
-    if n != bytes.length then
+    if bio == null then Left(failed("BIO_new"))
+    else
+      val result =
+        if bytes.nonEmpty && crypto.BIO_write(bio, bytes.at(0), bytes.length) != bytes.length then
+          Left(failed("BIO_write"))
+        else use(bio)
       val _ = crypto.BIO_free(bio)
-      throw fail("BIO_write")
-    bio
+      result
+  end withBio
 
   private def fromRsa(n: Array[Byte], e: Array[Byte], d: Option[Array[Byte]]): Ptr[Byte] =
     val rsa = crypto.RSA_new()
@@ -322,12 +326,16 @@ private[heddle] object Ssl:
     val _ = crypto.BN_bn2bin(bn, a.at(0).asInstanceOf[Ptr[CUnsignedChar]])
     a
 
-  private def fail(op: String): IOException =
+  /** Reads OpenSSL's error queue now, before a cleanup call can change it. */
+  private def failed(function: String): SslError =
     Zone {
       val buf = alloc[CChar](256)
       crypto.ERR_error_string_n(crypto.ERR_get_error(), buf, 256.toUSize)
-      IOException(s"$op: ${fromCString(buf)}")
+      SslError.Failed(function, fromCString(buf))
     }
+
+  // The RSA helpers above still throw; T6 rebuilds RSA as a service with typed errors on every platform.
+  private def fail(op: String): IOException = failed(op).exception
 
   @extern
   private object ssl:

@@ -8,17 +8,22 @@ private[brotli] object WordTransform:
   val UppercaseFirst: Int = 10
   val UppercaseAll: Int   = 11
 
-  val all: Array[WordTransform] =
-    val in = getClass.getResourceAsStream("/heddle/brotli/transforms.txt")
-    if in == null then throw IllegalStateException("missing resource heddle/brotli/transforms.txt")
-    val text =
-      try String(in.readAllBytes(), java.nio.charset.StandardCharsets.US_ASCII)
-      finally in.close()
-    text.split("\n").filter(_.nonEmpty).map { line =>
-      val parts = line.split("\\|", -1)
-      WordTransform(unhex(parts(0)), parts(1).toInt, unhex(parts(2)))
+  /** The 121 RFC 7932 Appendix B transforms, one `prefix|op|suffix` line each (hex bytes). */
+  lazy val all: Either[BrotliError, Array[WordTransform]] =
+    Dict.resourceBytes("transforms.txt").flatMap { bytes =>
+      val lines  = String(bytes, java.nio.charset.StandardCharsets.US_ASCII).split("\n").filter(_.nonEmpty)
+      val parsed = lines.flatMap { line =>
+        line.split("\\|", -1) match
+          case Array(prefix, op, suffix) =>
+            for
+              p <- unhex(prefix)
+              o <- op.toIntOption
+              s <- unhex(suffix)
+            yield WordTransform(p, o, s)
+          case _ => None
+      }
+      Either.cond(parsed.length == lines.length, parsed, BrotliError.MissingResource("transforms.txt"))
     }
-  end all
 
   def omitFirst(op: Int): Int = if op >= 12 then op - 11 else 0
   def omitLast(op: Int): Int  = if op >= 1 && op <= 9 then op else 0
@@ -68,13 +73,10 @@ private[brotli] object WordTransform:
     offset - dstOff
   end apply
 
-  private def unhex(s: String): Array[Byte] =
-    if s.isEmpty then Array.emptyByteArray
-    else
-      val out = Array.ofDim[Byte](s.length / 2)
-      var i   = 0
-      while i < out.length do
-        out(i) = Integer.parseInt(s.substring(i * 2, i * 2 + 2), 16).toByte
-        i += 1
-      out
+  private def unhex(s: String): Option[Array[Byte]] =
+    Option.when(s.length % 2 == 0 && s.forall(c => Character.digit(c, 16) >= 0)) {
+      Array.tabulate(s.length / 2)(i =>
+        (Character.digit(s.charAt(i * 2), 16) * 16 + Character.digit(s.charAt(i * 2 + 1), 16)).toByte
+      )
+    }
 end WordTransform

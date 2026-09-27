@@ -18,19 +18,13 @@ object NativeLiveSpec extends ZIOSpecDefault:
             port     <- listener.localPort
             serverHs <- listener.acceptFd.flatMap { fd =>
               ZIO
-                .attempt {
-                  val ctx = Ssl.serverCtx(TestTls.certPem, TestTls.keyPem)
-                  Ssl.accept(ctx, fd)
-                }
+                .fromEither(Ssl.serverCtx(TestTls.certPem, TestTls.keyPem).flatMap(Ssl.accept(_, fd)))
                 .flatMap(s => heddle.internal.posix.SslIo.handshake(s, accept = true, fd).as((fd, s)))
             }.fork
-            clientHs <- ZIO.attempt(Net.connect("127.0.0.1", port)).flatMap { fd =>
+            clientHs <- ZIO.fromEither(Net.connect("127.0.0.1", port)).flatMap { fd =>
               heddle.internal.posix.AsyncFd.writable(fd) *>
                 ZIO
-                  .attempt {
-                    val ctx = Ssl.clientCtx(Some(TestTls.certPem))
-                    Ssl.connect(ctx, fd, "localhost")
-                  }
+                  .fromEither(Ssl.clientCtx(Some(TestTls.certPem)).flatMap(Ssl.connect(_, fd, "localhost")))
                   .flatMap(s => heddle.internal.posix.SslIo.handshake(s, accept = false, fd).as((fd, s)))
             }
             (serverFd, serverS) <- serverHs.join

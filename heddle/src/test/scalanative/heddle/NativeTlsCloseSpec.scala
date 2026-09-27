@@ -20,9 +20,9 @@ object NativeTlsCloseSpec extends ZIOSpecDefault:
           listener <- NativeTls.listener(local)
           port     <- listener.localPort
           accepted <- listener.accept.fork
-          fd       <- ZIO.attempt(Net.connect("127.0.0.1", port))
+          fd       <- ZIO.fromEither(Net.connect("127.0.0.1", port))
           _        <- AsyncFd.writable(fd)
-          session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(TestTls.certPem)), fd, "localhost"))
+          session  <- ZIO.fromEither(Ssl.clientCtx(Some(TestTls.certPem)).flatMap(Ssl.connect(_, fd, "localhost")))
           _        <- SslIo.handshake(session, accept = false, fd)
           conn = NativeConn.tls(fd, session)
           before <- ZIO.succeed(open(fd))

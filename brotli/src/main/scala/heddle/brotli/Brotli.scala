@@ -17,11 +17,10 @@ object Brotli:
 
   /** Total. Corrupt input is `Malformed`; more than `limit` decoded bytes is `BodyTooLarge`. */
   def decode(bytes: Chunk[Byte], limit: BytesLength = BytesLength(Int.MaxValue)): Either[HttpError, Chunk[Byte]] =
-    try Right(Chunk.fromArray(Decoder.decode(bytes.toArray, limit.toLong)))
-    catch
-      case _: OverLimit                                            => Left(HttpError.BodyTooLarge)
-      case e @ (_: BrotliException | _: IndexOutOfBoundsException) =>
-        Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Brotli, String.valueOf(e.getMessage))))
+    Decoder.decode(bytes.toArray, limit.toLong) match
+      case Right(out)                  => Right(Chunk.fromArray(out))
+      case Left(BrotliError.OverLimit) => Left(HttpError.BodyTooLarge)
+      case Left(e) => Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Brotli, e.message)))
 
   def encodeArray(data: Array[Byte]): Array[Byte] =
     val w = BitWriter()

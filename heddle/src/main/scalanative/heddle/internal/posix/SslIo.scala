@@ -1,16 +1,14 @@
 package heddle.internal.posix
 
-import heddle.internal.openssl.Ssl
+import heddle.internal.openssl.{Ssl, SslError}
 import zio.*
 
 private[heddle] object SslIo:
-  def handshake(session: Ssl.Session, accept: Boolean, fd: Int): Task[Unit] =
-    def step: Task[Unit] =
-      ZIO.attempt(Ssl.handshake(session, accept)).flatMap {
-        case 1  => ZIO.unit
-        case -2 => AsyncFd.readable(fd) *> step
-        case -3 => AsyncFd.writable(fd) *> step
-        case n  => ZIO.fail(java.io.IOException(s"SSL handshake $n"))
+  def handshake(session: Ssl.Session, accept: Boolean, fd: Int): IO[SslError | NetError, Unit] =
+    def step: IO[SslError | NetError, Unit] =
+      ZIO.suspendSucceed(ZIO.fromEither(session.handshake(accept))).flatMap {
+        case None     => ZIO.unit
+        case Some(on) => AsyncFd.ready(fd, on) *> step
       }
     step
 end SslIo

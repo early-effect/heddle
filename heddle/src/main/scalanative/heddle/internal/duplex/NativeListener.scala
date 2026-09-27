@@ -26,8 +26,9 @@ private[heddle] final class NativeListener(
   def close: UIO[Unit] =
     ZIO.succeed(if closed.compareAndSet(false, true) then Net.close(listenFd)) *> inbound.shutdown
 
+  /** Tuning is best effort: a socket that refuses an option still serves. */
   private def configure(fd: Int): UIO[Unit] =
-    ZIO.attempt(Net.setTcpNoDelay(fd, tcpNoDelay)).ignore *> ZIO.attempt(Net.setKeepAlive(fd, soKeepAlive)).ignore
+    ZIO.succeed(Net.setTcpNoDelay(fd, tcpNoDelay)) *> ZIO.succeed(Net.setKeepAlive(fd, soKeepAlive)).unit
 
   private[duplex] def produce: UIO[Unit] =
     ZIO.suspendSucceed {
@@ -36,13 +37,15 @@ private[heddle] final class NativeListener(
         AsyncFd
           .readable(listenFd)
           .foldZIO(
-            cause => inbound.offer(Left(if closed.get() then AcceptError.Closed else AcceptError.Failed(cause))).unit,
+            e => inbound.offer(Left(if closed.get() then AcceptError.Closed else AcceptError.Failed(e.exception))).unit,
             _ =>
               if closed.get() then ZIO.unit
               else
-                ZIO.attempt(Net.accept(listenFd)).option.flatMap {
-                  case Some(fd) if fd >= 0 => configure(fd) *> inbound.offer(Right(fd)) *> produce
-                  case _                   => produce
+                // A failed accept (the peer reset before we took it, say) costs that connection only.
+                ZIO.succeed(Net.accept(listenFd)).flatMap {
+                  case Right(Some(fd)) => configure(fd) *> inbound.offer(Right(fd)) *> produce
+                  case Right(None)     => produce
+                  case Left(_)         => produce
                 },
           )
     }
@@ -53,11 +56,11 @@ object NativeListener:
     for
       inbound  <- Queue.unbounded[Either[AcceptError, Int]]
       listener <- ZIO
-        .attempt {
-          val fd = Net.listen(config.host, config.port, config.soBacklog, config.reuseAddress)
-          NativeListener(fd, config.tcpNoDelay, config.soKeepAlive, inbound)
-        }
-        .mapError(e => ServerError.BindFailed(config.host, config.port, e))
+        .suspendSucceed(ZIO.fromEither(Net.listen(config.host, config.port, config.soBacklog, config.reuseAddress)))
+        .mapBoth(
+          e => ServerError.BindFailed(config.host, config.port, e.exception),
+          NativeListener(_, config.tcpNoDelay, config.soKeepAlive, inbound),
+        )
       fiber <- listener.produce.fork
       // Close the listen fd first so a blocked accept returns, then interrupt.
       _ <- ZIO.addFinalizer(listener.close *> fiber.interrupt)

@@ -27,7 +27,7 @@ object NativeAcceptSpec extends ZIOSpecDefault:
             listener <- NativeListener.bind(local)
             port     <- listener.localPort
             parked   <- listener.accept.fork
-            _        <- ZIO.attempt(heddle.internal.posix.Net.connect("127.0.0.1", port)).flatMap { fd =>
+            _        <- ZIO.fromEither(heddle.internal.posix.Net.connect("127.0.0.1", port)).flatMap { fd =>
               heddle.internal.posix.AsyncFd.writable(fd) *>
                 ZIO.succeed(heddle.internal.posix.Net.close(fd))
             }

@@ -82,12 +82,14 @@ object NativeHttpsSpec extends ZIOSpecDefault:
             listener <- NativeTls.listener(local)
             port     <- listener.localPort
             server   <- listener.accept.fork
-            fd       <- ZIO.attempt(Net.connect("127.0.0.1", port))
+            fd       <- ZIO.fromEither(Net.connect("127.0.0.1", port))
             _        <- heddle.internal.posix.AsyncFd.writable(fd)
-            session  <- ZIO.attempt(Ssl.connect(Ssl.clientCtx(Some(TestTls.certPem)), fd, "not-this-host.test"))
-            shake    <- heddle.internal.posix.SslIo.handshake(session, accept = false, fd).either
-            _        <- ZIO.succeed { session.close(); Net.close(fd) }
-            _        <- server.interrupt
+            session  <- ZIO.fromEither(
+              Ssl.clientCtx(Some(TestTls.certPem)).flatMap(Ssl.connect(_, fd, "not-this-host.test"))
+            )
+            shake <- heddle.internal.posix.SslIo.handshake(session, accept = false, fd).either
+            _     <- ZIO.succeed { session.close(); Net.close(fd) }
+            _     <- server.interrupt
           yield assertTrue(shake.isLeft)
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
@@ -110,14 +112,11 @@ object NativeHttpsSpec extends ZIOSpecDefault:
         .ensuring(conn.close)
     }
 
-  private def rawTlsGet(port: Int, path: String): IO[HttpError | Throwable, String] =
-    ZIO.attempt(Net.connect("127.0.0.1", port)).flatMap { fd =>
+  private def rawTlsGet(port: Int, path: String): IO[Any, String] =
+    ZIO.fromEither(Net.connect("127.0.0.1", port)).flatMap { fd =>
       heddle.internal.posix.AsyncFd.writable(fd) *>
         ZIO
-          .attempt {
-            val ctx = Ssl.clientCtx(Some(TestTls.certPem))
-            Ssl.connect(ctx, fd, "localhost")
-          }
+          .fromEither(Ssl.clientCtx(Some(TestTls.certPem)).flatMap(Ssl.connect(_, fd, "localhost")))
           .flatMap { s =>
             heddle.internal.posix.SslIo.handshake(s, accept = false, fd) *> {
               val conn = heddle.internal.duplex.NativeConn.tls(fd, s)
