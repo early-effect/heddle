@@ -6,7 +6,7 @@ import zio.test.*
 
 object CompressStreamLawsSpec extends ZIOSpecDefault:
   private val pieces: Gen[Any, List[Chunk[Byte]]] =
-    Gen.listOfBounded(0, 8)(Gen.chunkOfBounded(0, 512)(Gen.byte))
+    Gen.listOfBounded(0, 8)(ByteGens.upTo(512))
 
   def spec = suite("Streaming gzip")(
     test("gunzip of a streamed gzip is the input, however it was chunked"):
