@@ -21,7 +21,7 @@ extension [R](mcp: Mcp[R])
     * are listed now, with `visibility: ["app"]`, so hosts can route the view's calls and keep them from the model.
     * Advertises the MCP Apps extension.
     */
-  def withApp(shed: Shed[?, ?], document: UiDocument): Either[NonEmptyChunk[AppBuildError], Mcp[R]] =
+  def withApp(shed: Shed[?, ?, ?], document: UiDocument): Either[NonEmptyChunk[AppBuildError], Mcp[R]] =
     val html   = document.html
     val uiMeta = UiMeta.encodeResource(shed.policy)
     val meta   =

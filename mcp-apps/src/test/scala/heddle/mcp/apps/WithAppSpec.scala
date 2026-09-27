@@ -31,10 +31,10 @@ object WithAppSpec extends ZIOSpecDefault:
   private val mcp: IO[NonEmptyChunk[McpBuildError], Mcp[Any]] =
     Ref.make(0).flatMap(n => ZIO.fromEither(Mcp.from(api(n))))
 
-  private def app(shed: Shed[?, ?]): IO[NonEmptyChunk[HeddleError], Mcp[Any]] =
+  private def app(shed: Shed[?, ?, ?]): IO[NonEmptyChunk[HeddleError], Mcp[Any]] =
     mcp.flatMap(m => ZIO.fromEither(m.withApp(shed, document)))
 
-  private def served(shed: Shed[?, ?]): ZIO[Scope, NonEmptyChunk[HeddleError] | McpError, McpSession] =
+  private def served(shed: Shed[?, ?, ?]): ZIO[Scope, NonEmptyChunk[HeddleError] | McpError, McpSession] =
     app(shed).flatMap { a =>
       McpClient
         .http("http://counter.test/mcp", McpClient.Settings(Implementation("host", "1")))
@@ -109,6 +109,10 @@ object WithAppSpec extends ZIOSpecDefault:
             })
         )
       }
+    ,
+    test("a shed keeps its launch grant's own types, so a view can render the launch result typed"):
+      val launch: Grant[Unit, Nothing, Count] = counter.launch
+      assertTrue(launch.toolName == show.doc.toolName)
     ,
     test("a shed's tools must all be grants"):
       typeCheck("""Shed(UiUri("ui://c/v"), "C", Grant.launch(show))((inc = 42))""").map { r =>
