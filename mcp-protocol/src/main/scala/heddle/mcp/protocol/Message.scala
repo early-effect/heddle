@@ -60,14 +60,20 @@ object Message:
       case Some(_)           => None
 
   /** A 2025-11-25 session request: params as the method defines them. */
-  def request(id: RequestId, req: ClientRequest): Message =
-    Request(id, req.method, req.params)
+  def request(id: RequestId, req: ClientRequest): Message.Request =
+    new Message.Request(id, req.method, req.params)
 
   /** A 2026-07-28 request: the params carry `_meta` naming the revision and the client's capabilities. */
-  def stateless(id: RequestId, req: ClientRequest, capabilities: Json.Obj = Json.Obj()): Message =
+  def stateless(id: RequestId, req: ClientRequest, capabilities: Json.Obj = Json.Obj()): Message.Request =
     val meta = Json.Obj(
       RequestMeta.VersionKey    -> Json.Str(ProtocolVersion.Current.value),
       RequestMeta.ClientCapsKey -> capabilities,
     )
-    Request(id, req.method, Json.Obj(req.params.fields :+ ("_meta" -> meta)))
+    new Message.Request(id, req.method, Json.Obj(req.params.fields :+ ("_meta" -> meta)))
+
+  /** The request for `era`: stateless requests carry `_meta`, session requests do not. */
+  def in(era: Era, id: RequestId, req: ClientRequest, capabilities: Json.Obj = Json.Obj()): Message.Request =
+    era match
+      case Era.Stateless => stateless(id, req, capabilities)
+      case Era.Session   => request(id, req)
 end Message

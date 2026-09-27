@@ -1,8 +1,8 @@
 package heddle.mcp.server
 
-import heddle.endpoint.{BoundOp, EndpointDoc, Hint, OpArgs, SchemaDoc, SchemaJson}
+import heddle.endpoint.{BoundOp, Hint, OpArgs, SchemaJson}
 import heddle.http.header.Headers
-import heddle.mcp.McpBuildError
+import heddle.mcp.{McpBuildError, ToolShapes}
 import heddle.mcp.protocol.{CallToolResult, ContentBlock, Structured, Tool, ToolAnnotations, ToolName}
 import zio.json.*
 import zio.json.ast.Json
@@ -27,8 +27,8 @@ object ToolCall:
       schema <- OpArgs.inputSchema(doc).left.map(McpBuildError.NotPromotable(doc.toolName, _))
       input  <- objectSchema(SchemaJson.render(schema), doc.toolName)
     yield
-      val out = successSchema(doc).map(s => Structured.of(SchemaJson.render(s)))
-      val err = errorShape(doc)
+      val out = ToolShapes.output(doc)
+      val err = ToolShapes.error(doc)
       val t   = Tool(
         name = name,
         description = doc.description.orElse(doc.summary),
@@ -91,17 +91,6 @@ object ToolCall:
     schema match
       case o: Json.Obj if o.get("type").contains(Json.Str("object")) => Right(o)
       case _ => Left(McpBuildError.NotPromotable(tool, "tool arguments must be a JSON object"))
-
-  private def successSchema(doc: EndpointDoc): Option[SchemaDoc] =
-    doc.responses.find(r => r.status.code >= 200 && r.status.code < 300).flatMap(_.schema)
-
-  /** The shape of the endpoint's error JSON, from the schemas its error statuses document. */
-  private def errorShape(doc: EndpointDoc): Structured =
-    val schemas = doc.responses.filterNot(_.status.isSuccess).flatMap(_.schema).distinct
-    val schema  = schemas match
-      case one :: Nil => one
-      case many       => SchemaDoc.OneOf(None, many)
-    Structured.of(SchemaJson.render(schema))
 
   private def annotations(hints: List[Hint]): Option[ToolAnnotations] =
     if hints.isEmpty then None

@@ -3,14 +3,15 @@ package example
 import java.nio.charset.StandardCharsets
 import heddle.*
 import heddle.mcp.Mcp
-import heddle.mcp.protocol.RequestMeta
+import heddle.mcp.client.{McpClient, McpError, McpStdio}
+import heddle.mcp.protocol.{Era, Implementation, RequestMeta}
 import heddle.mcp.transport.Http
 import zio.*
 import zio.json.EncoderOps
 import zio.json.ast.Json
 import zio.test.*
 
-/** Raw wire JSON on purpose: this spec checks what a real MCP host sends and reads. */
+/** Raw wire JSON on purpose, since this spec checks what a real MCP host sends and reads, plus heddle's own client. */
 object ExampleMcpSpec extends ZIOSpecDefault:
   private def obj(fields: (String, Json)*): Json.Obj = Json.Obj(fields*)
 
@@ -230,6 +231,38 @@ object ExampleMcpSpec extends ZIOSpecDefault:
               text.contains("get_show"),
               text.contains("Evening bill"),
             )
-          },
-    ) @@ TestAspect.timeout(30.seconds)
+          }
+      ,
+      test("heddle's own client spawns the stdio server and makes typed calls with the shared endpoints"):
+        val command =
+          ChildCommand(s"${sys.props("java.home")}/bin/java", Chunk("-cp", classpath, "example.Main", "--mcp-stdio"))
+        val client = McpClient.Settings(Implementation("example-spec", "0.0.1"))
+        ZIO.scoped {
+          for
+            session <- McpStdio.spawn(command, client)
+            tools   <- session.listTools
+            show    <- session.call(Endpoints.getShow)(1)
+            shows   <- session.call(Endpoints.listShows)(())
+          yield assertTrue(
+            session.era == Era.Stateless,
+            tools.exists(_.name.value == "get_show"),
+            show.title == "Evening bill",
+            shows.exists(_.title == "Evening bill"),
+          )
+        }
+      ,
+      test("a program that does not exist is a Spawn error, not a hang"):
+        val missing = ChildCommand("/no/such/mcp-server")
+        ZIO.scoped(McpStdio.spawn(missing, McpClient.Settings(Implementation("spec", "0"))).flip).map { e =>
+          assertTrue(e match
+            case McpError.Spawn("/no/such/mcp-server", _) => true
+            case _                                        => false)
+        },
+    ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds)
+
+  private def classpath: String =
+    val here     = java.nio.file.Path.of("target", "mcp-stdio.classpath")
+    val fromRoot = java.nio.file.Path.of("example", "target", "mcp-stdio.classpath")
+    val file     = if java.nio.file.Files.isRegularFile(here) then here else fromRoot
+    if java.nio.file.Files.isRegularFile(file) then java.nio.file.Files.readString(file).trim else "MISSING"
 end ExampleMcpSpec

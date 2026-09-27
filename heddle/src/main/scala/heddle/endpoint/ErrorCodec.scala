@@ -38,6 +38,12 @@ final class ErrorCodec[E] private (
         else Left(s"error body answers with ${expected.code}, response was ${status.code}")
       }
     }
+
+  /** Reads an error from its JSON alone, for hosts with no status (an MCP `isError` result). `None` when this endpoint
+    * declares no typed error.
+    */
+  def decodeJson(json: String): Option[Either[String, E]] =
+    codec.map(_.decoder.decodeJson(json))
 end ErrorCodec
 
 object ErrorCodec:
