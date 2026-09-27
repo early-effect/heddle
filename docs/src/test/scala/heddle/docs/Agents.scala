@@ -2,7 +2,8 @@ package heddle.docs
 
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
-import heddle.mcp.protocol.{CallToolResult, ClientRequest, ToolName}
+import heddle.mcp.ServedResource
+import heddle.mcp.protocol.{CallToolResult, ClientRequest, ExtensionId, Resource, ToolName}
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -33,7 +34,7 @@ The wire types live in `heddle-mcp-protocol`, which depends only on zio-json. A 
 """,
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
-          ZIO.fromEither(BoxOffice.mcpOf(store)).map(_.withCatalog).flatMap { mcp =>
+          ZIO.fromEither(BoxOffice.mcpOf(store).flatMap(_.withCatalog)).flatMap { mcp =>
             mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
               val json = out.get.toJson
               json.contains("search_operations") && json.contains("invoke")
@@ -87,6 +88,40 @@ error, and its JSON travels as `structuredContent` too, so a typed caller gets t
       },
       expectFail("""heddle.mcp.protocol.ToolName("get show")""").assert { errors =>
         assertTrue(errors.exists(_.message.contains("not a tool name")))
+      },
+    ),
+    section("Resources and extensions")(
+      md"""
+A resource is something a client lists and reads by URI: a document, a schema, the HTML of an
+MCP App view. `withResources` adds them. The server then advertises `resources` and answers
+`resources/list` and `resources/read`. An unknown URI is `-32002`, and a resource that cannot be read
+right now is an internal error for that one request. `withExtension` advertises an extension, such as
+`ExtensionId.Ui` for MCP Apps, in both handshakes.
+
+Adding never overwrites. A second tool with a taken name, a second resource with a taken URI, or
+a catalog tool that would shadow an operation named `invoke` is a `McpBuildError`.
+""",
+      exampleZIO {
+        val board = Resource("ui://box-office/board", "board", mimeType = Some("text/html;profile=mcp-app"))
+        BoxOffice.seed.flatMap { store =>
+          ZIO
+            .fromEither(BoxOffice.mcpOf(store).flatMap(_.withResources(ServedResource.text(board, "<p>tonight</p>"))))
+            .map(
+              _.withExtension(ExtensionId.Ui, Json.Obj("mimeTypes" -> Json.Arr(Json.Str("text/html;profile=mcp-app"))))
+            )
+            .flatMap { mcp =>
+              for
+                caps <- mcp.handle(BoxOffice.rpc(ClientRequest.Discover))
+                read <- mcp.handle(BoxOffice.rpc(ClientRequest.ReadResource("ui://box-office/board")))
+              yield (caps.map(_.toJson).getOrElse(""), read.map(_.toJson).getOrElse(""))
+            }
+        }
+      }.assert { case (caps, read) =>
+        assertTrue(
+          caps.contains("\"resources\":{}"),
+          caps.contains("io.modelcontextprotocol/ui"),
+          read.contains("<p>tonight</p>"),
+        )
       },
     ),
     section("Protocol eras")(

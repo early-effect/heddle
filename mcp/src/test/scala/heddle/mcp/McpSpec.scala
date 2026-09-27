@@ -1,7 +1,16 @@
 package heddle.mcp
 
 import heddle.*
-import heddle.mcp.protocol.{CallToolResult, ContentBlock, ListToolsResult, RequestMeta}
+import heddle.mcp.protocol.{
+  CallToolResult,
+  ContentBlock,
+  ExtensionId,
+  ListToolsResult,
+  ReadResourceResult,
+  RequestMeta,
+  Resource,
+  ResourceContents,
+}
 import heddle.mcp.transport.Http
 import zio.*
 import zio.json.*
@@ -49,6 +58,10 @@ object McpSpec extends ZIOSpecDefault:
     Mcp.from(api(store)).toOption.get
 
   private val mcpOf0: Mcp[Any] = Mcp.from(Api("Shop", "1.0.0")).toOption.get
+
+  /** A server the test expects to build; a build error fails the test with its messages. */
+  private def built[R](out: Either[NonEmptyChunk[McpBuildError], Mcp[R]]): IO[String, Mcp[R]] =
+    ZIO.fromEither(out).mapError(_.map(_.message).mkString("; "))
 
   /** `tools/call` through the engine, read back as the typed result. */
   private def callResult(mcp: Mcp[Any], tool: String, args: Json.Obj): UIO[CallToolResult] =
@@ -160,8 +173,8 @@ object McpSpec extends ZIOSpecDefault:
       test("withCatalog adds search_operations and invoke"):
         for
           store <- Ref.make(Map.empty[Int, Item])
-          mcp = mcpOf(store).withCatalog
-          out <- mcp.handle(req("tools/list", obj()))
+          mcp   <- built(mcpOf(store).withCatalog)
+          out   <- mcp.handle(req("tools/list", obj()))
         yield
           val json = out.get.toJson
           assertTrue(json.contains("search_operations"), json.contains("invoke"))
@@ -169,8 +182,8 @@ object McpSpec extends ZIOSpecDefault:
       test("search_operations finds unpromoted ops"):
         for
           store <- Ref.make(Map.empty[Int, Item])
-          mcp = mcpOf(store).withCatalog
-          out <- mcp.handle(
+          mcp   <- built(mcpOf(store).withCatalog)
+          out   <- mcp.handle(
             req(
               "tools/call",
               obj("name" -> Json.Str("search_operations"), "arguments" -> obj("query" -> Json.Str("create"))),
@@ -183,8 +196,8 @@ object McpSpec extends ZIOSpecDefault:
       test("invoke calls an unpromoted operation"):
         for
           store <- Ref.make(Map.empty[Int, Item])
-          mcp = mcpOf(store).withCatalog
-          out <- mcp.handle(
+          mcp   <- built(mcpOf(store).withCatalog)
+          out   <- mcp.handle(
             req(
               "tools/call",
               obj(
@@ -203,8 +216,8 @@ object McpSpec extends ZIOSpecDefault:
       test("native tool is callable"):
         for
           store <- Ref.make(Map.empty[Int, Item])
-          mcp = mcpOf(store).tool[Query]("search_users", "Find users")(in => ZIO.succeed(s"hit ${in.q}"))
-          out <- mcp.handle(
+          mcp   <- built(mcpOf(store).tool[Query]("search_users", "Find users")(in => ZIO.succeed(s"hit ${in.q}")))
+          out   <- mcp.handle(
             req("tools/call", obj("name" -> Json.Str("search_users"), "arguments" -> obj("q" -> Json.Str("ada"))))
           )
           listed <- mcp.handle(req("tools/list", obj()))
@@ -405,12 +418,13 @@ object McpSpec extends ZIOSpecDefault:
         end for
       ,
       test("a native tool's own error is typed; one that cannot fail needs no codec"):
-        val mcp = mcpOf0
+        val tools = mcpOf0
           .tool[Query]("strict_search", "Fails on empty")(q =>
             if q.q.isEmpty then ZIO.fail(ShopError.Closed) else ZIO.succeed(List(q.q))
           )
-          .tool[Query]("echo")(q => ZIO.succeed(q.q))
+          .flatMap(_.tool[Query]("echo")(q => ZIO.succeed(q.q)))
         for
+          mcp  <- built(tools)
           bad  <- callResult(mcp, "strict_search", obj("q" -> Json.Str("")))
           good <- callResult(mcp, "echo", obj("q" -> Json.Str("ada")))
         yield assertTrue(
@@ -419,6 +433,7 @@ object McpSpec extends ZIOSpecDefault:
           !good.failed,
           good.structuredContent.contains(obj("value" -> Json.Str("ada"))),
         )
+        end for
       ,
       test("a message with an id is a request, even when its method looks like a notification"):
         for
@@ -434,6 +449,90 @@ object McpSpec extends ZIOSpecDefault:
           case McpBuildError.InvalidToolName("get item!", _) => true
           case _                                             => false
         }))
+      ,
+      test("a tool named like one the server has is a build error, not a silent overwrite"):
+        Ref.make(Map.empty[Int, Item]).map { store =>
+          val clash = mcpOf(store).tool[Query]("get_items_id")(q => ZIO.succeed(q.q))
+          assertTrue(clash.left.exists(_.exists {
+            case McpBuildError.DuplicateTool(n) => n.value == "get_items_id"
+            case _                              => false
+          }))
+        }
+      ,
+      test("the catalog refuses to shadow an operation named invoke"):
+        val invoke = Endpoint.get("run").out[String].mcp("invoke")
+        val api    = Api("Shop", "1.0.0").bind(invoke)(_ => ZIO.succeed("mine"))
+        assertTrue(
+          Mcp
+            .from(api)
+            .flatMap(_.withCatalog)
+            .left
+            .exists(_.exists {
+              case McpBuildError.DuplicateTool(n) => n.value == "invoke"
+              case _                              => false
+            })
+        )
+      ,
+      test("resources are listed, read, and advertised; an unknown uri is -32002"):
+        val page = Resource("ui://shop/board", "board", mimeType = Some("text/html;profile=mcp-app"))
+        for
+          mcp    <- built(mcpOf0.withResources(ServedResource.text(page, "<p>hi</p>")))
+          disc   <- mcp.handle(req("server/discover", obj()))
+          listed <- mcp.handle(req("resources/list", obj()))
+          read   <- mcp.handle(req("resources/read", obj("uri" -> Json.Str("ui://shop/board"))))
+          miss   <- mcp.handle(req("resources/read", obj("uri" -> Json.Str("ui://shop/nope"))))
+        yield
+          val contents = read
+            .flatMap(_.toJson.fromJson[Json.Obj].toOption)
+            .flatMap(_.get("result"))
+            .flatMap(_.toJson.fromJson[ReadResourceResult].toOption)
+            .map(_.contents)
+          assertTrue(
+            disc.exists(_.toJson.contains("\"resources\":{}")),
+            listed.exists(_.toJson.contains("ui://shop/board")),
+            contents.contains(Chunk(ResourceContents.Text("ui://shop/board", page.mimeType, "<p>hi</p>", None))),
+            miss.exists(_.toJson.contains("-32002")),
+          )
+        end for
+      ,
+      test("a resource that cannot be read now is an internal error, not a crash"):
+        val flaky = ServedResource(Resource("ui://shop/flaky", "flaky"), ZIO.fail(ResourceUnavailable("disk")))
+        for
+          mcp <- built(mcpOf0.withResources(flaky))
+          out <- mcp.handle(req("resources/read", obj("uri" -> Json.Str("ui://shop/flaky"))))
+        yield assertTrue(out.exists(_.toJson.contains("-32603")), out.exists(_.toJson.contains("disk")))
+      ,
+      test("two resources with one uri are a build error"):
+        val a = ServedResource.text(Resource("ui://shop/a", "a"), "1")
+        val b = ServedResource.text(Resource("ui://shop/a", "b"), "2")
+        assertTrue(
+          mcpOf0
+            .withResources(a, b)
+            .left
+            .exists(_.exists {
+              case McpBuildError.DuplicateResource("ui://shop/a") => true
+              case _                                              => false
+            })
+        )
+      ,
+      test("an extension is advertised in discover and in the 2025 initialize"):
+        val mcp =
+          mcpOf0.withExtension(ExtensionId.Ui, obj("mimeTypes" -> Json.Arr(Json.Str("text/html;profile=mcp-app"))))
+        for
+          disc <- mcp.handle(req("server/discover", obj()))
+          init <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          body <- init.body.utf8
+        yield assertTrue(
+          disc.exists(_.toJson.contains(""""extensions":{"io.modelcontextprotocol/ui":{"mimeTypes"""")),
+          body.contains("io.modelcontextprotocol/ui"),
+        )
+        end for
       ,
       test("a native tool name outside the grammar does not compile"):
         typeCheck("""Mcp.from(Api("S", "1")).toOption.get.tool[Query]("no spaces")(q => ZIO.succeed(q.q))""").map { r =>

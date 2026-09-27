@@ -6,8 +6,8 @@ import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
-import heddle.mcp.protocol.{Implementation, Structured, Tool, ToolName}
-import heddle.mcp.server.{Engine, Era, ToolCall}
+import heddle.mcp.protocol.{ExtensionId, Implementation, Structured, Tool, ToolName}
+import heddle.mcp.server.{Engine, Era, Offer, ToolCall}
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
 import zio.json.*
@@ -16,19 +16,24 @@ import zio.{Chunk, NonEmptyChunk, ZIO, ZNothing}
 
 import java.io.{InputStream, OutputStream}
 
-/** An MCP server over bound operations and native tools. Serve it on HTTP (`routes`) or a pipe (`stdio`). */
+/** An MCP server over bound operations, native tools, and resources. Serve it on HTTP (`routes`) or a pipe (`stdio`).
+  * Everything that adds to what it offers is checked: a second tool or resource with a taken name is a build error.
+  */
 final class Mcp[-R] private (
     val server: Implementation,
-    promoted: Chunk[ToolCall[R]],
+    offer: Offer[R],
     catalogOps: Chunk[BoundOp[R, ?, ?, ?]],
-    catalogOn: Boolean,
     instructions: Option[String],
     path: String,
 ):
   def serverName: String    = server.name
   def serverVersion: String = server.version
 
-  def withCatalog: Mcp[R] = copy(catalogOn = true)
+  /** Adds `search_operations` and `invoke`, which reach every promotable operation, promoted or not. */
+  def withCatalog: Either[NonEmptyChunk[McpBuildError], Mcp[R]] =
+    Mcp.catalogTools(catalogOps).foldLeft[Either[NonEmptyChunk[McpBuildError], Mcp[R]]](Right(this)) { (acc, t) =>
+      acc.flatMap(_.withTool(t))
+    }
 
   def instructions(text: String): Mcp[R] = copy(instructions = Some(text))
 
@@ -41,8 +46,22 @@ final class Mcp[-R] private (
   inline def tool[A](inline name: String, description: String = ""): Mcp.ToolBuilder[R, A] =
     Mcp.ToolBuilder(this, ToolName(name), description)
 
-  def withTool[R1](t: ToolCall[R1]): Mcp[R & R1] =
-    new Mcp(server, promoted :+ t, catalogOps, catalogOn, instructions, path)
+  def withTool[R1](t: ToolCall[R1]): Either[NonEmptyChunk[McpBuildError], Mcp[R & R1]] =
+    if offer.tools.exists(_.tool.name == t.tool.name) then Left(NonEmptyChunk(McpBuildError.DuplicateTool(t.tool.name)))
+    else Right(new Mcp(server, offer.copy(tools = offer.tools :+ t), catalogOps, instructions, path))
+
+  /** Resources clients list and read. A taken URI, here or already on the server, is a build error. */
+  def withResources[R1](served: ServedResource[R1]*): Either[NonEmptyChunk[McpBuildError], Mcp[R & R1]] =
+    val uris  = offer.resources.map(_.resource.uri) ++ served.map(_.resource.uri)
+    val dupes = uris.diff(uris.distinct).distinct.map(McpBuildError.DuplicateResource(_))
+    NonEmptyChunk.fromChunk(dupes) match
+      case Some(errors) => Left(errors)
+      case None         =>
+        Right(new Mcp(server, offer.copy(resources = offer.resources ++ served), catalogOps, instructions, path))
+
+  /** Advertises an extension in `server/discover` and `initialize` capabilities, with its settings. */
+  def withExtension(id: ExtensionId, settings: Json.Obj = Json.Obj()): Mcp[R] =
+    new Mcp(server, offer.copy(extensions = offer.extensions.updated(id, settings)), catalogOps, instructions, path)
 
   def routes: Routes[R, ZNothing] =
     Http.routes(engine, path)
@@ -68,15 +87,10 @@ final class Mcp[-R] private (
     engine.handle(json, headers, Era.Stateless).map(_.map(_.json))
 
   private def engine: Engine[R] =
-    val extra = if catalogOn then Mcp.catalogTools(catalogOps) else Chunk.empty
-    Engine(server, promoted ++ extra, instructions, 300000)
+    Engine(server, offer, instructions, 300000)
 
-  private def copy[R1 <: R](
-      catalogOn: Boolean = catalogOn,
-      instructions: Option[String] = instructions,
-      path: String = path,
-  ): Mcp[R1] =
-    new Mcp(server, promoted, catalogOps, catalogOn, instructions, path)
+  private def copy(instructions: Option[String] = instructions, path: String = path): Mcp[R] =
+    new Mcp(server, offer, catalogOps, instructions, path)
 end Mcp
 
 object Mcp:
@@ -94,7 +108,7 @@ object Mcp:
       case None         =>
         val title   = apis.headOption.map(_.title).getOrElse("heddle")
         val version = apis.headOption.map(_.version).getOrElse("0.0.0")
-        Right(new Mcp(Implementation(title, version), tools, catalog, false, None, "mcp"))
+        Right(new Mcp(Implementation(title, version), Offer(tools, Chunk.empty, Map.empty), catalog, None, "mcp"))
   end from
 
   def unauthorized(resourceMetadata: String, scopes: List[String] = Nil): Response =
@@ -124,7 +138,7 @@ object Mcp:
         ToolError[E],
         Schema[B],
         JsonCodec[B],
-    ): Mcp[R & R1] =
+    ): Either[NonEmptyChunk[McpBuildError], Mcp[R & R1]] =
       mcp.withTool(native(name, description, f))
 
   def native[R, A, E, B](name: ToolName, description: String, f: A => ZIO[R, E, B])(using

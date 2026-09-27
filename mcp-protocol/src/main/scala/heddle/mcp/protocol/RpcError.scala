@@ -11,6 +11,7 @@ enum RpcError(val code: Int):
   case InvalidParams(message: String)                                           extends RpcError(-32602)
   case Internal(message: String)                                                extends RpcError(-32603)
   case HeaderMismatch(message: String)                                          extends RpcError(-32020)
+  case ResourceNotFound(message: String)                                        extends RpcError(-32002)
   case UnsupportedVersion(requested: String, supported: Chunk[ProtocolVersion]) extends RpcError(-32022)
   case Other(override val code: Int, message: String, data: Option[Json])       extends RpcError(code)
 
@@ -22,6 +23,7 @@ enum RpcError(val code: Int):
       case InvalidParams(m)         => m
       case Internal(m)              => m
       case HeaderMismatch(m)        => m
+      case ResourceNotFound(m)      => m
       case UnsupportedVersion(_, _) => RpcError.UnsupportedText
       case Other(_, m, _)           => m
 
@@ -59,6 +61,7 @@ object RpcError:
       case (-32602, None)                                            => InvalidParams(message)
       case (-32603, None)                                            => Internal(message)
       case (-32020, None)                                            => HeaderMismatch(message)
+      case (-32002, None)                                            => ResourceNotFound(message)
       case (-32022, Some(d: Json.Obj)) if message == UnsupportedText =>
         unsupported(d).getOrElse(Other(code, message, data))
       case _ => Other(code, message, data)
