@@ -2,17 +2,9 @@ package heddle.http.header
 
 import heddle.internal.Ascii
 
-final class Header private (
-    val name: HeaderName,
-    private val interned: String | Null,
-    private val bytes: Array[Byte] | Null,
-    private val from: Int,
-    private val until: Int,
-):
-  def value: String =
-    if interned != null then interned
-    else if bytes == null then ""
-    else Ascii.string(bytes, from, until)
+/** A header field. One parsed from the wire keeps a slice of the request bytes and decodes its value on demand. */
+sealed abstract class Header(val name: HeaderName):
+  def value: String
 
   override def equals(other: Any): Boolean =
     other match
@@ -25,8 +17,13 @@ final class Header private (
 end Header
 
 object Header:
+  private final class Text(name: HeaderName, val value: String) extends Header(name)
+
+  private final class Slice(name: HeaderName, bytes: Array[Byte], from: Int, until: Int) extends Header(name):
+    def value: String = Ascii.string(bytes, from, until)
+
   def apply(name: HeaderName, value: String): Header =
-    new Header(name, value, null, 0, 0)
+    Text(name, value)
 
   def apply(name: String, value: String): Header =
     apply(HeaderName(name), value)
@@ -40,7 +37,7 @@ object Header:
 
   private[heddle] def slice(name: HeaderName, bytes: Array[Byte], from: Int, until: Int): Header =
     val (a, b) = Ascii.trim(bytes, from, until)
-    val hit    = Ascii.internValue(bytes, from, until)
-    if hit != null then new Header(name, hit, null, 0, 0)
-    else new Header(name, null, bytes, a, b)
+    Ascii.internValue(bytes, a, b) match
+      case Some(known) => Text(name, known)
+      case None        => Slice(name, bytes, a, b)
 end Header

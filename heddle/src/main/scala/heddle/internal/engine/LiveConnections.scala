@@ -18,7 +18,9 @@ private[heddle] final class LiveConnections private (maxConnections: Int):
   private val count = AtomicInteger(0)
 
   /** Accepts until the listener closes. Each connection runs `serve` on its own fiber, which `halt` supervises. */
-  def acceptAll[R, E](listener: Listener)(serve: (ByteConn, AtomicBoolean) => ZIO[R, E, Unit]): URIO[R, Unit] =
+  def acceptAll[R, E, C <: ByteConn](listener: Listener[C])(
+      serve: (C, AtomicBoolean) => ZIO[R, E, Unit]
+  ): URIO[R, Unit] =
     listener.accept.foldZIO(
       {
         case AcceptError.Closed        => ZIO.unit
@@ -27,7 +29,7 @@ private[heddle] final class LiveConnections private (maxConnections: Int):
       conn => admit(conn, serve) *> acceptAll(listener)(serve),
     )
 
-  private def admit[R, E](conn: ByteConn, serve: (ByteConn, AtomicBoolean) => ZIO[R, E, Unit]): URIO[R, Unit] =
+  private def admit[R, E, C <: ByteConn](conn: C, serve: (C, AtomicBoolean) => ZIO[R, E, Unit]): URIO[R, Unit] =
     ZIO.suspendSucceed {
       if count.incrementAndGet() > maxConnections then ZIO.succeed(count.decrementAndGet()) *> conn.close
       else
@@ -41,7 +43,7 @@ private[heddle] final class LiveConnections private (maxConnections: Int):
     }
 
   /** A Scope finalizer, so uninterruptible: the grace wait is `Schedule.upTo`, not `timeout`. */
-  def halt(listener: Listener, grace: Duration): UIO[Unit] =
+  def halt(listener: Listener[ByteConn], grace: Duration): UIO[Unit] =
     ZIO.succeed(takingWork.set(false)) *>
       listener.close *>
       entries.flatMap(es => ZIO.foreachDiscard(es.filterNot(_.busy.get()))(_.conn.close)) *>

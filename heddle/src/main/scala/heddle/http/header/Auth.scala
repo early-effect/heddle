@@ -22,13 +22,13 @@ object AuthScheme:
 final case class BasicCredentials(username: String, password: String)
 
 object BasicCredentials:
+  /** RFC 7617 §2: base64 of `user-id ":" password`, split at the first colon. */
   def parse(credentials: String): Option[BasicCredentials] =
-    try
-      val raw   = String(java.util.Base64.getDecoder.decode(credentials.trim), java.nio.charset.StandardCharsets.UTF_8)
+    heddle.crypto.Base64.decode(credentials.trim).toOption.flatMap { bytes =>
+      val raw   = String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
       val colon = raw.indexOf(':')
-      if colon < 0 then None
-      else Some(BasicCredentials(raw.substring(0, colon), raw.substring(colon + 1)))
-    catch case _: IllegalArgumentException => None
+      Option.when(colon >= 0)(BasicCredentials(raw.substring(0, colon), raw.substring(colon + 1)))
+    }
 
   def parse(auth: Authorization): Option[BasicCredentials] =
     auth.scheme match
@@ -36,7 +36,9 @@ object BasicCredentials:
       case _                => None
 
   def render(username: String, password: String): String =
-    java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    heddle.crypto.Base64.encode(
+      zio.Chunk.fromArray(s"$username:$password".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    )
 end BasicCredentials
 
 final case class Authorization(scheme: AuthScheme, credentials: String)

@@ -66,11 +66,11 @@ private[heddle] object Http1Exchange:
         complete.toChunk.map(h => s"${h.name.render}: ${h.value}\r\n").mkString + "\r\n")
         .getBytes(StandardCharsets.US_ASCII)
     )
-    val wrote = body match
-      case Body.Empty           => c.conn.write(head)
-      case Body.Bytes(bytes, _) => c.conn.write(head ++ bytes)
-      case Body.Stream(s, _, _) => c.conn.write(head) *> s.runForeachChunk(c.conn.write)
-    wrote.mapError(io(target.authority, _))
+    val write = (bytes: Chunk[Byte]) => c.conn.write(bytes).mapError(fromHttp(target.authority, io))
+    body match
+      case Body.Empty           => write(head)
+      case Body.Bytes(bytes, _) => write(head ++ bytes)
+      case Body.Stream(s, _, _) => write(head) *> s.mapError(io(target.authority, _)).runForeachChunk(write)
   end send
 
   def readHead(c: Http1Conn, target: Target, limits: Limits, io: IoFailure): IO[ClientError, Head] =

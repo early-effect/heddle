@@ -116,8 +116,8 @@ object HeaderName:
 
   /** Catalog hit by ASCII-lowercase, or a fresh non-interned name. `:protocol` is always ad-hoc. */
   def apply(raw: String): HeaderName =
-    val hit = byLower.get(asciiLower(raw))
-    if hit != null then hit else new HeaderName(raw, asciiLower(raw))
+    val lower = asciiLower(raw)
+    heddle.internal.JavaMaps.getOr(byLower, lower)(new HeaderName(raw, lower))
 
   /** Length-bucket intern from HTTP/1.1 header bytes. Unknown names are not added to the catalog. */
   private[heddle] def intern(raw: Array[Byte], from: Int, until: Int): HeaderName =

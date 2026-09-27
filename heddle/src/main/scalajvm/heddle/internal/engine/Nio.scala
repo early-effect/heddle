@@ -30,10 +30,11 @@ private[heddle] object Nio:
   /** `Chunk.fromArray` wraps the array (`ByteArray`). Wrap that same array in a ByteBuffer so the write syscall is
     * zero-copy. Other chunk shapes copy into the reused scratch buffer.
     */
+  /** A blocking write, on the blocking pool so it never holds a ZIO worker. */
   def writeChunk(ch: SocketChannel, chunk: Chunk[Byte], scratch: ByteBuffer): Task[Unit] =
     if chunk.isEmpty then ZIO.unit
     else
-      ZIO.attempt {
+      ZIO.attemptBlocking {
         val buf = chunk match
           case Chunk.ByteArray(array, offset, length) =>
             ByteBuffer.wrap(array, offset, length)

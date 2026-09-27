@@ -1,7 +1,6 @@
 package heddle
 
 import BytesLength.*
-import java.net.Socket
 import java.nio.charset.StandardCharsets
 import heddle.internal.h2.{FrameCodec, H2Flow, H2Frame, Hpack}
 import heddle.internal.engine.ConnBuf
@@ -176,145 +175,67 @@ object H2Spec extends ZIOSpecDefault:
   ):
     def datas(id: Int): List[String] = body.getOrElse(id, Nil)
 
+  /** Sends each request, then reads until every stream ends (or one is reset, or `stopAfterData` DATA frames came). */
   private def h2Exchange(
       port: Int,
       reqs: List[H2Req],
       stopAfterData: Int = 0,
       untilRst: Boolean = false,
   ): Task[H2Got] =
-    ZIO.attemptBlocking {
-      val s = Socket("127.0.0.1", port)
-      try
-        val out = s.getOutputStream
-        val in  = s.getInputStream
-        out.write(H2Frame.Preface)
-        out.write(FrameCodec.encode(H2Frame.Settings(Chunk.empty)).toArray)
-        out.flush()
-        reqs.foreach { req =>
-          val hs =
-            Chunk(":method" -> req.method, ":path" -> req.path, ":scheme" -> "http", ":authority" -> "localhost")
-          val block = Hpack.encode(hs)
-          out.write(
-            FrameCodec.encode(H2Frame.Headers(req.id, block, endStream = req.endStream, endHeaders = true)).toArray
-          )
-          req.body.foreach { b =>
-            val bytes = Chunk.fromArray(b.getBytes(StandardCharsets.US_ASCII))
-            out.write(FrameCodec.encode(H2Frame.Data(req.id, bytes, endStream = true)).toArray)
-          }
+    val want   = reqs.map(_.id).toSet
+    val frames = reqs.flatMap { req =>
+      val block = Hpack.encode(
+        Chunk(":method" -> req.method, ":path" -> req.path, ":scheme" -> "http", ":authority" -> "localhost")
+      )
+      H2Frame.Headers(req.id, block, endStream = req.endStream, endHeaders = true) ::
+        req.body
+          .map(b => H2Frame.Data(req.id, Chunk.fromArray(b.getBytes(StandardCharsets.US_ASCII)), endStream = true))
+          .toList
+    }
+    def reset(fs: Chunk[H2Frame]) = fs.collect { case H2Frame.RstStream(id, code) => id -> code }.toMap
+    def ended(fs: Chunk[H2Frame]) =
+      fs.collect {
+        case H2Frame.Data(id, _, true, _)             => id
+        case H2Frame.Headers(id, _, true, _, _, _, _) => id
+        case H2Frame.RstStream(id, _)                 => id
+      }.toSet
+    def dataSeen(fs: Chunk[H2Frame]) = fs.count { case H2Frame.Data(_, d, _, _) => d.nonEmpty; case _ => false }
+    H2Wire(port) { w =>
+      w.send(frames*) *> w
+        .until { fs =>
+          (if untilRst then reset(fs).nonEmpty else ended(fs) == want) ||
+          (stopAfterData > 0 && dataSeen(fs) >= stopAfterData)
         }
-        out.flush()
-        var buf      = Array.empty[Byte]
-        val parts    = scala.collection.mutable.Map.empty[Int, List[String]]
-        val rst      = scala.collection.mutable.Map.empty[Int, Int]
-        val done     = scala.collection.mutable.Set.empty[Int]
-        val want     = reqs.map(_.id).toSet
-        var dataSeen = 0
-        s.setSoTimeout(3000)
-        while
-          val waiting = if untilRst then rst.isEmpty else done != want
-          waiting && (stopAfterData == 0 || dataSeen < stopAfterData)
-        do
-          val tmp = Array.ofDim[Byte](4096)
-          val n   = in.read(tmp)
-          if n < 0 then throw java.io.IOException(s"eof after ${buf.length} got=$parts rst=$rst")
-          buf = buf ++ tmp.take(n)
-          if buf.length >= 8 && buf(0) == 'H' && buf(1) == 'T' then
-            throw java.io.IOException(s"got HTTP/1.1: ${String(buf, StandardCharsets.US_ASCII)}")
-          var chunk = Chunk.fromArray(buf)
-          var keep  = true
-          while keep do
-            FrameCodec.decode(chunk, 1 << 20) match
-              case Right((H2Frame.Settings(_), rest)) =>
-                out.write(FrameCodec.encode(H2Frame.SettingsAck).toArray)
-                out.flush()
-                chunk = rest
-              case Right((H2Frame.Data(id, data, end, _), rest)) =>
-                val sdata = String(data.toArray, StandardCharsets.US_ASCII)
-                parts.update(id, parts.getOrElse(id, Nil) :+ sdata)
-                if data.nonEmpty then dataSeen += 1
-                if end then done += id
-                chunk = rest
-              case Right((H2Frame.Headers(id, _, end, _, _, _, _), rest)) =>
-                if end then
-                  parts.getOrElseUpdate(id, Nil)
-                  done += id
-                chunk = rest
-              case Right((H2Frame.RstStream(id, code), rest)) =>
-                rst.update(id, code)
-                done += id
-                chunk = rest
-              case Right((_, rest)) =>
-                chunk = rest
-              case Left(_) =>
-                keep = false
-          end while
-          buf = chunk.toArray
-        end while
-        H2Got(parts.toMap, rst.toMap)
-      finally s.close()
-      end try
+        .map { fs =>
+          val parts = fs.collect { case H2Frame.Data(id, d, _, _) =>
+            id -> String(d.toArray, StandardCharsets.US_ASCII)
+          }
+          H2Got(parts.groupMap(_._1)(_._2).map((id, ds) => id -> ds.toList), reset(fs))
+        }
     }
+  end h2Exchange
 
+  /** Opens an RFC 8441 WebSocket over stream 1, sends `text` once the server answers, and reads its echo. */
   private def h2WsEcho(port: Int, path: String, text: String): Task[String] =
-    ZIO.attemptBlocking {
-      val s = Socket("127.0.0.1", port)
-      try
-        val out = s.getOutputStream
-        val in  = s.getInputStream
-        out.write(H2Frame.Preface)
-        out.write(FrameCodec.encode(H2Frame.Settings(Chunk.empty)).toArray)
-        val block = Hpack.encode(
-          Chunk(
-            ":method"               -> "CONNECT",
-            ":protocol"             -> "websocket",
-            ":scheme"               -> "http",
-            ":path"                 -> path,
-            ":authority"            -> "localhost",
-            "sec-websocket-version" -> "13",
-          )
-        )
-        out.write(FrameCodec.encode(H2Frame.Headers(1, block, endStream = false, endHeaders = true)).toArray)
-        out.flush()
-        s.setSoTimeout(3000)
-        var buf    = Array.empty[Byte]
-        var opened = false
-        var echoed = ""
-        var done   = false
-        while !done do
-          val tmp = Array.ofDim[Byte](4096)
-          val n   = in.read(tmp)
-          if n < 0 then throw java.io.IOException("eof waiting for websocket")
-          buf = buf ++ tmp.take(n)
-          var chunk = Chunk.fromArray(buf)
-          var keep  = true
-          while keep do
-            FrameCodec.decode(chunk, 1 << 20) match
-              case Right((H2Frame.Settings(_), rest)) =>
-                out.write(FrameCodec.encode(H2Frame.SettingsAck).toArray)
-                out.flush()
-                chunk = rest
-              case Right((H2Frame.Headers(_, _, _, _, _, _, _), rest)) =>
-                if !opened then
-                  opened = true
-                  val mask   = Array[Byte](1, 2, 3, 4)
-                  val framed =
-                    WsCodec.frameBytes(1, text.getBytes(StandardCharsets.UTF_8), fin = true, mask = Some(mask))
-                  out.write(FrameCodec.encode(H2Frame.Data(1, framed, endStream = false)).toArray)
-                  out.flush()
-                chunk = rest
-              case Right((H2Frame.Data(_, data, end, _), rest)) =>
-                if data.nonEmpty then echoed = echoed + String(data.toArray, StandardCharsets.US_ASCII)
-                if end || echoed.contains(text) then done = true
-                chunk = rest
-              case Right((_, rest)) =>
-                chunk = rest
-              case Left(_) =>
-                keep = false
-          end while
-          buf = chunk.toArray
-        end while
-        echoed
-      finally s.close()
-      end try
+    val open = Hpack.encode(
+      Chunk(
+        ":method"               -> "CONNECT",
+        ":protocol"             -> "websocket",
+        ":scheme"               -> "http",
+        ":path"                 -> path,
+        ":authority"            -> "localhost",
+        "sec-websocket-version" -> "13",
+      )
+    )
+    val framed =
+      WsCodec.frameBytes(1, text.getBytes(StandardCharsets.UTF_8), fin = true, mask = Some(Array[Byte](1, 2, 3, 4)))
+    def echoed(fs: Chunk[H2Frame]) =
+      fs.collect { case H2Frame.Data(1, d, _, _) => String(d.toArray, StandardCharsets.US_ASCII) }.mkString
+    H2Wire(port) { w =>
+      w.send(H2Frame.Headers(1, open, endStream = false, endHeaders = true)) *>
+        w.until(_.exists { case H2Frame.Headers(1, _, _, _, _, _, _) => true; case _ => false }) *>
+        w.send(H2Frame.Data(1, framed, endStream = false)) *>
+        w.until(fs => echoed(fs).contains(text)).map(echoed)
     }
+  end h2WsEcho
 end H2Spec

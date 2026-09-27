@@ -74,16 +74,16 @@ private[heddle] final class NodeConn(val socket: NetSocket, val alpn: String) ex
           }
     }
 
-  def write(chunk: Chunk[Byte]): Task[Unit] =
+  def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
     if chunk.isEmpty then ZIO.unit
     else
-      ZIO.async[Any, Throwable, Unit] { cb =>
+      ZIO.async[Any, HttpError, Unit] { cb =>
         val u8 = Buffers.toU8(chunk)
         val _  = socket.write(
           u8,
           (err: js.Error) =>
             if err == null || js.isUndefined(err) then cb(ZIO.unit)
-            else cb(ZIO.fail(java.io.IOException(Option(err.message).getOrElse("write failed")))),
+            else cb(ZIO.fail(HttpError.Io(java.io.IOException(String.valueOf(err.message))))),
         )
         ()
       }

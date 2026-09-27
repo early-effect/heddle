@@ -21,8 +21,8 @@ private[heddle] final class ChannelConn(val ch: SocketChannel) extends ByteConn:
       }
       .mapError(HttpError.Io(_))
 
-  def write(chunk: Chunk[Byte]): Task[Unit] =
-    Nio.writeChunk(ch, chunk, scratch)
+  def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
+    Nio.writeChunk(ch, chunk, scratch).mapError(HttpError.Io(_))
 
   def close: UIO[Unit] = ZIO.attempt(ch.close()).ignore
 
@@ -41,7 +41,7 @@ private[heddle] final class SslConn(ssl: javax.net.ssl.SSLSocket) extends ByteCo
       }
       .mapError(HttpError.Io(_))
 
-  def write(chunk: Chunk[Byte]): Task[Unit] =
+  def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
     heddle.server.Tls.writer(ssl.getOutputStream)(chunk)
 
   def close: UIO[Unit] = ZIO.attempt(ssl.close()).ignore
@@ -51,10 +51,10 @@ private[heddle] final class SslConn(ssl: javax.net.ssl.SSLSocket) extends ByteCo
 end SslConn
 
 private[heddle] final class ChannelListener(ss: ServerSocketChannel, tcpNoDelay: Boolean, soKeepAlive: Boolean)
-    extends Listener:
+    extends Listener[ChannelConn]:
   def localPort: UIO[Int] = ZIO.succeed(Nio.localPort(ss))
 
-  def accept: IO[AcceptError, ByteConn] =
+  def accept: IO[AcceptError, ChannelConn] =
     Nio
       .accept(ss)
       .mapError {
@@ -71,5 +71,5 @@ private[heddle] final class ChannelListener(ss: ServerSocketChannel, tcpNoDelay:
 end ChannelListener
 
 private[heddle] object ChannelListener:
-  def bind(config: Server.Config): IO[ServerError, Listener] =
+  def bind(config: Server.Config): IO[ServerError, ChannelListener] =
     Nio.openServer(config).map(ss => ChannelListener(ss, config.tcpNoDelay, config.soKeepAlive))

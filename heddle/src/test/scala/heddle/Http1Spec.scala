@@ -3,7 +3,7 @@ package heddle
 import BytesLength.*
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import heddle.internal.engine.Http1
+import heddle.internal.engine.{Http1, Lifecycle}
 import heddle.sse.{ServerSentEvent, Sse, SseCodec, SseField}
 import zio.*
 import zio.stream.ZStream
@@ -114,7 +114,9 @@ object Http1Spec extends ZIOSpecDefault:
         val boom   = ZIO.fail(HttpError.Io(IOException("boom")))
         val taking = java.util.concurrent.atomic.AtomicBoolean(true)
         val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
-        for err <- Http1.serveConnection(Routes.empty, boom, _ => ZIO.unit, Server.Config.default, taking, busy).flip
+        for err <- Http1
+            .serveConnection(Routes.empty, boom, _ => ZIO.unit, Server.Config.default, Lifecycle(taking, busy))
+            .flip
         yield err match
           case HttpError.Io(cause) => assertTrue(cause.getMessage == "boom")
           case other               => assertTrue(other.isInstanceOf[HttpError.Io])
@@ -135,7 +137,7 @@ object Http1Spec extends ZIOSpecDefault:
           out <- Ref.make(Chunk.empty[Byte])
           pull = remaining.modify(c => (c.headOption, c.drop(1)))
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          _     <- Http1.serveConnection(routes, pull, send, Server.Config.default, taking, busy)
+          _     <- Http1.serveConnection(routes, pull, send, Server.Config.default, Lifecycle(taking, busy))
           bytes <- out.get
           wire = String(bytes.toArray, StandardCharsets.US_ASCII)
         yield assertTrue(wire.startsWith("HTTP/1.1 200"), wire.endsWith("A"))
@@ -293,7 +295,7 @@ object Http1Spec extends ZIOSpecDefault:
             }
             .delay(1.hour)
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          _     <- Http1.serveConnection(Routes.empty, pull, send, config, taking, busy)
+          _     <- Http1.serveConnection(Routes.empty, pull, send, config, Lifecycle(taking, busy))
           bytes <- out.get
         yield
           val wire = String(bytes.toArray, StandardCharsets.US_ASCII)
@@ -317,7 +319,7 @@ object Http1Spec extends ZIOSpecDefault:
               case Some(c) => ZIO.succeed(Some(c))
             }
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          done <- Http1.serveConnection(routes, pull, send, config, taking, busy).timeout(2.seconds)
+          done <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy)).timeout(2.seconds)
         yield assertTrue(done.isDefined)
         end for
       @@ TestAspect.withLiveClock,
@@ -380,7 +382,7 @@ object Http1Spec extends ZIOSpecDefault:
         if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
       }
       send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-      _     <- Http1.serveConnection(routes, pull, send, config, taking, busy)
+      _     <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy))
       bytes <- out.get
     yield String(bytes.toArray, StandardCharsets.US_ASCII)
     end for

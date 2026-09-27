@@ -129,6 +129,6 @@ object JsLiveSpec extends ZIOSpecDefault:
               drain
           }
         end drain
-        (conn.write(req) *> drain).ensuring(conn.close)
+        (conn.write(req).mapError(_.asThrowable) *> drain).ensuring(conn.close)
       }
 end JsLiveSpec
