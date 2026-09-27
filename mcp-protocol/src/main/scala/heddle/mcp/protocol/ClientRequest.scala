@@ -44,6 +44,10 @@ enum ClientRequest:
   end params
 end ClientRequest
 
+/** Wire notification names. */
+object Notifications:
+  val Initialized = "notifications/initialized"
+
 /** Wire method names. */
 object Methods:
   val Ping                  = "ping"

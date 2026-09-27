@@ -6,8 +6,8 @@ import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
-import heddle.mcp.protocol.{ExtensionId, Implementation, Structured, Tool, ToolName}
-import heddle.mcp.server.{Engine, Era, Offer, ToolCall}
+import heddle.mcp.protocol.{Era, ExtensionId, Implementation, Structured, Tool, ToolName}
+import heddle.mcp.server.{Engine, Offer, ToolCall}
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
 import zio.json.*

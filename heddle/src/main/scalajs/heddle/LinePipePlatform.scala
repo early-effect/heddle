@@ -1,6 +1,6 @@
 package heddle
 
-import heddle.internal.node.{Buffers, Process}
+import heddle.internal.node.{Buffers, Process, ProcessStream}
 import java.nio.charset.StandardCharsets
 import scala.collection.mutable
 import scala.scalajs.js
@@ -8,14 +8,18 @@ import scala.scalajs.js.typedarray.Uint8Array
 import zio.{Chunk, IO, Task, ZIO}
 
 private[heddle] object LinePipePlatform:
-  def standard: LinePipe = ProcessLinePipe
+  lazy val standard: LinePipe = StreamPipe(Process.stdin, Process.stdout)
 
-  private object ProcessLinePipe extends LinePipe:
+  /** Lines over a Node readable and writable, such as a process's stdio or a child's pipes. */
+  def over(in: ProcessStream, out: ProcessStream): LinePipe = StreamPipe(in, out)
+
+  /** Node calls back on one thread; the buffer and the one waiting reader only change inside those callbacks. */
+  private final class StreamPipe(in: ProcessStream, out: ProcessStream) extends LinePipe:
     private val buf                                                   = mutable.ArrayBuffer.empty[Byte]
     private var eof                                                   = false
     private var waiter: Option[IO[Throwable, Option[String]] => Unit] = None
 
-    Process.stdin.on(
+    in.on(
       "data",
       ((data: Uint8Array) =>
         var i = 0
@@ -25,7 +29,7 @@ private[heddle] object LinePipePlatform:
         wake()
       ): js.Function1[Uint8Array, Unit],
     )
-    Process.stdin.on(
+    in.on(
       "end",
       (() =>
         eof = true
@@ -47,7 +51,7 @@ private[heddle] object LinePipePlatform:
     def writeLine(line: String): Task[Unit] =
       ZIO.succeed {
         val bytes = (line + "\n").getBytes(StandardCharsets.UTF_8)
-        val _     = Process.stdout.write(Buffers.toU8(Chunk.fromArray(bytes)))
+        val _     = out.write(Buffers.toU8(Chunk.fromArray(bytes)))
         ()
       }
 
@@ -74,5 +78,5 @@ private[heddle] object LinePipePlatform:
             cb(ZIO.succeed(None))
           case None => ()
       }
-  end ProcessLinePipe
+  end StreamPipe
 end LinePipePlatform

@@ -2,8 +2,8 @@ package heddle.mcp.transport
 
 import heddle.http.{Method, Request, Response, Status}
 import heddle.http.header.Headers
-import heddle.mcp.protocol.{Message, Methods, ProtocolVersion, RequestMeta, RpcError}
-import heddle.mcp.server.{Engine, Envelope, Era}
+import heddle.mcp.protocol.{Era, Message, Methods, ProtocolVersion, RequestMeta, RpcError}
+import heddle.mcp.server.{Engine, Envelope}
 import heddle.route.{Handler, Routes}
 import zio.json.*
 import zio.json.ast.Json

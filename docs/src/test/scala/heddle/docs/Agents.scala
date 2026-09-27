@@ -1,9 +1,11 @@
 package heddle.docs
 
+import heddle.Client
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import heddle.mcp.ServedResource
-import heddle.mcp.protocol.{CallToolResult, ClientRequest, ExtensionId, Resource, ToolName}
+import heddle.mcp.client.{McpCallFailure, McpClient}
+import heddle.mcp.protocol.{CallToolResult, ClientRequest, ExtensionId, Implementation, Resource, ToolName}
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -122,6 +124,36 @@ a catalog tool that would shadow an operation named `invoke` is a `McpBuildError
           caps.contains("io.modelcontextprotocol/ui"),
           read.contains("<p>tonight</p>"),
         )
+      },
+    ),
+    section("Calling MCP servers")(
+      md"""
+Heddle speaks MCP in both directions. `McpClient.http(url, settings)` connects over Streamable
+HTTP with the `Client` in the environment. `McpStdio.spawn(ChildCommand(...), settings)` starts a
+server as a child process on the JVM or Node and speaks over its stdio, with arguments passed
+through untouched, never through a shell. `McpClient.pipe` works over any `LinePipe`. The session
+tries 2026-07-28 `server/discover` first and falls back to a 2025-11-25 `initialize` session. The
+scope owns the connection and the process.
+
+`session.call(endpoint)(in)` is the typed call. It builds the tool's arguments from the same
+`Endpoint` the server binds, and reads the result back with that endpoint's codecs. A declared
+error comes back as `McpCallFailure.Domain(e)`:
+""",
+      exampleZIO {
+        BoxOffice.seed.flatMap { store =>
+          ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
+            ZIO.scoped {
+              McpClient
+                .http("http://box-office.test/mcp", McpClient.Settings(Implementation("docs", "1")))
+                .provideSome[Scope](Client.inMemory(mcp.routes))
+                .flatMap { session =>
+                  session.call(BoxOffice.getShow)(1) <*> session.call(BoxOffice.getShow)(99).either
+                }
+            }
+          }
+        }
+      }.assert { case (show, missing) =>
+        assertTrue(show.title == "Evening bill", missing == Left(McpCallFailure.Domain(ShowNotFound("show 99"))))
       },
     ),
     section("Protocol eras")(

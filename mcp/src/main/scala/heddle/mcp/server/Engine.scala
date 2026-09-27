@@ -7,14 +7,6 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.{Chunk, ZIO}
 
-/** The handshake a request arrived under. */
-enum Era:
-  /** 2026-07-28: `server/discover`, a protocol version in every request's `_meta`, `complete` results. */
-  case Stateless
-
-  /** 2025-11-25: `initialize`, then a session; results without the 2026 envelope. */
-  case Session
-
 /** What a server offers: tools, resources, and the extensions it advertises with their settings. */
 final case class Offer[-R](
     tools: Chunk[ToolCall[R]],

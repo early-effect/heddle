@@ -10,7 +10,7 @@ Guidance for agents working in **heddle** (`early-effect/heddle`). Scala 3 / ZIO
 | [`brotli/`](brotli/) | Published `heddle-brotli`. RFC 7932 `br`, no JNI. |
 | [`oauth/`](oauth/) | Published `heddle-oauth`. JOSE, resource server, OAuth client, OIDC provider. |
 | [`mcp-protocol/`](mcp-protocol/) | Published `heddle-mcp-protocol`. MCP wire types and codecs (`Message`, `ClientRequest`, `RpcError`, `Tool`, `CallToolResult`, resources, `Structured`). zio-json only, so a browser view can depend on it. |
-| [`mcp/`](mcp/) | Published `heddle-mcp`. MCP 2026-07-28 server (HTTP + stdio) over `Api` / `BoundOp`, built on `heddle-mcp-protocol`. HTTP and stdio also answer 2025-11-25 `initialize`. `server/` is the engine and envelopes; `transport/` parses bytes and picks the era. |
+| [`mcp/`](mcp/) | Published `heddle-mcp`. MCP 2026-07-28 server (HTTP + stdio) over `Api` / `BoundOp`, built on `heddle-mcp-protocol`. HTTP and stdio also answer 2025-11-25 `initialize`. `server/` is the engine and envelopes; `transport/` parses bytes and picks the era; `client/` is `McpClient` (HTTP, pipe) and `McpStdio` (JVM, Node child processes). `ToolShapes` is the one place both sides read result shapes from. |
 | [`example/`](example/) | Runnable users API + embedded OP + Swagger UI + MCP. `publish / skip`. |
 | [`docs/`](docs/) | Specular DocSpecs + `BuildSite`. `publish / skip`. |
 | [`docs-js/`](docs-js/) | Scala.js client for `exampleDom` widgets. |
