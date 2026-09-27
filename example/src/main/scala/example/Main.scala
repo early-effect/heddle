@@ -20,7 +20,7 @@ object Main extends ZIOAppDefault:
   private def runStdio =
     (for
       office <- BoxOffice.seed
-      mcp    <- ZIO.fromEither(Mcp.from(publicApi(office), writeApi(office))).mapError(IllegalArgumentException(_))
+      mcp    <- ZIO.fromEither(Mcp.from(publicApi(office), writeApi(office)))
       _      <- mcp.stdio()
     yield ()).provideLayer(Runtime.removeDefaultLoggers)
 
@@ -43,7 +43,7 @@ object Main extends ZIOAppDefault:
       meApi  = Api("Box office", "0.1.0").resource(Endpoints.me) { _ =>
         ZIO.serviceWith[JwtClaim](c => Me(c.subject, c.scopes.toList.sorted))
       }
-      mcp <- ZIO.fromEither(Mcp.from(public, writes)).mapError(IllegalArgumentException(_)).map(_.withCatalog)
+      mcp <- ZIO.fromEither(Mcp.from(public, writes)).map(_.withCatalog)
       op        = Provider.routes(ProviderConfig(issuer), stores, key)
       authed    = (writes.routes ++ meApi.routes).provided(Auth.bearer(t => verifier.verify(t).mapError(_.toResponse)))
       mcpAuthed = mcp.routes.provided(

@@ -2,7 +2,7 @@ package heddle.docs
 
 import heddle.*
 import heddle.docs.fixture.*
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.protocol.ClientRequest
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -40,7 +40,7 @@ api
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-            mcp.handle(BoxOffice.rpc("tools/list", obj())).map { out =>
+            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
               val json = out.get.toJson
               json.contains("seat_the_party") &&
               json.contains("get_show") &&

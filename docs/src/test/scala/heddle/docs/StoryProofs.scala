@@ -3,7 +3,7 @@ package heddle.docs
 import heddle.*
 import heddle.docs.fixture.BoxOffice
 import heddle.docs.fixture.Show
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.protocol.{ClientRequest, ToolName}
 import zio.*
 import zio.json.EncoderOps
 import zio.json.ast.Json
@@ -69,10 +69,7 @@ object StoryProofs extends ZIOSpecDefault:
     test("MCP tools/call get_show is Evening bill"):
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-          val call = BoxOffice.rpc(
-            "tools/call",
-            obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
-          )
+          val call = BoxOffice.rpc(ClientRequest.CallTool(ToolName("get_show"), Json.Obj("id" -> Json.Num(1))))
           mcp.handle(call).map { out =>
             val json = out.get.toJson
             assertTrue(json.contains("Evening bill"), !json.contains("\"isError\":true"))
@@ -83,7 +80,7 @@ object StoryProofs extends ZIOSpecDefault:
     test("MCP ping completes"):
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-          mcp.handle(BoxOffice.rpc("ping", obj())).map { out =>
+          mcp.handle(BoxOffice.rpc(ClientRequest.Ping)).map { out =>
             assertTrue(out.get.toJson.contains("\"resultType\":\"complete\""))
           }
         }
@@ -92,7 +89,7 @@ object StoryProofs extends ZIOSpecDefault:
     test("tools/list is the job set"):
       BoxOffice.seed.flatMap { store =>
         ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-          mcp.handle(BoxOffice.rpc("tools/list", obj())).map { out =>
+          mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
             val json = out.get.toJson
             assertTrue(
               json.contains("get_show"),

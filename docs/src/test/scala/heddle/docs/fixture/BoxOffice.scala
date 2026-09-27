@@ -1,8 +1,8 @@
 package heddle.docs.fixture
 
 import heddle.*
-import heddle.mcp.Mcp
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.{Mcp, McpBuildError}
+import heddle.mcp.protocol.{ClientRequest, Message, RequestId}
 import zio.*
 import zio.json.JsonCodec
 import zio.json.ast.Json
@@ -80,11 +80,10 @@ object BoxOffice:
         yield PartySeated(1, List("A1", "A2").take(party.size), total, code)
       }
 
-  def mcpOf(store: Ref[Map[Int, Show]]): Either[String, Mcp[Any]] =
+  def mcpOf(store: Ref[Map[Int, Show]]): Either[NonEmptyChunk[McpBuildError], Mcp[Any]] =
     Mcp.from(api(store))
 
-  def rpc(method: String, params: Json.Obj, id: Int = 1): Json.Obj =
-    val meta = obj(MetaVersion -> Json.Str(ProtocolVersion), MetaClientCaps -> obj())
-    val p    = obj((params.fields.toList :+ ("_meta" -> meta))*)
-    obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(id), "method" -> Json.Str(method), "params" -> p)
+  /** A 2026-07-28 request as it goes on the wire. */
+  def rpc(req: ClientRequest, id: Long = 1): Json =
+    Message.stateless(RequestId.Num(id), req).json
 end BoxOffice

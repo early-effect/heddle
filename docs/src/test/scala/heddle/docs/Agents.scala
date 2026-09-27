@@ -2,11 +2,11 @@ package heddle.docs
 
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
-import heddle.mcp.protocol.JsonRpc.*
+import heddle.mcp.protocol.{CallToolResult, ClientRequest, ToolName}
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
-import zio.json.EncoderOps
+import zio.json.*
 import zio.json.ast.Json
 import zio.test.*
 
@@ -17,9 +17,14 @@ object Agents extends DocSpecSuite:
 MCP is a host protocol over `BoundOp`. The tutorial is [Agents fall out](agents-fall-out.html).
 This page is the remaining knobs.
 
-Mark ops with `.mcp`. `Mcp.from(api)` fails on duplicate tool names or non-promotable shapes.
-Native protocol is **2026-07-28**. Native tools (`.tool("name")(f)`) sit beside bound ops
-when you need something that is not an HTTP operation.
+Mark ops with `.mcp`. `Mcp.from(api)` returns every reason it cannot build (a duplicate tool name,
+a name outside the MCP grammar, a non-promotable shape) as `McpBuildError`s, before a client ever
+connects. Native protocol is **2026-07-28**. Native tools sit beside bound ops when you need
+something that is not an HTTP operation: `mcp.tool[Query]("search_users") { q => ... }`. The
+name is checked at compile time and `Query` is pinned, so the function needs no type ascription.
+
+The wire types live in `heddle-mcp-protocol`, which depends only on zio-json. A request is
+`Message.stateless(id, ClientRequest.CallTool(ToolName("get_show"), args))`.
 """,
     section("Promote vs catalog")(
       md"""
@@ -29,7 +34,7 @@ when you need something that is not an HTTP operation.
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store)).map(_.withCatalog).flatMap { mcp =>
-            mcp.handle(BoxOffice.rpc("tools/list", obj())).map { out =>
+            mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).map { out =>
               val json = out.get.toJson
               json.contains("search_operations") && json.contains("invoke")
             }
@@ -47,15 +52,42 @@ The live catalog toggle is on [Agents fall out](agents-fall-out.html).
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
           ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
-            val call = BoxOffice.rpc(
-              "tools/call",
-              obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
-            )
+            val call = BoxOffice.rpc(ClientRequest.CallTool(ToolName("get_show"), Json.Obj("id" -> Json.Num(1))))
             mcp.handle(call).map(_.get.toJson.contains("Evening bill"))
           }
         }
       }.assert(ok => assertTrue(ok)),
       illustrationIO(Hub.Lives.rpc).live.withMountKey(InteractiveRegistry.JsonRpcInspector),
+    ),
+    section("Results")(
+      md"""
+MCP says `structuredContent` is an object and `outputSchema` is an object schema. An output that is
+an object goes as is. Anything else, whether a string, a list, or a sum type, goes as
+`{"value": ...}`, and the published schema is wrapped to match, so a strict client can validate every
+result. The text block carries the same JSON for a model that reads only text.
+
+A failure the endpoint declares (`outError`, `outErrors`) is `isError: true`, never a JSON-RPC
+error, and its JSON travels as `structuredContent` too, so a typed caller gets the case back:
+""",
+      exampleZIO {
+        BoxOffice.seed.flatMap { store =>
+          ZIO.fromEither(BoxOffice.mcpOf(store)).flatMap { mcp =>
+            val call = BoxOffice.rpc(ClientRequest.CallTool(ToolName("get_show"), Json.Obj("id" -> Json.Num(99))))
+            mcp.handle(call).map { out =>
+              out
+                .flatMap(_.toJson.fromJson[Json.Obj].toOption)
+                .flatMap(_.get("result"))
+                .flatMap(_.toJson.fromJson[CallToolResult].toOption)
+            }
+          }
+        }
+      }.assert { result =>
+        val missing = result.flatMap(_.structuredContent).flatMap(_.toJson.fromJson[ShowNotFound].toOption)
+        assertTrue(result.exists(_.failed), missing.contains(ShowNotFound("show 99")))
+      },
+      expectFail("""heddle.mcp.protocol.ToolName("get show")""").assert { errors =>
+        assertTrue(errors.exists(_.message.contains("not a tool name")))
+      },
     ),
     section("Protocol eras")(
       md"""
