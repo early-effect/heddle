@@ -15,6 +15,16 @@ object DecodeTotalSpec extends ZIOSpecDefault:
     }
 
   def spec = suite("brotli decode is total")(
+    test("the embedded dictionary is RFC 7932's, byte for byte"):
+      val digest = Dict.loaded.map((dict, _) => heddle.crypto.DigestPlatform.sha256Sync(Chunk.fromArray(dict)))
+      val hex    = digest.map(_.map(b => f"${b & 0xff}%02x").mkString)
+      assertTrue(hex == Right("20e42eb1b511c21806d4d227d07e5dd06877d8ce7b3a817f378f313653f35c70"))
+    ,
+    test("encode then decode is the identity on every platform"):
+      check(BrotliGens.bytes)(raw =>
+        assertTrue(Brotli.decode(Brotli.encode(Chunk.fromArray(raw))).map(_.toArray.toSeq) == Right(raw.toSeq))
+      )
+    ,
     test("damaged and arbitrary input decodes or is Undecodable, never a throw"):
       check(Gen.oneOf(damaged, BrotliGens.bytes)) { input =>
         Brotli.decode(Chunk.fromArray(input)) match
@@ -22,6 +32,6 @@ object DecodeTotalSpec extends ZIOSpecDefault:
           case Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Brotli, _))) => assertCompletes
           case Left(HttpError.BodyTooLarge)                                                => assertCompletes
           case Left(other) => assertNever(s"unexpected $other")
-      }
+      },
   ) @@ TestAspect.samples(500) @@ TestAspect.timeout(120.seconds)
 end DecodeTotalSpec

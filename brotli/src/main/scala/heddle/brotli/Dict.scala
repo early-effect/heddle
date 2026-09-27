@@ -15,18 +15,15 @@ private[brotli] object Dict:
   val SizeBitsByLength: Array[Int] =
     Array(0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5)
 
-  /** The 122,784-byte dictionary and the literal context lookup table, read once from the jar. */
+  /** The 122,784-byte dictionary and the literal context lookup table, decoded once from [[Tables]]. */
   lazy val loaded: Either[BrotliError, (Array[Byte], Array[Int])] =
     for
-      data <- resourceBytes("dictionary.bin")
-      raw  <- resourceBytes("context-lookup.bin")
+      data <- decoded("dictionary", Tables.dictionary.mkString)
+      raw  <- decoded("context lookup table", Tables.contextLookup)
     yield (data, Array.tabulate(raw.length / 2)(i => (raw(i * 2) & 0xff) | ((raw(i * 2 + 1) & 0xff) << 8)))
 
   val LookupOffsets: Array[Int] = Array(1024, 1536, 1280, 1536, 0, 256, 768, 512)
 
-  def resourceBytes(name: String): Either[BrotliError, Array[Byte]] =
-    Option(getClass.getResourceAsStream(s"/heddle/brotli/$name")).toRight(BrotliError.MissingResource(name)).map { in =>
-      try in.readAllBytes()
-      finally in.close()
-    }
+  private def decoded(name: String, b64: String): Either[BrotliError, Array[Byte]] =
+    heddle.crypto.Base64Url.decode(b64).map(_.toArray).left.map(_ => BrotliError.CorruptTable(name))
 end Dict

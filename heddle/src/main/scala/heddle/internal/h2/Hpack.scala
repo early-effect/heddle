@@ -1,8 +1,9 @@
 package heddle.internal.h2
 
+import heddle.error.HpackError
 import zio.Chunk
 
-/** RFC 7541. Encoder uses literals without indexing. Decoder handles static table, literals, Huffman. */
+/** RFC 7541. The encoder sends literals without indexing, so it keeps no table; the decoder keeps the peer's. */
 private[heddle] object Hpack:
   def encode(headers: Chunk[(String, String)]): Chunk[Byte] =
     val b = Array.newBuilder[Byte]
@@ -22,39 +23,60 @@ private[heddle] object Hpack:
     Chunk.fromArray(b.result())
   end encode
 
-  def decode(block: Chunk[Byte]): Chunk[(String, String)] =
+  /** Decodes one header block against the connection's dynamic table and returns the table the next block sees. */
+  def decode(
+      block: Chunk[Byte],
+      table: HpackTable,
+      maxList: Long,
+  ): Either[HpackError, (Chunk[(String, String)], HpackTable)] =
     val raw = block.toArray
-    val out = Chunk.newBuilder[(String, String)]
-    var i   = 0
-    while i < raw.length do
-      val b = raw(i) & 0xff
-      if (b & 0x80) != 0 then
-        val (idx, ni) = decodeInt(raw, i, 7)
-        i = ni
-        static(idx).foreach(out += _)
-      else if (b & 0xc0) == 0x40 then
-        val (idx, ni) = decodeInt(raw, i, 6)
-        i = ni
-        val (name, n2) = if idx == 0 then decodeString(raw, i) else (static(idx).map(_._1).getOrElse(""), i)
-        if idx == 0 then i = n2
-        val (value, n3) = decodeString(raw, i)
-        i = n3
-        out += (name -> value)
-      else if (b & 0xe0) == 0x20 then
-        val (_, ni) = decodeInt(raw, i, 5)
-        i = ni
+    @scala.annotation.tailrec
+    def loop(
+        i: Int,
+        t: HpackTable,
+        out: Chunk[(String, String)],
+        listSize: Long,
+    ): Either[HpackError, (Chunk[(String, String)], HpackTable)] =
+      if listSize > maxList then Left(HpackError.ListTooLarge(listSize, maxList))
+      else if i >= raw.length then Right((out, t))
       else
-        val (idx, ni) = decodeInt(raw, i, 4)
-        i = ni
-        val (name, n2) = if idx == 0 then decodeString(raw, i) else (static(idx).map(_._1).getOrElse(""), i)
-        if idx == 0 then i = n2
-        val (value, n3) = decodeString(raw, i)
-        i = n3
-        out += (name -> value)
-      end if
-    end while
-    out.result()
+        val b = raw(i) & 0xff
+        if (b & 0x80) != 0 then
+          decodeInt(raw, i, 7).flatMap((idx, next) => t.get(idx).toRight(HpackError.BadIndex(idx)).map(_ -> next)) match
+            case Left(e)              => Left(e)
+            case Right((field, next)) => loop(next, t, out :+ field, listSize + HpackTable.cost(field))
+        else if (b & 0xe0) == 0x20 then
+          if out.nonEmpty then Left(HpackError.LateSizeUpdate)
+          else
+            decodeInt(raw, i, 5).flatMap((to, next) => t.resize(to).map(_ -> next)) match
+              case Left(e)             => Left(e)
+              case Right((resized, n)) => loop(n, resized, out, listSize)
+        else
+          val indexing = (b & 0xc0) == 0x40
+          literal(raw, i, if indexing then 6 else 4, t) match
+            case Left(e)              => Left(e)
+            case Right((field, next)) =>
+              loop(next, if indexing then t.add(field) else t, out :+ field, listSize + HpackTable.cost(field))
+        end if
+    loop(0, table, Chunk.empty, 0L)
   end decode
+
+  /** A literal field: an indexed or literal name, then a literal value. */
+  private def literal(
+      raw: Array[Byte],
+      at: Int,
+      prefix: Int,
+      t: HpackTable,
+  ): Either[HpackError, ((String, String), Int)] =
+    decodeInt(raw, at, prefix).flatMap { (idx, afterIndex) =>
+      val name =
+        if idx == 0 then decodeString(raw, afterIndex)
+        else t.get(idx).map(_._1).toRight(HpackError.BadIndex(idx)).map(_ -> afterIndex)
+      name.flatMap((n, afterName) => decodeString(raw, afterName).map((v, next) => ((n, v), next)))
+    }
+
+  private[h2] def static(idx: Int): Option[(String, String)] =
+    Table.byIndex.get(idx)
 
   private def encodeInt(b: scala.collection.mutable.ArrayBuilder[Byte], value: Int, n: Int, prefix: Int): Unit =
     val max = (1 << n) - 1
@@ -73,37 +95,40 @@ private[heddle] object Hpack:
     encodeInt(b, bytes.length, 7, 0x00)
     bytes.foreach(x => b += x)
 
-  private def decodeInt(raw: Array[Byte], from: Int, n: Int): (Int, Int) =
-    if from >= raw.length then (0, from)
+  /** RFC 7541 §5.1 prefix integer; `(value, next index)`. */
+  private def decodeInt(raw: Array[Byte], from: Int, n: Int): Either[HpackError, (Int, Int)] =
+    if from >= raw.length then Left(HpackError.Truncated)
     else
       val max   = (1 << n) - 1
-      val first = (raw(from) & 0xff) & max
-      if first < max then (first, from + 1)
+      val first = raw(from) & 0xff & max
+      if first < max then Right((first, from + 1))
       else
-        var i    = from + 1
-        var m    = 0
-        var acc  = first
-        var more = true
-        while more && i < raw.length do
-          val b = raw(i) & 0xff
-          acc += (b & 0x7f) << m
-          i += 1
-          m += 7
-          more = (b & 0x80) != 0
-        (acc, i)
+        @scala.annotation.tailrec
+        def more(i: Int, shift: Int, acc: Long): Either[HpackError, (Int, Int)] =
+          if i >= raw.length then Left(HpackError.Truncated)
+          else if shift > 28 then Left(HpackError.IntegerOverflow)
+          else
+            val b     = raw(i) & 0xff
+            val value = acc + ((b & 0x7fL) << shift)
+            if value > Int.MaxValue then Left(HpackError.IntegerOverflow)
+            else if (b & 0x80) != 0 then more(i + 1, shift + 7, value)
+            else Right((value.toInt, i + 1))
+        more(from + 1, 0, first.toLong)
       end if
 
-  private def decodeString(raw: Array[Byte], from: Int): (String, Int) =
-    if from >= raw.length then ("", from)
+  private def decodeString(raw: Array[Byte], from: Int): Either[HpackError, (String, Int)] =
+    if from >= raw.length then Left(HpackError.Truncated)
     else
-      val huff      = (raw(from) & 0x80) != 0
-      val (len, ni) = decodeInt(raw, from, 7)
-      val end       = (ni + len).min(raw.length)
-      val slice     = raw.slice(ni, end)
-      val s         =
-        if huff then Huffman.decode(slice)
-        else String(slice, java.nio.charset.StandardCharsets.ISO_8859_1)
-      (s, end)
+      val huff = (raw(from) & 0x80) != 0
+      decodeInt(raw, from, 7).flatMap { (len, start) =>
+        if start.toLong + len > raw.length then Left(HpackError.Truncated)
+        else
+          val slice = raw.slice(start, start + len)
+          val text  =
+            if huff then Huffman.decode(slice).toRight(HpackError.BadHuffman)
+            else Right(String(slice, java.nio.charset.StandardCharsets.ISO_8859_1))
+          text.map(_ -> (start + len))
+      }
 
   private def staticIndex(name: String, value: String): Option[Int] =
     val n = name.toLowerCase
@@ -112,9 +137,6 @@ private[heddle] object Hpack:
   private def staticName(name: String): Option[Int] =
     val n = name.toLowerCase
     Table.index.collectFirst { case ((nn, _), i) if nn == n => i }
-
-  private def static(idx: Int): Option[(String, String)] =
-    Table.byIndex.get(idx)
 
   private object Table:
     val entries: List[(String, String)] = List(

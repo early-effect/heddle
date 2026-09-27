@@ -21,8 +21,19 @@ enum WireError(val message: String) extends HeddleError:
       extends WireError(s"an HTTP/2 frame of $length bytes is over the $max limit")
   case FrameSize(frameType: Int, length: Int)
       extends WireError(s"an HTTP/2 frame of type $frameType cannot be $length bytes (RFC 9113 §4.2)")
+  case BadHeaderBlock(reason: HpackError)
+      extends WireError(s"an HTTP/2 header block does not decode: ${reason.message}")
+  case H2Protocol(violation: H2Violation) extends WireError(violation.message)
   case BadPadding(padding: Int, payload: Int)
       extends WireError(s"$padding bytes of padding do not fit a $payload-byte HTTP/2 payload (RFC 9113 §6.1)")
   case Undecodable(coding: ContentEncoding, detail: String)
       extends WireError(s"the ${coding.token} body does not decode: $detail")
+
+  /** The RFC 9113 §7 error code a GOAWAY answers this with. */
+  def h2Code: Int =
+    this match
+      case BadHeaderBlock(_)                     => 0x9
+      case H2Protocol(v)                         => v.code
+      case FrameTooLarge(_, _) | FrameSize(_, _) => 0x6
+      case _                                     => 0x1
 end WireError

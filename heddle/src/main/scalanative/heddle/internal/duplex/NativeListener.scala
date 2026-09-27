@@ -2,7 +2,8 @@ package heddle.internal.duplex
 
 import heddle.Server
 import heddle.error.ServerError
-import heddle.internal.posix.{AsyncFd, Net}
+import heddle.internal.posix.{AsyncFd, Net, NetError, Syscall}
+import scala.scalanative.posix.errno.{EMFILE, ENFILE, ENOBUFS, ENOMEM}
 import java.util.concurrent.atomic.AtomicBoolean
 import zio.*
 
@@ -41,14 +42,20 @@ private[heddle] final class NativeListener(
             _ =>
               if closed.get() then ZIO.unit
               else
-                // A failed accept (the peer reset before we took it, say) costs that connection only.
                 ZIO.succeed(Net.accept(listenFd)).flatMap {
                   case Right(Some(fd)) => configure(fd) *> inbound.offer(Right(fd)) *> produce
                   case Right(None)     => produce
-                  case Left(_)         => produce
+                  // Out of descriptors or memory, the connection stays queued and poll says readable at once: back off.
+                  case Left(e @ NetError.Failed(Syscall.Accept, errno)) if exhausted(errno) =>
+                    ZIO.logWarning(s"${e.message}; accepting again in 100ms") *> ZIO.sleep(100.millis) *> produce
+                  // Anything else (the peer reset before we took it, say) costs that connection only.
+                  case Left(_) => produce
                 },
           )
     }
+
+  private def exhausted(errno: Int): Boolean =
+    errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM
 end NativeListener
 
 object NativeListener:

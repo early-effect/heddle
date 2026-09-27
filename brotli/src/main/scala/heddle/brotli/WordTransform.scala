@@ -10,20 +10,18 @@ private[brotli] object WordTransform:
 
   /** The 121 RFC 7932 Appendix B transforms, one `prefix|op|suffix` line each (hex bytes). */
   lazy val all: Either[BrotliError, Array[WordTransform]] =
-    Dict.resourceBytes("transforms.txt").flatMap { bytes =>
-      val lines  = String(bytes, java.nio.charset.StandardCharsets.US_ASCII).split("\n").filter(_.nonEmpty)
-      val parsed = lines.flatMap { line =>
-        line.split("\\|", -1) match
-          case Array(prefix, op, suffix) =>
-            for
-              p <- unhex(prefix)
-              o <- op.toIntOption
-              s <- unhex(suffix)
-            yield WordTransform(p, o, s)
-          case _ => None
-      }
-      Either.cond(parsed.length == lines.length, parsed, BrotliError.MissingResource("transforms.txt"))
+    val parsed = Tables.transforms.flatMap { line =>
+      line.split("\\|", -1) match
+        case Array(prefix, op, suffix) =>
+          for
+            p <- unhex(prefix)
+            o <- op.toIntOption
+            s <- unhex(suffix)
+          yield WordTransform(p, o, s)
+        case _ => None
     }
+    Either.cond(parsed.length == Tables.transforms.length, parsed.toArray, BrotliError.CorruptTable("transforms"))
+  end all
 
   def omitFirst(op: Int): Int = if op >= 12 then op - 11 else 0
   def omitLast(op: Int): Int  = if op >= 1 && op <= 9 then op else 0
