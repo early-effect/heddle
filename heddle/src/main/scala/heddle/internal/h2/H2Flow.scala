@@ -1,66 +1,95 @@
 package heddle.internal.h2
 
 import zio.*
+import zio.stm.*
 
-/** Connection window starts at 65535 (RFC 7540). Stream windows start at SETTINGS_INITIAL_WINDOW_SIZE. */
+/** RFC 9113 §6.9 flow control for one connection. Windows live in STM, so a sender waits for exactly its own credit and
+  * a window update wakes exactly the senders it unblocks.
+  */
 private[heddle] final class H2Flow(
-    connSend: Ref[Int],
-    connRecv: Ref[Int],
-    streamSend: Ref[Map[Int, Int]],
-    streamRecv: Ref[Map[Int, Int]],
-    pulse: Queue[Unit],
-    streamInitial: Int,
+    connSend: TRef[Long],
+    connRecv: TRef[Long],
+    streamSend: TMap[Int, Long],
+    streamRecv: TMap[Int, Long],
+    sendInitial: TRef[Long],
+    recvInitial: Long,
 ):
   def open(id: Int): UIO[Unit] =
-    streamSend.update(_ + (id -> streamInitial)) *>
-      streamRecv.update(_ + (id -> streamInitial))
+    (sendInitial.get.flatMap(streamSend.put(id, _)) *> streamRecv.put(id, recvInitial)).commit
 
   def close(id: Int): UIO[Unit] =
-    streamSend.update(_ - id) *> streamRecv.update(_ - id)
+    (streamSend.delete(id) *> streamRecv.delete(id)).commit
 
+  /** Accounts for `n` received bytes; `false` when they overrun the connection or stream window. */
   def takeRecv(id: Int, n: Int): UIO[Boolean] =
     if n <= 0 then ZIO.succeed(true)
     else
-      connRecv.get.zip(streamRecv.get.map(_.getOrElse(id, 0))).flatMap { (cw, sw) =>
-        if cw < n || sw < n then ZIO.succeed(false)
-        else connRecv.update(_ - n) *> streamRecv.update(_.updatedWith(id)(_.map(_ - n))) *> ZIO.succeed(true)
-      }
+      (connRecv.get <*> streamRecv.getOrElse(id, 0L)).flatMap { (cw, sw) =>
+        if cw < n || sw < n then STM.succeed(false)
+        else connRecv.update(_ - n) *> streamRecv.put(id, sw - n).as(true)
+      }.commit
 
   def restoreRecv(id: Int, n: Int): UIO[Unit] =
     if n <= 0 then ZIO.unit
-    else connRecv.update(_ + n) *> streamRecv.update(_.updatedWith(id)(_.map(_ + n)))
+    else (connRecv.update(_ + n) *> streamRecv.updateWith(id)(_.map(_ + n))).commit.unit
 
-  def takeSend(id: Int, n: Int): UIO[Unit] =
-    if n <= 0 then ZIO.unit
+  /** Waits until both windows are open, then takes up to `want` bytes of credit: a window smaller than a frame still
+    * moves data. `None` when the stream closed while it waited.
+    */
+  def takeSend(id: Int, want: Int): UIO[Option[Int]] =
+    if want <= 0 then ZIO.some(0)
     else
-      def loop: UIO[Unit] =
-        connSend.get.zip(streamSend.get.map(_.getOrElse(id, 0))).flatMap { (cw, sw) =>
-          if cw >= n && sw >= n then
-            connSend.update(_ - n) *> streamSend.update(_.updatedWith(id)(_.map(_ - n).orElse(Some(0))))
-          else pulse.take *> loop
+      streamSend
+        .get(id)
+        .flatMap {
+          case None     => STM.none
+          case Some(sw) =>
+            connSend.get.flatMap { cw =>
+              val take = math.min(math.min(cw, sw), want.toLong)
+              STM.check(take > 0) *> connSend.update(_ - take) *> streamSend.put(id, sw - take).as(Some(take.toInt))
+            }
         }
-      loop
+        .commit
 
-  def creditSend(id: Int, n: Int): UIO[Unit] =
-    if n <= 0 then ZIO.unit
+  /** A WINDOW_UPDATE. `false` when it would push a window past 2^31-1 (RFC 9113 §6.9.1). */
+  def creditSend(id: Int, n: Int): UIO[Boolean] =
+    if n <= 0 then ZIO.succeed(true)
+    else if id == 0 then connSend.modify(w => if w + n > H2Flow.MaxWindow then (false, w) else (true, w + n)).commit
     else
-      val bump =
-        if id == 0 then connSend.update(_ + n)
-        else streamSend.update(_.updatedWith(id)(cur => Some(cur.getOrElse(0) + n)))
-      bump *> pulse.offer(()).unit
+      streamSend
+        .get(id)
+        .flatMap {
+          case None                                => STM.succeed(true)
+          case Some(w) if w + n > H2Flow.MaxWindow => STM.succeed(false)
+          case Some(w)                             => streamSend.put(id, w + n).as(true)
+        }
+        .commit
+
+  /** The peer's SETTINGS_INITIAL_WINDOW_SIZE changed: every open stream's window moves by the difference (§6.9.2). */
+  def resizeSend(initial: Long): UIO[Unit] =
+    sendInitial
+      .getAndSet(initial)
+      .flatMap { old =>
+        streamSend.transformValues(_ + (initial - old))
+      }
+      .commit
 end H2Flow
 
 private[heddle] object H2Flow:
-  val ConnectionInitialWindow: Int = 65535
-  val FlowControlError: Int        = 0x3
-  val RefusedStream: Int           = 0x7
+  val ConnectionInitialWindow: Long = 65535
+  val MaxWindow: Long               = Int.MaxValue.toLong
+  val FlowControlError: Int         = 0x3
+  val RefusedStream: Int            = 0x7
 
-  def make(streamInitial: Int): UIO[H2Flow] =
-    for
-      connSend   <- Ref.make(ConnectionInitialWindow)
-      connRecv   <- Ref.make(ConnectionInitialWindow)
-      streamSend <- Ref.make(Map.empty[Int, Int])
-      streamRecv <- Ref.make(Map.empty[Int, Int])
-      pulse      <- Queue.unbounded[Unit]
-    yield H2Flow(connSend, connRecv, streamSend, streamRecv, pulse, streamInitial)
+  /** `recvInitial` is what this server advertised; the peer's initial send window is 65,535 until its SETTINGS say
+    * otherwise.
+    */
+  def make(recvInitial: Int): UIO[H2Flow] =
+    (for
+      connSend   <- TRef.make(ConnectionInitialWindow)
+      connRecv   <- TRef.make(ConnectionInitialWindow)
+      streamSend <- TMap.empty[Int, Long]
+      streamRecv <- TMap.empty[Int, Long]
+      initial    <- TRef.make(ConnectionInitialWindow)
+    yield H2Flow(connSend, connRecv, streamSend, streamRecv, initial, recvInitial.toLong)).commit
 end H2Flow

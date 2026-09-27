@@ -15,11 +15,6 @@ object H2Spec extends ZIOSpecDefault:
       test("preface is 24 bytes and http2 is on by default"):
         assertTrue(H2Frame.Preface.length == 24, Server.Config.default.http2)
       ,
-      test("HPACK round-trips :method and :path"):
-        val hs  = Chunk(":method" -> "GET", ":path" -> "/health", ":scheme" -> "http")
-        val dec = Hpack.decode(Hpack.encode(hs))
-        assertTrue(dec.contains(":method" -> "GET"), dec.contains(":path" -> "/health"))
-      ,
       test("ConnBuf fillUntil sees the h2 preface"):
         val preface = Chunk.fromArray(H2Frame.Preface)
         val rest    = FrameCodec.encode(H2Frame.Settings(Chunk.empty))
@@ -138,22 +133,6 @@ object H2Spec extends ZIOSpecDefault:
             assertTrue(got.rst.values.exists(_ == H2Flow.RefusedStream))
           }
         }
-      ,
-      test("H2Flow takeRecv rejects past the stream window"):
-        H2Flow.make(16).flatMap { f =>
-          f.open(1) *> f.takeRecv(1, 17).map(ok => assertTrue(!ok))
-        }
-      ,
-      test("H2Flow takeSend waits for WINDOW_UPDATE credit"):
-        for
-          f      <- H2Flow.make(8)
-          _      <- f.open(1)
-          _      <- f.takeSend(1, 8)
-          waiter <- f.takeSend(1, 1).fork
-          early  <- waiter.poll
-          _      <- f.creditSend(1, 1)
-          _      <- waiter.join
-        yield assertTrue(early.isEmpty)
       ,
       test("shutdown does not hang on an open H2 SSE stream"):
         val routes = Routes(

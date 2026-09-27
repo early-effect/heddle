@@ -2,30 +2,34 @@ package heddle.internal.h2
 
 /** RFC 7541 Appendix B Huffman decode. Codes are MSB-first within the string. */
 private[heddle] object Huffman:
-  def decode(raw: Array[Byte]): String =
+  /** RFC 7541 §5.2: `None` for a string holding EOS, a code longer than 30 bits, or padding that is not 0 to 7 one
+    * bits.
+    */
+  def decode(raw: Array[Byte]): Option[String] =
     val out  = Array.newBuilder[Byte]
     var acc  = 0L
     var bits = 0
     var i    = 0
-    while i < raw.length do
+    var ok   = true
+    while ok && i < raw.length do
       acc = (acc << 8) | (raw(i) & 0xff)
       bits += 8
       i += 1
       var cont = true
-      while cont do
+      while ok && cont do
         matchSymbol(acc, bits) match
-          case Some((sym, n)) if n <= bits && sym < 256 =>
+          case Some((sym, n)) if sym < 256 =>
             out += sym.toByte
             bits -= n
             acc &= (1L << bits) - 1
-          case Some((256, n)) if n <= bits =>
-            bits -= n
-            acc &= (1L << bits) - 1
-            cont = false
-          case _ => cont = false
+          case Some(_)            => ok = false
+          case None if bits >= 38 => ok = false
+          case None               => cont = false
       end while
     end while
-    String(out.result(), java.nio.charset.StandardCharsets.ISO_8859_1)
+    Option.when(ok && bits < 8 && acc == (1L << bits) - 1)(
+      String(out.result(), java.nio.charset.StandardCharsets.ISO_8859_1)
+    )
   end decode
 
   private def matchSymbol(acc: Long, bits: Int): Option[(Int, Int)] =
