@@ -43,7 +43,7 @@ trait ViewFrame:
   def openLink(url: Url): UIO[Unit]
 
 /** Why a mounted view stopped. */
-enum Ending:
+enum Ending derives JsonCodec:
   case PortClosed
   case Navigated
   case TornDown(reason: String)

@@ -74,7 +74,7 @@ end RelayDocument
 object RelayRoutes:
   def apply(host: Origin): Routes[Any, Nothing] =
     Routes(
-      Method.GET / "sandbox" -> handler { (req: Request) =>
+      Method.GET / "sandbox" -> handler { req =>
         ZIO.succeed(
           req.query
             .get("r")

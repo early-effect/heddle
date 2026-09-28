@@ -95,7 +95,18 @@ lazy val root = project
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
       mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++
-      Seq[sbt.ProjectReference](mcpAppsRelay, mcpAppsFrame, example, bench, docs, docsJS, appsBrowser))*
+      appsBrowserShared.projectRefs ++
+      Seq[sbt.ProjectReference](
+        mcpAppsRelay,
+        mcpAppsFrame,
+        example,
+        bench,
+        docs,
+        docsJS,
+        appsBrowserView,
+        appsBrowserHost,
+        appsBrowser,
+      ))*
   )
   .settings(
     name           := "heddle-root",
@@ -382,12 +393,44 @@ lazy val browser = project
     },
   )
 
-/** What the MCP Apps sandbox assumes of real browsers, proven in Chromium, Firefox, and WebKit with Chekhov. Test-only
-  * and never published; it grows into the host kit's hostile-view suite.
+/** What both ends of the browser suite share: the counter MCP App, and the reference host page's config and outcomes. */
+lazy val appsBrowserShared = (projectMatrix in file("apps-browser/shared"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .dependsOn(mcpAppsHost)
+  .settings(commonSettings)
+  .settings(name := "heddle-apps-browser-shared", publish / skip := true, zipxPublish := Some(false))
+  .jvmPlatform(scalaVersions = Seq(scala3Version))
+  .jsPlatform(scalaVersions = Seq(scala3Version))
+
+/** A browser app that is one inline script: a classic script, run once, never published. */
+def inlineApp(id: String, dir: String) =
+  Project(id, file(dir))
+    .disablePlugins(chekhov.sbt.ChekhovPlugin)
+    .enablePlugins(ScalaJSPlugin)
+    .settings(commonSettings)
+    .settings(
+      publish / skip                  := true,
+      zipxPublish                     := Some(false),
+      scalaJSUseMainModuleInitializer := true,
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
+    )
+
+/** The counter's view: heddle's own AppBridge over postMessage, typed from the shed. */
+lazy val appsBrowserView = inlineApp("appsBrowserView", "apps-browser/view")
+  .dependsOn(appsBrowserShared.js(scala3Version))
+  .settings(name := "heddle-apps-browser-view")
+
+/** The reference host page: host kit, frame, and MCP client, all in the browser. */
+lazy val appsBrowserHost = inlineApp("appsBrowserHost", "apps-browser/host")
+  .dependsOn(mcpAppsFrame, appsBrowserShared.js(scala3Version))
+  .settings(name := "heddle-apps-browser-host")
+
+/** The MCP Apps sandbox and host kit, proven in Chromium, Firefox, and WebKit with Chekhov: what the browser guarantees
+  * (S2), and the reference host against a heddle view and a hostile one. Test-only and never published.
   */
 lazy val appsBrowser = project
   .in(file("apps-browser"))
-  .dependsOn(heddle.jvm(scala3Version), mcpApps.jvm(scala3Version))
+  .dependsOn(heddle.jvm(scala3Version), mcpAppsHost.jvm(scala3Version), appsBrowserShared.jvm(scala3Version))
   .settings(commonSettings)
   .settings(
     name            := "heddle-apps-browser",
@@ -397,6 +440,17 @@ lazy val appsBrowser = project
     MyVersions.browserTest,
     chekhovBrowsers := Seq(ChekhovBrowser.Chromium, ChekhovBrowser.Firefox, ChekhovBrowser.WebKit),
     Test / fork     := true,
+    // The view and host page, fast-linked for the suite (a production host ships sbt-splice's spliceFull).
+    Test / resourceGenerators += Def.task {
+      val _    = (appsBrowserView / Compile / fastLinkJS).value
+      val _    = (appsBrowserHost / Compile / fastLinkJS).value
+      val out  = (Test / resourceManaged).value / "apps-browser"
+      val view = out / "counter-view.js"
+      val host = out / "reference-host.js"
+      IO.copyFile((appsBrowserView / Compile / fastLinkJSOutput).value / "main.js", view)
+      IO.copyFile((appsBrowserHost / Compile / fastLinkJSOutput).value / "main.js", host)
+      Seq(view, host)
+    }.taskValue,
     // macOS 27 tags ~/Library/Application Support/Firefox with com.apple.macl, and Playwright's Firefox then cannot
     // start (Mozilla 2060476). The Playwright Firefox MCP server in llm-config sets the same two variables.
     Test / envVars ++= Map(
