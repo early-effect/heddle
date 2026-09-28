@@ -527,11 +527,11 @@ addCommandAlias("testBrowsers", "appsBrowser/testFull")
 addCommandAlias("docsPreview", "~docs/specularPreview")
 addCommandAlias(
   "testJVM",
-  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; mcpApps/testFull; example/testFull; docs/testFull; docs/specularSite",
+  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; mcpApps/testFull; mcpAppsHost/testFull; example/testFull; docs/testFull; docs/specularSite",
 )
 addCommandAlias(
   "testJS",
-  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; oauthJS/testFull; browser/browserCheck",
+  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; mcpAppsHostJS/testFull; oauthJS/testFull; browser/browserCheck",
 )
 addCommandAlias(
   "testNative",
