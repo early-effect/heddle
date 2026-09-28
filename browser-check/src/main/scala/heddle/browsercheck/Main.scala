@@ -8,7 +8,8 @@ import zio.json.*
 import zio.json.ast.Json
 
 /** What an MCP App view running in a browser links: endpoint description, argument mapping, result shapes, and the wire
-  * protocol. `browserCheck` links this as an ES module and fails if the output imports a Node module.
+  * protocol. A host page also links the MCP client, which reaches servers with the browser's `fetch`. `browserCheck`
+  * links this as an ES module and fails if the output imports a Node module.
   */
 object Main extends ZIOAppDefault:
   final case class Item(id: Int, name: String) derives Schema, JsonCodec

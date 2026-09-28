@@ -94,7 +94,7 @@ lazy val root = project
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
-      mcpApps.projectRefs ++
+      mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++
       Seq[sbt.ProjectReference](example, bench, docs, docsJS, appsBrowser))*
   )
   .settings(
@@ -294,6 +294,25 @@ lazy val mcpApps = (projectMatrix in file("mcp-apps"))
     ),
   )
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+
+lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .dependsOn(mcpApps % "compile->compile;test->test")
+  .settings(commonSettings)
+  .settings(MyVersions.coreTest)
+  .settings(
+    name                 := "heddle-mcp-apps-host",
+    description          := "MCP Apps host kit: effective policy, CSP, hash pins, audit, consent, and the view pipeline",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
 
 lazy val browserCheck = taskKey[Unit]("fail if the browser-side MCP surface links a Node module")
 
