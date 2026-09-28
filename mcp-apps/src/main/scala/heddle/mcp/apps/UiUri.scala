@@ -1,6 +1,7 @@
 package heddle.mcp.apps
 
 import scala.quoted.*
+import zio.json.JsonCodec
 
 /** Where an MCP App's view lives: a `ui://` resource URI (`ui://box-office/seats`). */
 opaque type UiUri = String
@@ -18,6 +19,9 @@ object UiUri:
 
   /** A literal, checked at compile time. A runtime value goes through `from`. */
   inline def apply(inline raw: String): UiUri = ${ literal('raw) }
+
+  /** A JSON string, decoded strictly. */
+  given JsonCodec[UiUri] = JsonCodec.string.transformOrFail(from(_).left.map(_.message), identity)
 
   extension (u: UiUri) def value: String = u
 

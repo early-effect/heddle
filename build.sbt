@@ -95,7 +95,7 @@ lazy val root = project
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
       mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++
-      Seq[sbt.ProjectReference](example, bench, docs, docsJS, appsBrowser))*
+      Seq[sbt.ProjectReference](mcpAppsRelay, mcpAppsFrame, example, bench, docs, docsJS, appsBrowser))*
   )
   .settings(
     name           := "heddle-root",
@@ -335,6 +335,20 @@ lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
     MyVersions.jsRuntime ++ Seq(
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
+  )
+
+/** The host page's half of the sandbox: the relay iframe, its handshake, and a mount served through it. */
+lazy val mcpAppsFrame = project
+  .in(file("mcp-apps-frame"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .enablePlugins(ScalaJSPlugin)
+  .dependsOn(mcpAppsHost.js(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name                 := "heddle-mcp-apps-frame",
+    description          := "MCP Apps host frame: the relay iframe and its handshake, in the host page",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
   )
 
 lazy val browserCheck = taskKey[Unit]("fail if the browser-side MCP surface links a Node module")

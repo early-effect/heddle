@@ -3,10 +3,11 @@ package heddle.mcp.apps.host
 import heddle.mcp.apps.UiUri
 import heddle.mcp.protocol.ToolName
 import zio.*
+import zio.json.JsonCodec
 import zio.json.ast.Json
 
 /** How the one person who can answer replied to a call a view asked to make. */
-enum ConsentOutcome:
+enum ConsentOutcome derives JsonCodec:
   case AllowOnce, AllowForSession, Rejected, Cancelled, Unavailable
 
   def allows: Boolean = this == AllowOnce || this == AllowForSession

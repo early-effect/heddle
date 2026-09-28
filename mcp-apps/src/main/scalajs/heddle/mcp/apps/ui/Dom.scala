@@ -50,9 +50,10 @@ private[heddle] trait Location extends js.Object:
 /** The window a script runs in. Reading `top.location.href` throws `SecurityError` when `top` is on another origin. */
 @js.native
 private[heddle] trait SelfWindow extends Window:
-  val top: SelfWindow    = js.native
-  val self: SelfWindow   = js.native
-  val location: Location = js.native
+  val top: SelfWindow                                           = js.native
+  val self: SelfWindow                                          = js.native
+  val location: Location                                        = js.native
+  def open(url: String, target: String, features: String): Unit = js.native
 
 @js.native
 @JSGlobal("document")

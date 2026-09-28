@@ -1,5 +1,7 @@
 package heddle.mcp.apps
 
+import zio.json.JsonCodec
+
 /** Who may call a tool: the model, the view, or both (the MCP Apps default). */
 enum Visibility:
   case Model, App, ModelAndApp
@@ -9,7 +11,7 @@ enum Visibility:
 
 /** A browser capability a view may ask for (Permission Policy features). */
 /** `wire` is the `_meta.ui.permissions` key; `feature` is the Permissions Policy name an iframe's `allow` delegates. */
-enum Permission(val wire: String, val feature: String):
+enum Permission(val wire: String, val feature: String) derives JsonCodec:
   case Camera         extends Permission("camera", "camera")
   case Microphone     extends Permission("microphone", "microphone")
   case Geolocation    extends Permission("geolocation", "geolocation")

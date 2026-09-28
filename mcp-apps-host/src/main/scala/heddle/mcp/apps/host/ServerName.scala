@@ -2,6 +2,7 @@ package heddle.mcp.apps.host
 
 import heddle.error.HeddleError
 import scala.quoted.*
+import zio.json.JsonCodec
 
 /** Why text is not a name a host can give a connected server. */
 enum ServerNameError(val message: String) extends HeddleError:
@@ -26,6 +27,9 @@ object ServerName:
 
   /** A literal, checked at compile time. A runtime value goes through `from`. */
   inline def apply(inline raw: String): ServerName = ${ literal('raw) }
+
+  /** A JSON string, decoded strictly. */
+  given JsonCodec[ServerName] = JsonCodec.string.transformOrFail(from(_).left.map(_.message), identity)
 
   extension (n: ServerName) def value: String = n
 

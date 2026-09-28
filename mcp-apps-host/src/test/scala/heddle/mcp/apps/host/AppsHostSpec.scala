@@ -287,6 +287,29 @@ object AppsHostSpec extends ZIOSpecDefault:
         n == 0,
       )
     ,
+    test("a second ui/initialize is a new document in the frame, so the mount ends and it is never answered"):
+      for
+        (gate, asked)         <- answering(ConsentOutcome.AllowForSession)
+        (v, served, count, _) <- raw(gate)
+        _                     <- v.port.send(Message.Request(RequestId.Num(5), "ui/initialize", initialize))
+        ending                <- served.ending
+        _     <- v.port.send(Message.Request(RequestId.Num(6), "tools/call", Json.Obj("name" -> Json.Str("inc"))))
+        log   <- audited
+        heard <- v.heard.get
+        n     <- count.get
+        who   <- asked.get
+      yield assertTrue(
+        ending == Ending.Navigated,
+        log.exists(e => e.action == Action.Navigated && e.decision == Decision.DroppedAfterNavigate),
+        !heard.exists {
+          case Message.Result(RequestId.Num(5 | 6), _) | Message.Error(Some(RequestId.Num(5 | 6)), _) => true
+          case _                                                                                      => false
+        },
+        calls(log).isEmpty,
+        who.isEmpty,
+        n == 0,
+      )
+    ,
     test("teardown asks the view first, and ends when it answers"):
       for
         (gate, _)    <- answering(ConsentOutcome.Unavailable)

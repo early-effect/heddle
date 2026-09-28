@@ -8,7 +8,7 @@ import zio.Chunk
 import zio.json.JsonCodec
 
 /** Why text is not a script hash a host will put in `script-src`. */
-enum ScriptHashError(val message: String) extends HeddleError:
+enum ScriptHashError(val message: String) extends HeddleError derives JsonCodec:
   case NotSha256                 extends ScriptHashError("a script hash is sha256-<base64 digest>")
   case BadDigest(digest: String) extends ScriptHashError(s"'$digest' is not the canonical base64 of a 32-byte digest")
 

@@ -140,6 +140,7 @@ final class Mounted private[host] (leaving: Promise[Nothing, String], ended: Pro
 
 object Mount:
   final case class State(
+      greeted: Boolean = false,
       initialized: Boolean = false,
       viewModes: Chunk[DisplayMode] = Chunk.empty,
       mode: DisplayMode = DisplayMode.Inline,
@@ -205,8 +206,17 @@ object Mount:
       val plain = Action.Request(req.method, None, None)
       req match
         case ViewRequest.Initialize(_, caps, _) =>
-          state.update(_.copy(viewModes = caps.availableDisplayModes.getOrElse(Chunk.empty))) *>
-            record(plain, Decision.Allowed) *> answer(id, json(initializeResult))
+          // A document says ui/initialize once. A second one is a new document in the view's frame (a reload, or a
+          // navigation whose script ran before the relay saw the frame load), so the mount ends as a navigation.
+          state
+            .modify(s =>
+              (s.greeted, s.copy(greeted = true, viewModes = caps.availableDisplayModes.getOrElse(Chunk.empty)))
+            )
+            .flatMap { again =>
+              if again then
+                record(Action.Navigated, Decision.DroppedAfterNavigate) *> ended.succeed(Ending.Navigated).unit
+              else record(plain, Decision.Allowed) *> answer(id, json(initializeResult))
+            }
         case ViewRequest.CallTool(name, arguments) => callTool(id, name, arguments)
         case ViewRequest.ReadResource(uri)         =>
           if uri != view.uri.value then

@@ -6,6 +6,7 @@ import heddle.mcp.client.{McpError, McpSession}
 import heddle.mcp.protocol.{CallToolResult, ResourceContents, Tool, ToolName}
 import java.nio.charset.StandardCharsets
 import zio.Chunk
+import zio.json.JsonCodec
 import zio.json.ast.Json
 
 /** The SHA-256 of a view's bytes, in hex: what a host pins. */
@@ -14,7 +15,16 @@ opaque type Digest = String
 object Digest:
   def of(text: String): Digest = Sha256.hex(Chunk.fromArray(text.getBytes(StandardCharsets.UTF_8)))
 
+  /** 64 lowercase hex characters, decoded strictly. */
+  given JsonCodec[Digest] =
+    JsonCodec.string.transformOrFail(
+      s =>
+        Either.cond(s.length == 64 && s.forall(c => c.isDigit || ('a' to 'f').contains(c)), s, s"$s is not a digest"),
+      identity,
+    )
+
   extension (d: Digest) def hex: String = d
+end Digest
 
 /** One MCP server the host is connected to, under the host's name for it. */
 final case class AppServer(name: ServerName, session: McpSession)

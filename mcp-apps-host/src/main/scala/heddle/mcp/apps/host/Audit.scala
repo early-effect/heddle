@@ -5,6 +5,7 @@ import heddle.mcp.apps.ui.LoggingLevel
 import heddle.mcp.protocol.ToolName
 import java.time.Instant
 import zio.*
+import zio.json.JsonCodec
 import zio.stream.ZStream
 
 /** Which framing of a view a message belongs to. Every mount gets the next one, so a reload is never the same view. */
@@ -13,10 +14,12 @@ opaque type Generation = Long
 object Generation:
   def apply(n: Long): Generation = n
 
+  given JsonCodec[Generation] = JsonCodec.long
+
   extension (g: Generation) def value: Long = g
 
 /** What a view, its relay, or the host did. */
-enum Action:
+enum Action derives JsonCodec:
   case Mount
   case Request(method: String, tool: Option[ToolName], arguments: Option[Digest])
   case Notification(method: String)
@@ -24,7 +27,7 @@ enum Action:
   case Teardown
 
 /** Why the pipeline refused one thing a view asked for. */
-enum Denial(val message: String):
+enum Denial(val message: String) derives JsonCodec:
   case NotLinked(tool: ToolName) extends Denial(s"${tool.value} is not an app tool linked to this view on this server")
   case ConsentRefused(outcome: ConsentOutcome) extends Denial(s"the user did not allow it ($outcome)")
   case NotOffered(method: String)              extends Denial(s"this host does not offer $method")
@@ -33,7 +36,7 @@ enum Denial(val message: String):
   case Malformed(reason: String)               extends Denial(reason)
 
 /** What the host decided. */
-enum Decision:
+enum Decision derives JsonCodec:
   case Allowed
   case Denied(reason: Denial)
   case ConsentAsked(outcome: ConsentOutcome)
@@ -52,7 +55,7 @@ final case class AuditEvent(
     generation: Generation,
     action: Action,
     decision: Decision,
-)
+) derives JsonCodec
 
 /** Every decision a host made about its views, in order. `history` is the recent log; `events` follows it live. */
 final class Audit private (hub: Hub[AuditEvent], log: Ref[Chunk[AuditEvent]], capacity: Int):
