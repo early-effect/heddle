@@ -7,7 +7,6 @@ import heddle.mcp.apps.ui.{RelayConfig, SandboxGrant}
 import java.nio.charset.StandardCharsets
 import zio.*
 import zio.json.*
-import zio.json.ast.Json
 
 /** Why a served relay's URL did not name a grant. The relay server answers 400 and frames nothing. */
 enum RelayRequestError(val message: String) extends HeddleError:
@@ -15,56 +14,39 @@ enum RelayRequestError(val message: String) extends HeddleError:
   case NotBase64(reason: String) extends RelayRequestError(s"r is not base64url: $reason")
   case Refused(reason: String)   extends RelayRequestError(s"r does not name a grant a relay can honor: $reason")
 
-/** What a served relay's view runs under, as its URL carries it: the clamped grant and the view's script hashes. The
-  * server compiles the CSP from this, so a URL can name only a policy the codecs accept, and nothing else.
+/** What a served relay's view runs under, as its URL carries it: the clamped grant and which inline scripts may run.
+  * The server compiles the CSP from this, so a URL can name only a policy the codecs accept, and nothing else.
   */
-final case class RelayRequest(grant: SandboxGrant, scripts: Chunk[ScriptHash]):
-  def encode: String =
-    val json = Json.Obj(
-      "grant"   -> grant.toJsonAST.getOrElse(Json.Obj()),
-      "scripts" -> Json.Arr(scripts.map(h => Json.Str(h.value))),
-    )
-    heddle.crypto.Base64Url.encode(Chunk.fromArray(json.toJson.getBytes(StandardCharsets.UTF_8)))
+final case class RelayRequest(grant: SandboxGrant, scripts: Csp.Scripts) derives JsonCodec:
+  def encode: String = heddle.crypto.Base64Url.encode(Chunk.fromArray(this.toJson.getBytes(StandardCharsets.UTF_8)))
 
 object RelayRequest:
-  def of(mount: Mount): RelayRequest =
-    RelayRequest(
-      mount.grant,
-      mount.scripts match
-        case Csp.Scripts.Hashed(hs) => hs.toChunk
-        case Csp.Scripts.AnyInline  => Chunk.empty,
-    )
+  /** The server compiles a policy from exactly this, so a grant it cannot honor whole is not a request. */
+  private given JsonCodec[SandboxGrant] = SandboxGrant.strict
 
-  /** Strict: anything the codecs would drop fails the whole request. */
+  def of(mount: Mount): RelayRequest = RelayRequest(mount.grant, mount.scripts)
+
   def decode(raw: String): Either[RelayRequestError, RelayRequest] =
-    for
-      bytes <- heddle.crypto.Base64Url.decode(raw).left.map(e => RelayRequestError.NotBase64(e.message))
-      json  <- String(bytes.toArray, StandardCharsets.UTF_8).fromJson[Json.Obj].left.map(RelayRequestError.Refused(_))
-      grant <- json.get("grant").toRight("no grant").flatMap(SandboxGrant.strict).left.map(RelayRequestError.Refused(_))
-      scripts <- hashes(json.get("scripts").getOrElse(Json.Arr())).left.map(RelayRequestError.Refused(_))
-    yield RelayRequest(grant, scripts)
-
-  private def hashes(json: Json): Either[String, Chunk[ScriptHash]] =
-    json match
-      case Json.Arr(vs) =>
-        val parsed = vs.map {
-          case Json.Str(s) => ScriptHash.from(s).left.map(e => s"$s: ${e.message}")
-          case other       => Left(s"$other is not a script hash")
-        }
-        parsed.collectFirst { case Left(e) => e }.toLeft(parsed.collect { case Right(h) => h })
-      case other => Left(s"scripts is not a list: $other")
+    heddle.crypto.Base64Url
+      .decode(raw)
+      .left
+      .map(e => RelayRequestError.NotBase64(e.message))
+      .flatMap(bytes =>
+        String(bytes.toArray, StandardCharsets.UTF_8).fromJson[RelayRequest].left.map(RelayRequestError.Refused(_))
+      )
 end RelayRequest
 
 /** The relay's document, and the headers a served one goes out with. The relay script's bytes never change, so its hash
   * is fixed by the build; what varies is the config element and, when it is `srcdoc`, the CSP `<meta>`.
   */
 object RelayDocument:
-  /** `</script` inside the bundle would end the element early; `<\/script` means the same to JavaScript. */
-  val script: String = RelayScript.text.replace("</script", "<\\/script")
+  /** The linked relay, with `</script` already written as `<\/script` by the build. */
+  val script: String = RelayScript.text
 
-  lazy val scriptHash: ScriptHash = ScriptHash.of(script)
+  /** Computed by the build from exactly `script`; `RelayDocumentSpec` checks the two agree. */
+  val scriptHash: ScriptHash = RelayScript.hash
 
-  def csp(request: RelayRequest): Csp = Csp.compile(request.grant, Csp.Scripts.of(request.scripts), scriptHash)
+  def csp(request: RelayRequest): Csp = Csp.compile(request.grant, request.scripts, scriptHash)
 
   /** For a static host: the frame writes this as the relay's `srcdoc`, with its CSP as the first element. */
   def opaque(host: Origin, request: RelayRequest): String =

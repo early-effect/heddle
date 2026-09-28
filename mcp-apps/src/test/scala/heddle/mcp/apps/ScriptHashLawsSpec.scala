@@ -1,6 +1,7 @@
 package heddle.mcp.apps
 
 import zio.*
+import zio.json.*
 import zio.json.ast.Json
 import zio.test.*
 
@@ -41,16 +42,30 @@ object ScriptHashLawsSpec extends ZIOSpecDefault:
     test("a server's hashes are read back; a bad one is reported and dropped, never kept"):
       val good = ScriptHash.of("view")
       val meta = Json.Obj(
-        UiMeta.HeddleKey -> Json.Obj(
-          "scriptHashes" -> Json.Arr(Json.Str(good.value), Json.Str("'unsafe-inline'"), Json.Num(1))
-        )
+        UiMeta.HeddleKey -> Json.Obj("scriptHashes" -> Json.Arr(Json.Str(good.value), Json.Str("'unsafe-inline'")))
       )
       assertTrue(
-        UiMeta.decodeScripts(Some(UiMeta.encodeScripts(Chunk(good)))) == (Chunk(good), Chunk.empty),
-        UiMeta.decodeScripts(Some(meta))._1 == Chunk(good),
+        UiMeta.decodeScripts(Some(UiMeta.encodeScripts(Chunk(good)))) == (Some(Chunk(good)), Chunk.empty),
+        UiMeta.decodeScripts(Some(meta))._1 == Some(Chunk(good)),
         UiMeta.decodeScripts(Some(meta))._2.collect { case MetaProblem.BadScriptHash(raw, _) => raw } ==
           Chunk("'unsafe-inline'"),
-        UiMeta.decodeScripts(None) == (Chunk.empty, Chunk.empty),
-      ),
+      )
+    ,
+    test("declaring no hashes differs from declaring broken ones: only the first allows every inline script"):
+      val garbled = Json.Obj(UiMeta.HeddleKey -> Json.Obj("scriptHashes" -> Json.Num(1)))
+      val refused = Json.Obj(UiMeta.HeddleKey -> Json.Obj("scriptHashes" -> Json.Arr(Json.Str("sha256-x"))))
+      assertTrue(
+        UiMeta.decodeScripts(None) == (None, Chunk.empty),
+        UiMeta.decodeScripts(Some(Json.Obj())) == (None, Chunk.empty),
+        UiMeta.decodeScripts(Some(garbled))._1 == Some(Chunk.empty),
+        UiMeta.decodeScripts(Some(garbled))._2.size == 1,
+        UiMeta.decodeScripts(Some(refused))._1 == Some(Chunk.empty),
+      )
+    ,
+    test("a hash in JSON decodes strictly"):
+      check(Gen.string) { s =>
+        val h = ScriptHash.of(s)
+        assertTrue(h.toJson.fromJson[ScriptHash] == Right(h), "\"'unsafe-inline'\"".fromJson[ScriptHash].isLeft)
+      },
   ) @@ TestAspect.timeout(60.seconds)
 end ScriptHashLawsSpec

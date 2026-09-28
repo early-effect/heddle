@@ -65,7 +65,7 @@ object WithAppSpec extends ZIOSpecDefault:
               body.exists(_.text == document.html),
               body.flatMap(_.mimeType).contains(UiMeta.MimeType),
               UiMeta.decodeResource(meta)._1 == UiPolicy(border = Border.Visible),
-              UiMeta.decodeScripts(meta) == (Chunk(document.scriptHash), Chunk.empty),
+              UiMeta.decodeScripts(meta) == (Some(Chunk(document.scriptHash)), Chunk.empty),
             )
           }
         }

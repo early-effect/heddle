@@ -3,7 +3,9 @@ package heddle.mcp.apps
 import heddle.error.HeddleError
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import scala.quoted.*
 import zio.Chunk
+import zio.json.JsonCodec
 
 /** Why text is not a script hash a host will put in `script-src`. */
 enum ScriptHashError(val message: String) extends HeddleError:
@@ -33,6 +35,19 @@ object ScriptHash:
       val canonical = digest.length == 44 && digest.last == '=' &&
         digest.take(43).forall(Alphabet.contains(_)) && Alphabet.indexOf(digest(42)) % 4 == 0
       if canonical then Right(raw) else Left(ScriptHashError.BadDigest(digest))
+
+  /** A literal (`ScriptHash("sha256-…")`), checked at compile time. A runtime value goes through `from`. */
+  inline def apply(inline raw: String): ScriptHash = ${ literal('raw) }
+
+  private def literal(raw: Expr[String])(using Quotes): Expr[ScriptHash] =
+    import quotes.reflect.report
+    raw.value.map(s => (s, from(s))) match
+      case None                => report.errorAndAbort("ScriptHash(...) takes a literal; use ScriptHash.from")
+      case Some((_, Left(e)))  => report.errorAndAbort(s"not a script hash: ${e.message}")
+      case Some((s, Right(_))) => Expr(s)
+
+  /** A JSON string, decoded strictly. */
+  given JsonCodec[ScriptHash] = JsonCodec.string.transformOrFail(from(_).left.map(_.message), _.value)
 
   extension (h: ScriptHash)
     /** `sha256-<base64>`, as a server lists it. */

@@ -1,6 +1,7 @@
 package heddle.mcp.apps
 
 import zio.Chunk
+import zio.json.*
 import zio.json.ast.Json
 
 /** A tool's `_meta.ui`: the view it renders in, and who may call it. */
@@ -12,6 +13,7 @@ enum MetaProblem:
   case BadResourceUri(raw: String)
   case UnknownPermission(name: String)
   case BadScriptHash(raw: String, reason: ScriptHashError)
+  case BadScriptHashes(reason: String)
 
 /** `_meta.ui` in both directions. `encode*` writes what a Heddle server sends; `decode*` reads any server's, keeps what
   * it can trust, and reports what it dropped.
@@ -121,17 +123,25 @@ object UiMeta:
     (UiPolicy(network, known, origin, border), cspProblems ++ unknown)
   end decodeResource
 
-  def encodeScripts(hashes: Chunk[ScriptHash]): Json.Obj =
-    Json.Obj(HeddleKey -> Json.Obj("scriptHashes" -> Json.Arr(hashes.map(h => Json.Str(h.value)))))
+  /** `_meta["rocks.earlyeffect/heddle"]` as a server writes it. Hashes arrive as text and are parsed one by one, so a
+    * bad one is reported and the rest kept.
+    */
+  private final case class HeddleMeta(scriptHashes: Chunk[String]) derives JsonCodec
 
-  /** Only canonical hashes survive; a server that lists none gets no hash sources at all. */
-  def decodeScripts(meta: Option[Json.Obj]): (Chunk[ScriptHash], Chunk[MetaProblem]) =
-    val raws = meta
-      .flatMap(_.get(HeddleKey))
-      .collect { case o: Json.Obj => o }
-      .flatMap(_.get("scriptHashes"))
-      .collect { case Json.Arr(vs) => vs.collect { case Json.Str(s) => s } }
-      .getOrElse(Chunk.empty)
-    val parsed = raws.map(r => ScriptHash.from(r).left.map(MetaProblem.BadScriptHash(r, _)))
-    (parsed.flatMap(_.toOption), parsed.flatMap(_.left.toOption))
+  def encodeScripts(hashes: Chunk[ScriptHash]): Json.Obj =
+    Json.Obj(HeddleKey -> HeddleMeta(hashes.map(_.value)).toJsonAST.getOrElse(Json.Obj()))
+
+  /** `None` when the server declared no hashes. Once it has declared any, only canonical ones survive, and a
+    * declaration that does not decode at all leaves none: a view whose hashes were corrupted runs no script of its own,
+    * rather than every inline one.
+    */
+  def decodeScripts(meta: Option[Json.Obj]): (Option[Chunk[ScriptHash]], Chunk[MetaProblem]) =
+    meta.flatMap(_.get(HeddleKey)) match
+      case None       => (None, Chunk.empty)
+      case Some(json) =>
+        json.as[HeddleMeta] match
+          case Left(reason)    => (Some(Chunk.empty), Chunk(MetaProblem.BadScriptHashes(reason)))
+          case Right(declared) =>
+            val parsed = declared.scriptHashes.map(r => ScriptHash.from(r).left.map(MetaProblem.BadScriptHash(r, _)))
+            (Some(parsed.flatMap(_.toOption)), parsed.flatMap(_.left.toOption))
 end UiMeta

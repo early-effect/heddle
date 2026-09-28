@@ -9,7 +9,9 @@ object CspLawsSpec extends ZIOSpecDefault:
   private val relay = ScriptHash.of("relay")
 
   private val scripts: Gen[Any, Csp.Scripts] =
-    Gen.listOfBounded(0, 3)(Gen.alphaNumericString).map(ss => Csp.Scripts.of(Chunk.fromIterable(ss.map(ScriptHash.of))))
+    Gen
+      .option(Gen.listOfBounded(0, 3)(Gen.alphaNumericString))
+      .map(o => Csp.Scripts.of(o.map(ss => Chunk.fromIterable(ss.map(ScriptHash.of)))))
 
   private val grant: Gen[Any, SandboxGrant] = (AppGens.network <*> AppGens.permissions).map(SandboxGrant(_, _))
 
@@ -75,7 +77,7 @@ object CspLawsSpec extends ZIOSpecDefault:
     test("a hashed view runs only the relay and its own scripts; nothing turns on eval, self, or a wildcard"):
       check(grant, Gen.listOfBounded(1, 3)(Gen.alphaNumericString)) { (g, ss) =>
         val hashes = Chunk.fromIterable(ss.map(ScriptHash.of))
-        val csp    = Csp.compile(g, Csp.Scripts.of(hashes), relay)
+        val csp    = Csp.compile(g, Csp.Scripts.Hashed(hashes), relay)
         val tokens = directives(csp).flatMap(_._2)
         assertTrue(
           sources(csp, "script-src").filterNot(_.contains("://")) == (relay +: hashes).distinct.map(_.source).toList,
@@ -86,13 +88,19 @@ object CspLawsSpec extends ZIOSpecDefault:
     ,
     test("a view whose server declared no hashes gets the spec's 'unsafe-inline' and no hash at all"):
       check(grant) { g =>
-        val csp = Csp.compile(g, Csp.Scripts.AnyInline, relay)
+        val csp = Csp.compile(g, Csp.Scripts.of(None), relay)
         assertTrue(sources(csp, "script-src").filterNot(_.contains("://")) == List("'unsafe-inline'"))
+      }
+    ,
+    test("a view whose declared hashes were all refused runs the relay and no script of its own"):
+      check(grant) { g =>
+        val csp = Csp.compile(g, Csp.Scripts.of(Some(Chunk.empty)), relay)
+        assertTrue(sources(csp, "script-src").filterNot(_.contains("://")) == List(relay.source))
       }
     ,
     test("an isolated, hashed view gets exactly the closed policy"):
       val view = ScriptHash.of("view")
-      val csp  = Csp.compile(SandboxGrant(Network.isolated), Csp.Scripts.of(Chunk(view)), relay)
+      val csp  = Csp.compile(SandboxGrant(Network.isolated), Csp.Scripts.Hashed(Chunk(view)), relay)
       assertTrue(
         csp.header ==
           s"default-src 'none'; script-src ${relay.source} ${view.source}; style-src 'unsafe-inline'; img-src data:; " +

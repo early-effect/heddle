@@ -82,7 +82,7 @@ final class AppsHost private (settings: HostSettings, generations: Ref[Long]):
       launched,
       resource.html,
       effective,
-      Csp.Scripts.of(resource.scripts),
+      resource.scripts,
       generation,
     )
 end AppsHost

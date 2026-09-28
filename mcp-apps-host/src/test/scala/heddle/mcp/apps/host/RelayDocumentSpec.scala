@@ -15,8 +15,11 @@ object RelayDocumentSpec extends ZIOSpecDefault:
     for
       network <- AppGens.network
       perms   <- AppGens.permissions
-      scripts <- Gen.listOfBounded(0, 3)(Gen.alphaNumericString)
-    yield RelayRequest(SandboxGrant(network, perms), Chunk.fromIterable(scripts.map(ScriptHash.of)))
+      scripts <- Gen.option(Gen.listOfBounded(0, 3)(Gen.alphaNumericString))
+    yield RelayRequest(
+      SandboxGrant(network, perms),
+      Csp.Scripts.of(scripts.map(ss => Chunk.fromIterable(ss.map(ScriptHash.of)))),
+    )
 
   private def raw(json: String): String =
     heddle.crypto.Base64Url.encode(Chunk.fromArray(json.getBytes(StandardCharsets.UTF_8)))
@@ -40,12 +43,14 @@ object RelayDocumentSpec extends ZIOSpecDefault:
     ,
     test("a request naming anything a relay cannot honor is refused whole"):
       val hash = ScriptHash.of("view").value
+      val any  = """"scripts":{"AnyInline":{}}"""
       val bad  = List(
-        """{"grant":{"csp":{"connectDomains":["https://*.evil.test"]}}}""",
-        """{"grant":{"permissions":{"telepathy":{}}}}""",
-        s"""{"grant":{},"scripts":["$hash","'unsafe-inline'"]}""",
+        s"""{"grant":{"csp":{"connectDomains":["https://*.evil.test"]}},$any}""",
+        s"""{"grant":{"permissions":{"telepathy":{}}},$any}""",
+        s"""{"grant":{},"scripts":{"Hashed":{"hashes":["$hash","'unsafe-inline'"]}}}""",
         """{"grant":{},"scripts":"sha256-x"}""",
-        """{"scripts":[]}""",
+        """{"grant":{}}""",
+        s"""{$any}""",
         """not json""",
       )
       assertTrue(
@@ -71,7 +76,7 @@ object RelayDocumentSpec extends ZIOSpecDefault:
     test("a served relay with no request, or a bad one, is a 400 with no document"):
       for
         missing <- get(None)
-        bad     <- get(Some(raw("""{"grant":{"csp":{"frameDomains":["*"]}}}""")))
+        bad     <- get(Some(raw("""{"grant":{"csp":{"frameDomains":["*"]}},"scripts":{"AnyInline":{}}}""")))
       yield assertTrue(
         missing.status == Status.BadRequest,
         bad.status == Status.BadRequest,
@@ -82,18 +87,22 @@ object RelayDocumentSpec extends ZIOSpecDefault:
       check(request) { r =>
         val html     = RelayDocument.opaque(host, r)
         val config   = between(html, s"""id="${RelayConfig.ElementId}">""", "</script>")
-        val script   = between(html, "<body><script>", "</script></body>")
-        val runnable = if r.scripts.isEmpty then "'unsafe-inline'" else RelayDocument.scriptHash.source
+        val runnable = r.scripts match
+          case Csp.Scripts.AnyInline => "'unsafe-inline'"
+          case Csp.Scripts.Hashed(_) => RelayDocument.scriptHash.source
         assertTrue(
           html.startsWith(s"""<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="""),
           config.map(_.replace("<\\/", "</").fromJson[RelayConfig]).contains(Right(RelayConfig(host, r.grant))),
-          script.contains(RelayDocument.script),
-          script.map(ScriptHash.of).contains(RelayDocument.scriptHash),
+          html.endsWith(s"<body><script>${RelayDocument.script}</script></body></html>"),
           RelayDocument.csp(r).header.split("; ").exists(d => d.startsWith("script-src ") && d.contains(runnable)),
         )
       }
     ,
-    test("the relay's script cannot end its own element early"):
-      assertTrue(!RelayDocument.script.contains("</script"), RelayDocument.script.nonEmpty),
+    test("the build's hash is the hash of the relay script, which cannot end its own element early"):
+      assertTrue(
+        ScriptHash.of(RelayDocument.script) == RelayDocument.scriptHash,
+        !RelayDocument.script.contains("</script"),
+        RelayDocument.script.nonEmpty,
+      ),
   ) @@ TestAspect.timeout(120.seconds)
 end RelayDocumentSpec

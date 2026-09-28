@@ -1,7 +1,7 @@
 package heddle.mcp.apps.host
 
 import heddle.error.HeddleError
-import heddle.mcp.apps.{MetaProblem, ScriptHash, Sha256, UiMeta, UiPolicy, UiUri}
+import heddle.mcp.apps.{MetaProblem, Sha256, UiMeta, UiPolicy, UiUri}
 import heddle.mcp.client.{McpError, McpSession}
 import heddle.mcp.protocol.{CallToolResult, ResourceContents, Tool, ToolName}
 import java.nio.charset.StandardCharsets
@@ -53,10 +53,10 @@ object LinkedView:
       LinkedView(server, uri, tool, linked.map(_.name).toSet)
 end LinkedView
 
-/** A view's document as the server sent it, with the policy it asks for and the script hashes it declared. What the
+/** A view's document as the server sent it, with the policy it asks for and the inline scripts it may run. What the
   * host could not read is in `problems`; it is dropped, never widened.
   */
-final case class ViewResource(html: String, ask: UiPolicy, scripts: Chunk[ScriptHash], problems: Chunk[MetaProblem]):
+final case class ViewResource(html: String, ask: UiPolicy, scripts: Csp.Scripts, problems: Chunk[MetaProblem]):
   def digest: Digest = Digest.of(html)
 
 object ViewResource:
@@ -80,5 +80,5 @@ object ViewResource:
     yield
       val (ask, policyProblems) = UiMeta.decodeResource(content.meta)
       val (scripts, badScripts) = UiMeta.decodeScripts(content.meta)
-      ViewResource(html, ask, scripts, policyProblems ++ badScripts)
+      ViewResource(html, ask, Csp.Scripts.of(scripts), policyProblems ++ badScripts)
 end ViewResource
