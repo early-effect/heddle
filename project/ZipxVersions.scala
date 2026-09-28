@@ -23,22 +23,27 @@ object MyVersions extends ZipxVersions:
   val specularTheme   = specular.mod("early-effect-docs-theme").test
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.7.1")
   val ascentCss       = ascentJs.mod("ascent-css")
+  val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.1").test
+  val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val dynver         = Plugin("com.github.sbt", "sbt-dynver", "5.1.1")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
   val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.17.0")
+  val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.1")
 
-  def coreLib    = library(zio, zioStreams, zioJson)
-  def coreTest   = library(zioTest, zioTestSbt)
-  def benchLib   = library(zioHttp)
-  def brotliTest = library(brotliDec)
-  def docsTest   = library(specularZioTest, specularTheme, ascentCss)
-  def docsJs     = library(specular, ascentJs, ascentCss, zio)
+  def coreLib     = library(zio, zioStreams, zioJson)
+  def coreTest    = library(zioTest, zioTestSbt)
+  def benchLib    = library(zioHttp)
+  def brotliTest  = library(brotliDec)
+  def docsTest    = library(specularZioTest, specularTheme, ascentCss)
+  def docsJs      = library(specular, ascentJs, ascentCss, zio)
+  def browserTest = library(chekhov, chekhovDriver)
+
   /** Heddle reads only `Instant` and UTC offsets, so region time zones (tzdb) stay the application's choice. */
-  def javaTime   = library(scalaJavaTime)
-  def jsRuntime  = javaTime
+  def javaTime  = library(scalaJavaTime)
+  def jsRuntime = javaTime
 
   def nativeTestInterface: Seq[Setting[?]] =
     val testInterface = "org.scala-native" % "test-interface_native0.5_3" % (scalaNative.version: String)

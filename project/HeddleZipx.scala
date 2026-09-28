@@ -11,8 +11,9 @@ object HeddleZipx:
     )
   )
 
-  private val TestJs     = CapabilityName("test-js")
-  private val TestNative = CapabilityName("test-native")
+  private val TestJs       = CapabilityName("test-js")
+  private val TestNative   = CapabilityName("test-native")
+  private val TestBrowsers = CapabilityName("test-browsers")
 
   private def alias(name: String): SbtCommand =
     SbtCommand.raw(name).fold(msg => sys.error(s"zipx: $msg"), identity)
@@ -40,6 +41,17 @@ object HeddleZipx:
       .named("Install Scala Native build dependencies")
   )
 
+  /** The pinned browsers (`chekhovInstall`), then the Linux libraries they need (`install-deps`). */
+  private val browserCiSetup: Steps = Steps.built("heddle-browser-ci")(
+    // sbt-chekhov is enabled on appsBrowser alone, so its install task is scoped there.
+    Step
+      .run(Script(ZipxExec("sbt", Word.lit("appsBrowser/chekhovInstall"))))
+      .named("Install the pinned Playwright browsers"),
+    Step
+      .run(Script(ZipxExec("bash", Word.lit("scripts/install-browser-deps.sh"))))
+      .named("Install their Linux system libraries"),
+  )
+
   private val upstream = JobCondition.repositoryIs("early-effect/heddle")
 
   def settings: Seq[Setting[?]] = Seq(
@@ -64,6 +76,13 @@ object HeddleZipx:
         name = TestNative,
         command = alias("testNative"),
         extraSteps = nativeCiSetup,
+        env = javaOpts,
+      ),
+      // Real Chromium, Firefox, and WebKit: what the MCP Apps sandbox assumes of each (apps-browser).
+      Capability.once(
+        name = TestBrowsers,
+        command = alias("testBrowsers"),
+        extraSteps = browserCiSetup,
         env = javaOpts,
       ),
       ZipxCentral.release.withCondition(upstream),
