@@ -16,7 +16,26 @@ object ClampLawsSpec extends ZIOSpecDefault:
         case (AppOrigin.Stable(x), AppOrigin.Stable(y)) => x == y
         case _                                          => false)
 
+  /** For every asked origin under an allowance that names origins, whether that allowance keeps it. */
+  private def verdicts(ask: Network, allow: NetworkAllowance): List[Boolean] =
+    List(
+      ask.connect   -> allow.connect,
+      ask.resources -> allow.resources,
+      ask.frames    -> allow.frames,
+      ask.base      -> allow.base,
+    ).flatMap:
+      case (asked, Admit.Only(os)) => asked.toList.map(os.contains)
+      case (_, Admit.AnyOrigin)    => Nil
+
   def spec = suite("Clamp laws")(
+    test("the laws are not vacuous: an allowance that names origins keeps some asked origins and drops others"):
+      (policy <*> host).runCollectN(200).map { pairs =>
+        val all     = pairs.flatMap((ask, allow) => verdicts(ask.network, allow.network))
+        val kept    = all.count(identity)
+        val dropped = all.size - kept
+        assertTrue(kept > 0, dropped > 0)
+      }
+    ,
     test("it only narrows: the result never grants more than the ask"):
       check(policy, host)((ask, allow) => assertTrue(within(c.clamp(ask, allow), ask)))
     ,

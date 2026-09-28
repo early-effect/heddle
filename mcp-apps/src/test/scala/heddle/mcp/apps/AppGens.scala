@@ -14,16 +14,27 @@ object AppGens:
       yield s"${scheme.render}://$host${port.fold("")(p => s":$p")}"
     raw.map(Origin.from).collect { case Right(o) => o }
 
-  /** A small pool, so asks and allowances overlap often enough to exercise both sides of every clamp. */
-  private val pool: Gen[Any, List[Origin]] = Gen.listOfN(6)(origin)
+  /** The origins every ask and allowance draws from. The clamp laws are set algebra over origins, so an ask and an
+    * allowance must share some, and independently random hostnames never do. `a.test` under every scheme and a second
+    * port holds origins that differ only in scheme or port apart. `origin` covers parsing.
+    */
+  private val universe: List[Origin] = List(
+    Origin("https://a.test"),
+    Origin("https://a.test:8443"),
+    Origin("http://a.test"),
+    Origin("wss://a.test"),
+    Origin("ws://a.test"),
+    Origin("https://api.b.test"),
+    Origin("http://localhost:3000"),
+    Origin("http://[::1]:8080"),
+  )
 
   private def subset[A](xs: List[A]): Gen[Any, Set[A]] =
     Gen.listOfN(xs.length)(Gen.boolean).map(keep => xs.zip(keep).collect { case (x, true) => x }.toSet)
 
-  private val originSets: Gen[Any, (List[Origin], Set[Origin])] = pool.flatMap(p => subset(p).map(p -> _))
+  private val origins: Gen[Any, Set[Origin]] = subset(universe)
 
-  val network: Gen[Any, Network] =
-    pool.flatMap(p => (subset(p) <*> subset(p) <*> subset(p) <*> subset(p)).map(Network(_, _, _, _)))
+  val network: Gen[Any, Network] = (origins <*> origins <*> origins <*> origins).map(Network(_, _, _, _))
 
   val permissions: Gen[Any, Set[Permission]] = subset(Permission.values.toList)
 
@@ -34,7 +45,7 @@ object AppGens:
     (network <*> permissions <*> appOrigin <*> Gen.elements(Border.values*)).map(UiPolicy(_, _, _, _))
 
   private val admit: Gen[Any, Admit] =
-    Gen.oneOf(Gen.const(Admit.AnyOrigin), originSets.map((_, s) => Admit.Only(s)))
+    Gen.oneOf(Gen.const(Admit.AnyOrigin), origins.map(Admit.Only(_)))
 
   val host: Gen[Any, HostPolicy] =
     ((admit <*> admit <*> admit <*> admit).map(NetworkAllowance(_, _, _, _)) <*> permissions <*>
@@ -44,7 +55,7 @@ object AppGens:
   val widening: Gen[Any, (HostPolicy, HostPolicy)] =
     for
       narrow <- host
-      extra  <- pool
+      extra  <- origins
       morePs <- permissions
       mint   <- Gen.boolean
     yield
