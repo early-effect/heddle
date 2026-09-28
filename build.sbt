@@ -321,9 +321,9 @@ lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
     description          := "MCP Apps host kit: effective policy, CSP, hash pins, audit, consent, and the view pipeline",
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
+    // The relay every mount carries: sbt-splice's production script (Scala.js full link, then esbuild's minify).
     Compile / sourceGenerators += Def.task {
-      val _      = (mcpAppsRelay / Compile / fullLinkJS).value
-      val linked = (mcpAppsRelay / Compile / fullLinkJSOutput).value / "main.js"
+      val linked = (mcpAppsRelay / spliceFull).value
       val out    = (Compile / sourceManaged).value / "heddle" / "mcp" / "apps" / "host" / "RelayScript.scala"
       IO.write(out, RelayScriptGen.source(IO.read(linked)))
       Seq(out)
