@@ -1,7 +1,5 @@
 package heddle.mcp.apps
 
-import java.nio.charset.StandardCharsets
-import java.util.Base64
 import zio.Chunk
 
 /** SHA-256 (FIPS 180-4) in plain Scala, so a browser can pin a view's bytes without Node or an async WebCrypto call.
@@ -53,12 +51,6 @@ object Sha256:
   end digest
 
   def hex(bytes: Chunk[Byte]): String = digest(bytes).map(b => f"${b & 0xff}%02x").mkString
-
-  /** The CSP hash source for an inline script: `sha256-<base64>`. */
-  def cspSource(script: String): String =
-    "sha256-" + Base64.getEncoder.encodeToString(
-      digest(Chunk.fromArray(script.getBytes(StandardCharsets.UTF_8))).toArray
-    )
 
   private def padded(bytes: Chunk[Byte]): Array[Byte] =
     val bitLen = bytes.length.toLong * 8

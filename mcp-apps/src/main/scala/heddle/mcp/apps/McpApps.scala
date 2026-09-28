@@ -13,19 +13,15 @@ enum AppBuildError(val message: String) extends heddle.error.HeddleError:
   case LaunchNotForModel(grant: String)
       extends AppBuildError(s"$grant opens the view, so the model must be able to call it")
 
-/** `_meta` key for Heddle's own additions to a view resource: the inline script's hash, for a host to pin in CSP. */
-val HeddleMetaKey = "rocks.earlyeffect/heddle"
-
 extension [R](mcp: Mcp[R])
   /** Serves `shed`'s view as a `ui://` resource and marks every granted tool with `_meta.ui`. Tools only the view calls
     * are listed now, with `visibility: ["app"]`, so hosts can route the view's calls and keep them from the model.
     * Advertises the MCP Apps extension.
     */
   def withApp(shed: Shed[?, ?, ?], document: UiDocument): Either[NonEmptyChunk[AppBuildError], Mcp[R]] =
-    val html   = document.html
-    val uiMeta = UiMeta.encodeResource(shed.policy)
-    val meta   =
-      Json.Obj(uiMeta.fields :+ (HeddleMetaKey -> Json.Obj("scriptHashes" -> Json.Arr(Json.Str(document.scriptHash)))))
+    val html     = document.html
+    val uiMeta   = UiMeta.encodeResource(shed.policy)
+    val meta     = Json.Obj(uiMeta.fields ++ UiMeta.encodeScripts(Chunk(document.scriptHash)).fields)
     val resource = Resource(shed.uri.value, shed.title, mimeType = Some(UiMeta.MimeType), meta = Some(meta))
     val served   = ServedResource(
       resource,

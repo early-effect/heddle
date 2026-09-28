@@ -11,6 +11,7 @@ enum MetaProblem:
   case BadOrigin(directive: Directive, raw: String, reason: OriginError)
   case BadResourceUri(raw: String)
   case UnknownPermission(name: String)
+  case BadScriptHash(raw: String, reason: ScriptHashError)
 
 /** `_meta.ui` in both directions. `encode*` writes what a Heddle server sends; `decode*` reads any server's, keeps what
   * it can trust, and reports what it dropped.
@@ -18,6 +19,9 @@ enum MetaProblem:
 object UiMeta:
   val Key               = "ui"
   val LegacyResourceKey = "ui/resourceUri"
+
+  /** Heddle's own additions to a view resource's `_meta`: the hashes of its inline scripts, for a host's CSP. */
+  val HeddleKey = "rocks.earlyeffect/heddle"
 
   /** `text/html;profile=mcp-app`: an MCP App view. */
   val MimeType = "text/html;profile=mcp-app"
@@ -116,4 +120,18 @@ object UiMeta:
       case _                      => Border.HostDefault
     (UiPolicy(network, known, origin, border), cspProblems ++ unknown)
   end decodeResource
+
+  def encodeScripts(hashes: Chunk[ScriptHash]): Json.Obj =
+    Json.Obj(HeddleKey -> Json.Obj("scriptHashes" -> Json.Arr(hashes.map(h => Json.Str(h.value)))))
+
+  /** Only canonical hashes survive; a server that lists none gets no hash sources at all. */
+  def decodeScripts(meta: Option[Json.Obj]): (Chunk[ScriptHash], Chunk[MetaProblem]) =
+    val raws = meta
+      .flatMap(_.get(HeddleKey))
+      .collect { case o: Json.Obj => o }
+      .flatMap(_.get("scriptHashes"))
+      .collect { case Json.Arr(vs) => vs.collect { case Json.Str(s) => s } }
+      .getOrElse(Chunk.empty)
+    val parsed = raws.map(r => ScriptHash.from(r).left.map(MetaProblem.BadScriptHash(r, _)))
+    (parsed.flatMap(_.toOption), parsed.flatMap(_.left.toOption))
 end UiMeta

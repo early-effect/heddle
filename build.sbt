@@ -341,6 +341,12 @@ lazy val appsBrowser = project
     MyVersions.browserTest,
     chekhovBrowsers := Seq(ChekhovBrowser.Chromium, ChekhovBrowser.Firefox, ChekhovBrowser.WebKit),
     Test / fork     := true,
+    // macOS 27 tags ~/Library/Application Support/Firefox with com.apple.macl, and Playwright's Firefox then cannot
+    // start (Mozilla 2060476). The Playwright Firefox MCP server in llm-config sets the same two variables.
+    Test / envVars ++= Map(
+      "TMPDIR"       -> "/tmp",
+      "MOZ_APP_DATA" -> (baseDirectory.value / "target" / "firefox-app-data").getAbsolutePath,
+    ),
   )
 
 lazy val docs = project
