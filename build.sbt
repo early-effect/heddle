@@ -1,5 +1,6 @@
 import org.scalajs.linker.interface.ModuleKind
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
+import chekhov.ChekhovBrowser
 
 // Debug-mode Native frames are large enough that ZIO's run loop overflows Native's 1 MB thread stack
 // default on macOS. 8 MB matches the Linux default, so local and CI runs behave the same.
@@ -90,10 +91,11 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
       mcpApps.projectRefs ++
-      Seq[sbt.ProjectReference](example, bench, docs, docsJS))*
+      Seq[sbt.ProjectReference](example, bench, docs, docsJS, appsBrowser))*
   )
   .settings(
     name           := "heddle-root",
@@ -102,6 +104,7 @@ lazy val root = project
   )
 
 lazy val heddle = (projectMatrix in file("heddle"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -124,6 +127,7 @@ lazy val heddle = (projectMatrix in file("heddle"))
   )
 
 lazy val brotli = (projectMatrix in file("brotli"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -145,6 +149,7 @@ lazy val brotli = (projectMatrix in file("brotli"))
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val oauth = (projectMatrix in file("oauth"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(heddle % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -166,6 +171,7 @@ lazy val oauth = (projectMatrix in file("oauth"))
   )
 
 lazy val mcpProtocol = (projectMatrix in file("mcp-protocol"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
@@ -180,6 +186,7 @@ lazy val mcpProtocol = (projectMatrix in file("mcp-protocol"))
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads)
 
 lazy val mcp = (projectMatrix in file("mcp"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(heddle % "compile->compile;test->test", mcpProtocol % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -201,6 +208,7 @@ lazy val mcp = (projectMatrix in file("mcp"))
 
 lazy val example = project
   .in(file("example"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(oauth.jvm(scala3Version), mcp.jvm(scala3Version))
   .settings(commonSettings)
   .settings(MyVersions.coreTest)
@@ -227,6 +235,7 @@ lazy val example = project
 
 lazy val bench = project
   .in(file("bench"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(heddle.jvm(scala3Version))
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -240,6 +249,7 @@ lazy val bench = project
 
 lazy val perfTests = project
   .in(file("perfTests"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(heddle.jvm(scala3Version) % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
@@ -251,6 +261,7 @@ lazy val perfTests = project
 
 lazy val docsJS = project
   .in(file("docs-js"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .enablePlugins(ScalaJSPlugin)
   .settings(
     name           := "heddle-docsJS",
@@ -265,6 +276,7 @@ lazy val docsJS = project
   )
 
 lazy val mcpApps = (projectMatrix in file("mcp-apps"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(mcp % "compile->compile;test->test")
   .settings(commonSettings)
   .settings(MyVersions.coreTest)
@@ -290,6 +302,7 @@ lazy val browserCheck = taskKey[Unit]("fail if the browser-side MCP surface link
   */
 lazy val browser = project
   .in(file("browser-check"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .enablePlugins(ScalaJSPlugin)
   .dependsOn(heddle.js(scala3Version), mcp.js(scala3Version), mcpApps.js(scala3Version))
   .settings(commonSettings)
@@ -313,8 +326,26 @@ lazy val browser = project
     },
   )
 
+/** What the MCP Apps sandbox assumes of real browsers, proven in Chromium, Firefox, and WebKit with Chekhov. Test-only
+  * and never published; it grows into the host kit's hostile-view suite.
+  */
+lazy val appsBrowser = project
+  .in(file("apps-browser"))
+  .dependsOn(heddle.jvm(scala3Version), mcpApps.jvm(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name            := "heddle-apps-browser",
+    publish / skip  := true,
+    zipxPublish     := Some(false),
+    MyVersions.coreTest,
+    MyVersions.browserTest,
+    chekhovBrowsers := Seq(ChekhovBrowser.Chromium, ChekhovBrowser.Firefox, ChekhovBrowser.WebKit),
+    Test / fork     := true,
+  )
+
 lazy val docs = project
   .in(file("docs"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(
     heddle.jvm(scala3Version),
     brotli.jvm(scala3Version),
@@ -375,6 +406,8 @@ lazy val docs = project
     specularJsLinkDev := Def.uncached(specularJsLink.value),
   )
 
+// Real browsers, kept out of testJVM so the everyday gates never launch one.
+addCommandAlias("testBrowsers", "appsBrowser/testFull")
 addCommandAlias("docsPreview", "~docs/specularPreview")
 addCommandAlias(
   "testJVM",
