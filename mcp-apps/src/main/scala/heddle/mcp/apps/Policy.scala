@@ -8,11 +8,17 @@ enum Visibility:
   def app: Boolean   = this != Model
 
 /** A browser capability a view may ask for (Permission Policy features). */
-enum Permission(val wire: String):
-  case Camera         extends Permission("camera")
-  case Microphone     extends Permission("microphone")
-  case Geolocation    extends Permission("geolocation")
-  case ClipboardWrite extends Permission("clipboardWrite")
+/** `wire` is the `_meta.ui.permissions` key; `feature` is the Permissions Policy name an iframe's `allow` delegates. */
+enum Permission(val wire: String, val feature: String):
+  case Camera         extends Permission("camera", "camera")
+  case Microphone     extends Permission("microphone", "microphone")
+  case Geolocation    extends Permission("geolocation", "geolocation")
+  case ClipboardWrite extends Permission("clipboardWrite", "clipboard-write")
+
+object Permission:
+  /** An iframe `allow` value delegating `ps`, or `None` for none. */
+  def allow(ps: Set[Permission]): Option[String] =
+    Option.when(ps.nonEmpty)(ps.toList.sortBy(_.ordinal).map(_.feature).mkString("; "))
 
 /** Where the view's document runs. `Opaque` is a fresh origin per mount; `Stable` asks the host to mint a lasting one,
   * for APIs that allowlist an `Origin`. The label names it; its format is the host's.

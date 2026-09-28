@@ -9,11 +9,12 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.stream.ZStream
 
-/** The browser's `MessageEvent`: what arrived, and which window sent it. */
+/** The browser's `MessageEvent`: what arrived, which window sent it, and that window's origin (`"null"` if opaque). */
 @js.native
 trait MessageEvent extends js.Object:
   val data: js.Any   = js.native
   val source: js.Any = js.native
+  val origin: String = js.native
 
 /** A `MessagePort`, one end of a `MessageChannel`. */
 @js.native
@@ -91,6 +92,16 @@ object PostMessageBridge:
           ZIO.succeed(target.listen(data => deliver(emit, data)))
         )(stop => ZIO.succeed(stop()))
       }
+
+  /** Every message from `target`, like `over(target).receive`, with `ready` run once the listener is in place, so the
+    * answer to whatever `ready` prompts cannot arrive before anyone is listening. `ready` runs in the stream's scope:
+    * what it forks lives as long as the stream.
+    */
+  def receiveThen(target: PostTarget)(ready: ZIO[Scope, McpError, Unit]): ZStream[Any, McpError, Message] =
+    ZStream.asyncScoped[Any, McpError, Message] { emit =>
+      ZIO.acquireRelease(ZIO.succeed(target.listen(data => deliver(emit, data))))(stop => ZIO.succeed(stop())) *>
+        ready
+    }
 
   /** Hands a JSON-RPC message to the stream; the emitter's answer says only whether it was queued. */
   private def deliver(

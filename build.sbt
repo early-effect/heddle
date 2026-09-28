@@ -295,6 +295,22 @@ lazy val mcpApps = (projectMatrix in file("mcp-apps"))
   )
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
 
+/** The sandbox proxy's script: a browser app, linked once and carried inside the host kit, never published alone. */
+lazy val mcpAppsRelay = project
+  .in(file("mcp-apps-relay"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .enablePlugins(ScalaJSPlugin)
+  .dependsOn(mcpApps.js(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name                            := "heddle-mcp-apps-relay",
+    publish / skip                  := true,
+    zipxPublish                     := Some(false),
+    scalaJSUseMainModuleInitializer := true,
+    // A classic script, so it runs inline in the relay document under a CSP hash.
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
+  )
+
 lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .dependsOn(mcpApps % "compile->compile;test->test")
@@ -305,6 +321,13 @@ lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
     description          := "MCP Apps host kit: effective policy, CSP, hash pins, audit, consent, and the view pipeline",
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
+    Compile / sourceGenerators += Def.task {
+      val _      = (mcpAppsRelay / Compile / fullLinkJS).value
+      val linked = (mcpAppsRelay / Compile / fullLinkJSOutput).value / "main.js"
+      val out    = (Compile / sourceManaged).value / "heddle" / "mcp" / "apps" / "host" / "RelayScript.scala"
+      IO.write(out, RelayScriptGen.source(IO.read(linked)))
+      Seq(out)
+    }.taskValue,
   )
   .jvmPlatform(scalaVersions = scalaVersions)
   .jsPlatform(
