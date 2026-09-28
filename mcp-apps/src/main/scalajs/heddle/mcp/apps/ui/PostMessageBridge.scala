@@ -1,47 +1,13 @@
 package heddle.mcp.apps.ui
 
+import ascent.dom
 import heddle.mcp.client.McpError
 import heddle.mcp.protocol.Message
 import scala.scalajs.js
-import scala.scalajs.js.annotation.JSGlobal
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
 import zio.stream.ZStream
-
-/** The browser's `MessageEvent`: what arrived, which window sent it, and that window's origin (`"null"` if opaque). */
-@js.native
-trait MessageEvent extends js.Object:
-  val data: js.Any   = js.native
-  val source: js.Any = js.native
-  val origin: String = js.native
-
-/** A `MessagePort`, one end of a `MessageChannel`. */
-@js.native
-trait MessagePort extends js.Object:
-  def postMessage(message: js.Any): Unit                                                  = js.native
-  def addEventListener(kind: String, listener: js.Function1[MessageEvent, Unit]): Unit    = js.native
-  def removeEventListener(kind: String, listener: js.Function1[MessageEvent, Unit]): Unit = js.native
-  def start(): Unit                                                                       = js.native
-  def close(): Unit                                                                       = js.native
-
-@js.native
-@JSGlobal
-class MessageChannel() extends js.Object:
-  val port1: MessagePort = js.native
-  val port2: MessagePort = js.native
-
-/** The parts of `window` a view uses. */
-@js.native
-trait Window extends js.Object:
-  val parent: Window                                                                      = js.native
-  def postMessage(message: js.Any, targetOrigin: String): Unit                            = js.native
-  def addEventListener(kind: String, listener: js.Function1[MessageEvent, Unit]): Unit    = js.native
-  def removeEventListener(kind: String, listener: js.Function1[MessageEvent, Unit]): Unit = js.native
-
-@js.native
-@JSGlobal("window")
-private object BrowserWindow extends Window
 
 /** What a view posts to and hears from. `listen` starts delivering each message's `data` and returns what stops it. */
 trait PostTarget:
@@ -52,24 +18,33 @@ object PostTarget:
   /** The view's host, `window.parent`. A sandboxed view's own origin is opaque, so it posts with target origin `*`, as
     * the ext-apps SDK does, and it hears only messages whose `source` is its parent.
     */
-  def parentWindow: PostTarget = window(BrowserWindow)
+  def parentWindow: PostTarget = window(dom.window)
 
-  def window(self: Window): PostTarget = new PostTarget:
-    def post(message: js.Any): Unit                 = self.parent.postMessage(message, "*")
+  def window(self: dom.Window): PostTarget = new PostTarget:
+    def post(message: js.Any): Unit                 = self.parent.foreach(_.postMessage(message, "*"))
     def listen(deliver: js.Any => Unit): () => Unit =
-      val listener: js.Function1[MessageEvent, Unit] = e =>
-        if js.special.strictEquals(e.source, self.parent) then deliver(e.data)
-      self.addEventListener("message", listener)
-      () => self.removeEventListener("message", listener)
+      messages(self)(e => if sentBy(e, self.parent) then deliver(e.data))
 
   /** One end of a `MessageChannel`: only the other end can post to it, so every message is the peer's. */
-  def port(p: MessagePort): PostTarget = new PostTarget:
+  def port(p: dom.MessagePort): PostTarget = new PostTarget:
     def post(message: js.Any): Unit                 = p.postMessage(message)
     def listen(deliver: js.Any => Unit): () => Unit =
-      val listener: js.Function1[MessageEvent, Unit] = e => deliver(e.data)
-      p.addEventListener("message", listener)
+      val stop = messages(p)(e => deliver(e.data))
       p.start()
-      () => p.removeEventListener("message", listener)
+      stop
+
+  /** Hands each `message` event `target` hears to `handle`, and answers what stops it. */
+  private[heddle] def messages(target: dom.EventTarget)(handle: dom.MessageEvent => Unit): () => Unit =
+    val listener: js.Function1[dom.Event, Unit] = {
+      case e: dom.MessageEvent => handle(e)
+      case _                   => ()
+    }
+    target.addEventListener("message", listener)
+    () => target.removeEventListener("message", listener)
+
+  /** Whether `window` sent `e`. A view's origin is opaque (`"null"`), so its window is the only proof of who spoke. */
+  private[heddle] def sentBy(e: dom.MessageEvent, window: Option[dom.Window]): Boolean =
+    e.source.exists(source => window.exists(js.special.strictEquals(source, _)))
 end PostTarget
 
 /** A `ViewPort` over `postMessage`. Messages cross as structured-clone JSON objects. Anything that is not a JSON-RPC

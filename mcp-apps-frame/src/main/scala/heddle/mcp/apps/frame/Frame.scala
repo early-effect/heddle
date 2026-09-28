@@ -1,5 +1,6 @@
 package heddle.mcp.apps.frame
 
+import ascent.dom
 import heddle.error.HeddleError
 import heddle.http.Url
 import heddle.mcp.apps.{Origin, Permission}
@@ -27,20 +28,21 @@ enum FrameError(val message: String) extends HeddleError:
 
 /** The host page's half of the sandbox: one relay iframe, its handshake, and the mount served through it. */
 object Frame:
-  /** Frames `mount` under `parent` and serves it until it ends. The iframe goes when the scope closes. `host` is this
-    * page's origin, the only one the relay will talk to.
+  /** Frames `mount` under `parent` and serves it until it ends. `parent` may be an element or a shadow root; heddle
+    * makes the iframe, sets every attribute on it, and puts it in once it is listening. The iframe goes when the scope
+    * closes. `host` is this page's origin, the only one the relay will talk to.
     */
   def mount(
       mount: Mount,
       mode: RelayMode,
-      parent: Element,
+      parent: dom.Node,
       host: Origin,
       ready: Duration = 10.seconds,
   ): ZIO[Scope & ConsentGate & Audit, FrameError, Mounted] =
-    val frame   = BrowserDocument.iframe
     val request = RelayRequest.of(mount)
-    val target  = relay(frame, mode)
     for
+      frame <- ZIO.succeed(dom.document.createElement(dom.HtmlTag.iframe))
+      target = relay(frame, mode)
       heard <- Queue.unbounded[Message]
       // One listener for the frame's life, in place before the iframe is, so nothing the relay says is missed.
       _ <- PostMessageBridge
@@ -66,7 +68,13 @@ object Frame:
     end for
   end mount
 
-  private def insert(frame: IFrame, mode: RelayMode, request: RelayRequest, parent: Element, host: Origin): Unit =
+  private def insert(
+      frame: dom.HTMLIFrameElement,
+      mode: RelayMode,
+      request: RelayRequest,
+      parent: dom.Node,
+      host: Origin,
+  ): Unit =
     mode match
       case RelayMode.Served(relay) =>
         frame.setAttribute("sandbox", "allow-scripts allow-same-origin")
@@ -81,7 +89,7 @@ object Frame:
   end insert
 
   /** The relay: posted to at its origin, and heard only from its window at that origin (`null` when opaque). */
-  private def relay(frame: IFrame, mode: RelayMode): PostTarget =
+  private def relay(frame: dom.HTMLIFrameElement, mode: RelayMode): PostTarget =
     val origin = mode match
       case RelayMode.Served(relay) => relay.render
       case RelayMode.Opaque        => "null"
@@ -91,16 +99,15 @@ object Frame:
     new PostTarget:
       def post(message: js.Any): Unit                 = frame.contentWindow.foreach(_.postMessage(message, target))
       def listen(deliver: js.Any => Unit): () => Unit =
-        val listener: js.Function1[MessageEvent, Unit] = e =>
-          if frame.contentWindow.exists(js.special.strictEquals(e.source, _)) && e.origin == origin then deliver(e.data)
-        BrowserSelf.addEventListener("message", listener)
-        () => BrowserSelf.removeEventListener("message", listener)
+        PostTarget.messages(dom.window)(e =>
+          if PostTarget.sentBy(e, frame.contentWindow) && e.origin == origin then deliver(e.data)
+        )
   end relay
 
   /** What the page does for the view: size its frame, and open a link in a new, unrelated tab. */
-  private def page(frame: IFrame): ViewFrame = new ViewFrame:
+  private def page(frame: dom.HTMLIFrameElement): ViewFrame = new ViewFrame:
     def resize(height: Double): UIO[Unit] =
       ZIO.succeed(frame.setAttribute("style", s"display:block;width:100%;height:${height}px;border:0"))
     def openLink(url: Url): UIO[Unit] =
-      ZIO.succeed(BrowserSelf.open(url.render, "_blank", "noopener,noreferrer")).unit
+      ZIO.succeed(dom.window.open(url.render, "_blank", "noopener,noreferrer")).unit
 end Frame

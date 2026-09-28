@@ -1,5 +1,6 @@
 package heddle.mcp.apps.ui
 
+import ascent.dom
 import heddle.mcp.apps.Count
 import heddle.mcp.client.McpError
 import heddle.mcp.protocol.{Implementation, Message, RequestId}
@@ -13,8 +14,9 @@ object PostMessageBridgeSpec extends ZIOSpecDefault:
 
   /** A view and a host on the two ends of one real `MessageChannel`: every message crosses as a structured clone. */
   private val channel: URIO[Scope, (ViewPort, ViewPort)] =
-    ZIO.acquireRelease(ZIO.succeed(MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() }).map { c =>
-      (PostMessageBridge.over(PostTarget.port(c.port1)), PostMessageBridge.over(PostTarget.port(c.port2)))
+    ZIO.acquireRelease(ZIO.succeed(dom.MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() }).map {
+      c =>
+        (PostMessageBridge.over(PostTarget.port(c.port1)), PostMessageBridge.over(PostTarget.port(c.port2)))
     }
 
   def spec = suite("PostMessageBridge")(
@@ -44,7 +46,7 @@ object PostMessageBridgeSpec extends ZIOSpecDefault:
     test("anything that is not JSON-RPC is dropped, and the next message still arrives"):
       ZIO.scoped {
         ZIO
-          .acquireRelease(ZIO.succeed(MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() })
+          .acquireRelease(ZIO.succeed(dom.MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() })
           .flatMap { c =>
             val host = PostMessageBridge.over(PostTarget.port(c.port2))
             val ping = Message.Request(RequestId.Num(1), "ping", Json.Obj())
@@ -61,7 +63,7 @@ object PostMessageBridgeSpec extends ZIOSpecDefault:
     test("a value the browser cannot clone fails the send as a pipe failure"):
       ZIO.scoped {
         ZIO
-          .acquireRelease(ZIO.succeed(MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() })
+          .acquireRelease(ZIO.succeed(dom.MessageChannel()))(c => ZIO.succeed { c.port1.close(); c.port2.close() })
           .flatMap { c =>
             val fn: js.Function0[Unit] = () => ()
             val refusing               = new PostTarget:

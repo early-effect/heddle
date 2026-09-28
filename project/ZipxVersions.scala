@@ -21,6 +21,7 @@ object MyVersions extends ZipxVersions:
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.17.0")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
+  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.10.0-SNAPSHOT")
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.7.1")
   val ascentCss       = ascentJs.mod("ascent-css")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.1").test
@@ -41,6 +42,9 @@ object MyVersions extends ZipxVersions:
   def docsTest    = library(specularZioTest, specularTheme, ascentCss)
   def docsJs      = library(specular, ascentJs, ascentCss, zio)
   def browserTest = library(chekhov, chekhovDriver)
+
+  /** The browser DOM, as ascent's WebIDL-generated facade types it: what an MCP App's relay, frame, and view touch. */
+  def domFacade = library(ascentDomFacade)
 
   /** Heddle reads only `Instant` and UTC offsets, so region time zones (tzdb) stay the application's choice. */
   def javaTime  = library(scalaJavaTime)

@@ -1,5 +1,6 @@
 package heddle.apps.browser.view
 
+import ascent.dom
 import heddle.apps.browser.counter.{Count, Counter}
 import heddle.mcp.apps.ui.*
 import heddle.mcp.client.McpCallFailure
@@ -20,31 +21,33 @@ object CounterView extends ZIOAppDefault:
           PostMessageBridge.toParent,
           AppBridge.Settings(Implementation("counter-view", "1")),
         )
-        count = BrowserDocument.createElement("p")
-        press = BrowserDocument.createElement("button")
-        _ <- ZIO.succeed {
+        body <- ZIO.fromOption(dom.document.body).orDieWith(_ => IllegalStateException("the view has no body"))
+        (count, press) <- ZIO.succeed {
+          val count = dom.document.createElement(dom.HtmlTag.p)
+          val press = dom.document.createElement(dom.HtmlTag.button)
           count.setAttribute("id", "count")
-          count.textContent = "…"
+          count.textContent = Some("…")
           press.setAttribute("id", "inc")
-          press.textContent = "+1"
-          val _ = BrowserDocument.body.appendChild(count)
-          val _ = BrowserDocument.body.appendChild(press)
+          press.textContent = Some("+1")
+          val _ = body.appendChild(count)
+          val _ = body.appendChild(press)
+          (count, press)
         }
-        show = (c: Count) => ZIO.succeed(count.textContent = c.value.toString)
+        show = (c: Count) => ZIO.succeed(count.textContent = Some(c.value.toString))
         _ <- bridge.run.collect { case Run.Returned(_, out) => out }.foreach(show).forkScoped
         _ <- clicks(press).mapZIO(_ => bridge.call(_.inc)(()).either).foreach {
           case Right(c)                        => show(c)
-          case Left(McpCallFailure.Session(e)) => ZIO.succeed(count.textContent = s"refused: ${e.message}")
-          case Left(other)                     => ZIO.succeed(count.textContent = s"failed: $other")
+          case Left(McpCallFailure.Session(e)) => ZIO.succeed(count.textContent = Some(s"refused: ${e.message}"))
+          case Left(other)                     => ZIO.succeed(count.textContent = Some(s"failed: $other"))
         }
       yield ()
     )
 
   /** One element per click; the listener comes off when the stream ends. */
-  private def clicks(target: Element): ZStream[Any, Nothing, Unit] =
+  private def clicks(target: dom.EventTarget): ZStream[Any, Nothing, Unit] =
     ZStream.asyncScoped[Any, Nothing, Unit] { emit =>
       ZIO.acquireRelease(ZIO.succeed {
-        val listener: js.Function1[js.Any, Unit] = _ =>
+        val listener: js.Function1[dom.Event, Unit] = _ =>
           val _ = emit(ZIO.succeed(Chunk.unit))
         target.addEventListener("click", listener)
         listener

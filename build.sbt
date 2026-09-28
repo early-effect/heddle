@@ -300,7 +300,7 @@ lazy val mcpApps = (projectMatrix in file("mcp-apps"))
   .jvmPlatform(scalaVersions = scalaVersions)
   .jsPlatform(
     scalaVersions = scalaVersions,
-    MyVersions.jsRuntime ++ Seq(
+    MyVersions.jsRuntime ++ MyVersions.domFacade ++ Seq(
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
