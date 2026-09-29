@@ -2,7 +2,7 @@ package heddle.mcp.apps.frame
 
 import ascent.dom
 import heddle.error.HeddleError
-import heddle.http.Url
+import heddle.http.{Scheme, Url}
 import heddle.mcp.apps.{Origin, Permission}
 import heddle.mcp.apps.host.*
 import heddle.mcp.apps.ui.*
@@ -24,13 +24,19 @@ enum RelayMode:
 /** Why a frame did not start. */
 enum FrameError(val message: String) extends HeddleError:
   case RelayNeverReady(waited: Duration) extends FrameError(s"the relay did not say it was ready within $waited")
+  case HostNeverReady(waited: Duration)  extends FrameError(s"the host did not send a frame within $waited")
   case Pipe(error: McpError)             extends FrameError(error.message)
 
-/** The host page's half of the sandbox: one relay iframe, its handshake, and the mount served through it. */
+/** The relay iframe and its handshake, back from `open`. Serving it is a separate step, so the pipeline can run in
+  * another process.
+  */
+final case class Opened(port: ViewPort, frame: ViewFrame)
+
+/** The host page's half of the sandbox: one relay iframe and its handshake. */
 object Frame:
-  /** Frames `mount` under `parent` and serves it until it ends. `parent` may be an element or a shadow root; heddle
-    * makes the iframe, sets every attribute on it, and puts it in once it is listening. The iframe goes when the scope
-    * closes. `host` is this page's origin, the only one the relay will talk to.
+  /** Frames `mount` under `parent` and serves it in this process until it ends. `parent` may be an element or a shadow
+    * root; heddle makes the iframe, sets every attribute on it, and puts it in once it is listening. The iframe goes
+    * when the scope closes. `host` is this page's origin, the only one the relay will talk to.
     */
   def mount(
       mount: Mount,
@@ -39,7 +45,21 @@ object Frame:
       host: Origin,
       ready: Duration = 10.seconds,
   ): ZIO[Scope & ConsentGate & Audit, FrameError, Mounted] =
-    val request = RelayRequest.of(mount)
+    open(mount.html, RelayRequest.of(mount), mode, parent, host, ready).flatMap { opened =>
+      mount.serve(opened.port, opened.frame)
+    }
+
+  /** Frames the relay and completes its handshake, and does not serve. `serve` the returned port where the pipeline
+    * runs. The iframe goes when the scope closes.
+    */
+  def open(
+      html: String,
+      request: RelayRequest,
+      mode: RelayMode,
+      parent: dom.Node,
+      host: Origin,
+      ready: Duration = 10.seconds,
+  ): ZIO[Scope, FrameError, Opened] =
     for
       frame <- ZIO.succeed(dom.document.createElement(dom.HtmlTag.iframe))
       target = relay(frame, mode)
@@ -59,14 +79,57 @@ object Frame:
         .someOrFail(FrameError.RelayNeverReady(ready))
         .timeoutFail(FrameError.RelayNeverReady(ready))(ready)
       toRelay = PostMessageBridge.over(target)
-      port    = new ViewPort:
-        def send(message: Message): IO[McpError, Unit] = toRelay.send(message)
-        def receive: ZStream[Any, McpError, Message]   = ZStream.fromQueue(heard)
-      served <- mount.serve(port, page(frame))
-      _ <- port.send(SandboxMessage.ResourceReady(mount.html, None, mount.grant).message).mapError(FrameError.Pipe(_))
-    yield served
-    end for
-  end mount
+      opened  = Opened(
+        ViewPort.from(toRelay.send, ZStream.fromQueue(heard)),
+        page(frame),
+      )
+      _ <- opened.port
+        .send(SandboxMessage.ResourceReady(html, None, request.grant).message)
+        .mapError(FrameError.Pipe(_))
+    yield opened
+
+  /** Frames whatever the host sends on `incoming`, and carries the view's messages back through `send`. The pipeline
+    * stays wherever `RemoteFrame.serve` runs. `onAsk` is told each question; the page sends the user's `Answer`. An
+    * `OpenLink` that is not http or https is dropped. The iframe goes when the scope closes.
+    */
+  def follow(
+      parent: dom.Node,
+      host: Origin,
+      mode: RelayMode,
+      send: FrameEvent => IO[McpError, Unit],
+      incoming: ZStream[Any, McpError, FrameEvent],
+      onAsk: (Long, ConsentRequest) => UIO[Unit],
+      ready: Duration = 10.seconds,
+  ): ZIO[Scope, FrameError, Opened] =
+    for
+      rest    <- Queue.unbounded[FrameEvent]
+      arrived <- Promise.make[FrameError, FrameEvent.Ready]
+      _       <- incoming
+        .foreach {
+          case event: FrameEvent.Ready => arrived.succeed(event).unit
+          case event                   => rest.offer(event).unit
+        }
+        .catchAll(error => arrived.fail(FrameError.Pipe(error)).unit)
+        .ensuring(ZIO.unlessZIO(arrived.isDone)(arrived.fail(FrameError.HostNeverReady(ready)).unit))
+        .forkScoped
+      document <- arrived.await.timeoutFail(FrameError.HostNeverReady(ready))(ready)
+      opened   <- open(document.html, document.request, mode, parent, host, ready)
+      _        <- ZStream
+        .fromQueue(rest)
+        .foreach {
+          case FrameEvent.ToView(message)  => opened.port.send(message).ignore
+          case FrameEvent.Resize(height)   => opened.frame.resize(height)
+          case FrameEvent.OpenLink(url)    => ZIO.foreachDiscard(link(url))(opened.frame.openLink)
+          case FrameEvent.Ask(id, request) => onAsk(id, request).forkScoped.unit
+          case _                           => ZIO.unit
+        }
+        .forkScoped
+      _ <- opened.port.receive.foreach(message => send(FrameEvent.FromView(message))).ignore.forkScoped
+    yield opened
+
+  /** http and https only, absolute: the same links the pipeline will ask a page to open. */
+  private def link(raw: String): Option[Url] =
+    Url.decode(raw).toOption.filter(u => u.absolute && u.scheme.exists(s => s == Scheme.Http || s == Scheme.Https))
 
   private def insert(
       frame: dom.HTMLIFrameElement,

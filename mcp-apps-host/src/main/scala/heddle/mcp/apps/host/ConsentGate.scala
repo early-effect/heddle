@@ -3,7 +3,7 @@ package heddle.mcp.apps.host
 import heddle.mcp.apps.UiUri
 import heddle.mcp.protocol.ToolName
 import zio.*
-import zio.json.JsonCodec
+import zio.json.*
 import zio.json.ast.Json
 
 /** How the one person who can answer replied to a call a view asked to make. */
@@ -13,7 +13,7 @@ enum ConsentOutcome derives JsonCodec:
   def allows: Boolean = this == AllowOnce || this == AllowForSession
 
 /** One call a view asked to make, as the user is shown it. */
-final case class ConsentRequest(server: ServerName, view: UiUri, tool: ToolName, arguments: Json.Obj)
+final case class ConsentRequest(server: ServerName, view: UiUri, tool: ToolName, arguments: Json.Obj) derives JsonCodec
 
 /** The one gate between a view and a tool call. The iframe is never the answerer, and installing a server is not
   * consent for what its view asks.
