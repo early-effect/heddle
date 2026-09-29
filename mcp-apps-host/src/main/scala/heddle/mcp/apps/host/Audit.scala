@@ -64,7 +64,11 @@ final class Audit private (hub: Hub[AuditEvent], log: Ref[Chunk[AuditEvent]], ca
 
   def history: UIO[Chunk[AuditEvent]] = log.get
 
-  def events: ZStream[Any, Nothing, AuditEvent] = ZStream.fromHub(hub)
+  /** Every event recorded from the moment this returns, for as long as the scope lasts. The subscription is made before
+    * it returns, so a stream forked after it misses nothing recorded in between.
+    */
+  def events: ZIO[Scope, Nothing, ZStream[Any, Nothing, AuditEvent]] = ZStream.fromHubScoped(hub)
+end Audit
 
 object Audit:
   /** Keeps the last `capacity` events; the hub closes with the layer. */

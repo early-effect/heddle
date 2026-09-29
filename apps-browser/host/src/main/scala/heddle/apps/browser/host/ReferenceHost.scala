@@ -39,7 +39,8 @@ object ReferenceHost extends ZIOAppDefault:
         .flatMap(text => ZIO.fromEither(text.fromJson[PageConfig]))
       body <- ZIO.fromOption(dom.document.body).orElseFail("the page has no body")
       _    <- ZIO.succeed { Published.heddleAudit = js.Array(); Published.heddleMounts = js.Array() }
-      _    <- ZIO.serviceWithZIO[Audit](_.events.foreach(e => publish(Published.heddleAudit, e.toJson)).forkScoped)
+      log  <- ZIO.serviceWithZIO[Audit](_.events)
+      _    <- log.foreach(e => publish(Published.heddleAudit, e.toJson)).forkScoped
       host <- AppsHost.make(settings)
       mode = config.relay.fold(RelayMode.Opaque)(RelayMode.Served(_))
       _ <- ZIO.foreachParDiscard(config.launches)(launch => serve(host, config.host, mode, body, launch))
