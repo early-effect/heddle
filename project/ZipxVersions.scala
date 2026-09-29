@@ -33,7 +33,7 @@ object MyVersions extends ZipxVersions:
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
   val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.17.0")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.2")
-  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.0")
+  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.1")
 
   def coreLib     = library(zio, zioStreams, zioJson)
   def coreTest    = library(zioTest, zioTestSbt)
