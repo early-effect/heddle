@@ -109,10 +109,12 @@ final case class Mount(
     */
   def serve(port: ViewPort, frame: ViewFrame): URIO[Scope & ConsentGate & Audit, Mounted] =
     for
-      gate    <- ZIO.service[ConsentGate]
-      audit   <- ZIO.service[Audit]
-      state   <- Ref.make(Mount.State())
-      ended   <- Promise.make[Nothing, Ending]
+      gate  <- ZIO.service[ConsentGate]
+      audit <- ZIO.service[Audit]
+      state <- Ref.make(Mount.State())
+      ended <- Promise.make[Nothing, Ending]
+      // A mount whose scope closes first has lost its port, and whoever waits on its end hears so.
+      _       <- ZIO.addFinalizer(ended.succeed(Ending.PortClosed))
       leaving <- Promise.make[Nothing, String]
       pending <- Ref.make(Map.empty[RequestId, Promise[Nothing, Unit]])
       // Bounded, so a view that floods the log costs the host at most one budget of memory.

@@ -388,6 +388,17 @@ object AppsHostSpec extends ZIOSpecDefault:
         n == 0,
       )
     ,
+    test("a mount whose scope closes has ended as its port closed, and asking it to go waits on nothing"):
+      for
+        (gate, _) <- answering(ConsentOutcome.Unavailable)
+        (m, _)    <- mounted()
+        (_, end)  <- rawPair
+        p         <- page
+        served    <- ZIO.scoped(m.serve(end, p).provideSome[Scope & Audit](ZLayer.succeed(gate)))
+        ending    <- served.ending
+        leaving   <- served.teardown("too late")
+      yield assertTrue(ending == Ending.PortClosed, leaving == Ending.PortClosed)
+    ,
     test("a view torn down before it initialized is sent nothing, and ends at once"):
       for
         (gate, _) <- answering(ConsentOutcome.Unavailable)
