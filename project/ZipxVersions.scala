@@ -24,7 +24,7 @@ object MyVersions extends ZipxVersions:
   val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.10.0-SNAPSHOT")
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.7.1")
   val ascentCss       = ascentJs.mod("ascent-css")
-  val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.2").test
+  val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
   val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
@@ -32,7 +32,7 @@ object MyVersions extends ZipxVersions:
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
   val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.17.0")
-  val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.2")
+  val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.1")
 
   def coreLib     = library(zio, zioStreams, zioJson)
