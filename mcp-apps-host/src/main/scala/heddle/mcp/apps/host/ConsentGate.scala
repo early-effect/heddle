@@ -27,17 +27,28 @@ object ConsentGate:
     ZLayer.succeed(new ConsentGate:
       def decide(request: ConsentRequest): UIO[ConsentOutcome] = ZIO.succeed(ConsentOutcome.Unavailable))
 
-  /** Asks through `ask` (a host's dialog), and remembers `AllowForSession` for the same server, view, and tool as long
-    * as the gate lives.
+  /** Asks through `ask` (a host's one dialog), and remembers `AllowForSession` in a memory of its own for as long as
+    * the gate lives.
     */
   def remembering(ask: ConsentRequest => UIO[ConsentOutcome]): ULayer[ConsentGate] =
-    ZLayer(Ref.make(Set.empty[(ServerName, UiUri, ToolName)]).map { allowed =>
-      new ConsentGate:
-        def decide(request: ConsentRequest): UIO[ConsentOutcome] =
-          val key = (request.server, request.view, request.tool)
-          ZIO.ifZIO(allowed.get.map(_.contains(key)))(
-            ZIO.succeed(ConsentOutcome.AllowForSession),
-            ask(request).tap(o => allowed.update(_ + key).when(o == ConsentOutcome.AllowForSession)),
-          )
-    })
+    ZLayer(ConsentMemory.make.map(_.gate(ask)))
 end ConsentGate
+
+/** What the user allowed for the session: `AllowForSession` for a server, view, and tool, however many gates ask. A
+  * host with a dialog per frame gives each frame its own gate, so the frame's own dialog answers it, and shares one
+  * memory, so "for this session" means the same everywhere on the page.
+  */
+final class ConsentMemory private (allowed: Ref[Set[(ServerName, UiUri, ToolName)]]):
+  /** A gate that answers from this memory, and asks through `ask` for anything it does not hold. */
+  def gate(ask: ConsentRequest => UIO[ConsentOutcome]): ConsentGate = new ConsentGate:
+    def decide(request: ConsentRequest): UIO[ConsentOutcome] =
+      val key = (request.server, request.view, request.tool)
+      ZIO.ifZIO(allowed.get.map(_.contains(key)))(
+        ZIO.succeed(ConsentOutcome.AllowForSession),
+        ask(request).tap(o => allowed.update(_ + key).when(o == ConsentOutcome.AllowForSession)),
+      )
+
+object ConsentMemory:
+  def make: UIO[ConsentMemory] = Ref.make(Set.empty[(ServerName, UiUri, ToolName)]).map(ConsentMemory(_))
+
+  val layer: ULayer[ConsentMemory] = ZLayer(make)
