@@ -64,8 +64,10 @@ final class AppsHost private (settings: HostSettings, generations: Ref[Long]):
         Clock.instant.flatMap(at =>
           ZIO.serviceWithZIO[Audit](_.record(AuditEvent(at, server.name, view.uri, generation, Action.Mount, decision)))
         )
-      pin <- ZIO.serviceWithZIO[HashPins](_.check(PinKey(server.name, view.uri), resource.digest))
-      _   <- pin match
+      pin <- ZIO
+        .serviceWithZIO[HashPins](_.check(PinKey(server.name, view.uri), resource.digest))
+        .mapError(MountRefusal.Pins(_))
+      _ <- pin match
         case PinCheck.Changed(pinned) =>
           record(Decision.HashMismatch(pinned, resource.digest)) *>
             ZIO.fail(MountRefusal.HashMismatch(view.uri, pinned, resource.digest))

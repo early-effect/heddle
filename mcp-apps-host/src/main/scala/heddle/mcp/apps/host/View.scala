@@ -9,19 +9,27 @@ import zio.Chunk
 import zio.json.JsonCodec
 import zio.json.ast.Json
 
+/** Why text is not a view digest. */
+enum DigestError(val message: String) extends HeddleError:
+  case Length(n: Int)                    extends DigestError(s"a digest is 64 hex characters, not $n")
+  case BadCharacter(char: Char, at: Int) extends DigestError(s"'$char' at $at: a digest is lowercase hex")
+
 /** The SHA-256 of a view's bytes, in hex: what a host pins. */
 opaque type Digest = String
 
 object Digest:
   def of(text: String): Digest = Sha256.hex(Chunk.fromArray(text.getBytes(StandardCharsets.UTF_8)))
 
-  /** 64 lowercase hex characters, decoded strictly. */
-  given JsonCodec[Digest] =
-    JsonCodec.string.transformOrFail(
-      s =>
-        Either.cond(s.length == 64 && s.forall(c => c.isDigit || ('a' to 'f').contains(c)), s, s"$s is not a digest"),
-      identity,
-    )
+  /** 64 lowercase hex characters. */
+  def from(raw: String): Either[DigestError, Digest] =
+    if raw.length != 64 then Left(DigestError.Length(raw.length))
+    else
+      raw.indexWhere(c => !(c.isDigit || ('a' to 'f').contains(c))) match
+        case -1 => Right(raw)
+        case at => Left(DigestError.BadCharacter(raw(at), at))
+
+  /** A JSON string, decoded strictly. */
+  given JsonCodec[Digest] = JsonCodec.string.transformOrFail(from(_).left.map(_.message), identity)
 
   extension (d: Digest) def hex: String = d
 end Digest
@@ -41,7 +49,9 @@ enum MountRefusal(val message: String) extends HeddleError:
   case Unreadable(uri: UiUri, reason: String) extends MountRefusal(s"${uri.value}: $reason")
   case HashMismatch(uri: UiUri, pinned: Digest, served: Digest)
       extends MountRefusal(s"${uri.value} changed since it was pinned (${pinned.hex} is now ${served.hex})")
-  case Session(error: McpError) extends MountRefusal(error.message)
+  case Pins(error: PinFileError) extends MountRefusal(error.message)
+  case Session(error: McpError)  extends MountRefusal(error.message)
+end MountRefusal
 
 /** A view as the server links it: its `ui://` resource, the tool that opened it, and the tools it may call. The host
   * reads all of this from the live `tools/list`, never from the view.
