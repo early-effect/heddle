@@ -26,6 +26,7 @@ object RelayScriptGen:
        |    $parts
        |  ).mkString
        |""".stripMargin
+  end source
 
   private def literal(s: String): String =
     val b = new StringBuilder("\"")
@@ -40,4 +41,5 @@ object RelayScriptGen:
     }
     b += '"'
     b.result()
+  end literal
 end RelayScriptGen

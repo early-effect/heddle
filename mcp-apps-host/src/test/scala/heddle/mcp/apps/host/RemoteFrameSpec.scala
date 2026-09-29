@@ -26,12 +26,12 @@ object RemoteFrameSpec extends ZIOSpecDefault:
     ZStream
       .fromQueue(toBrowser)
       .foreach {
-        case FrameEvent.Ready(html, _) => ready.succeed(html).unit
-        case FrameEvent.ToView(message) => toView.offer(message).unit
+        case FrameEvent.Ready(html, _)   => ready.succeed(html).unit
+        case FrameEvent.ToView(message)  => toView.offer(message).unit
         case FrameEvent.Ask(id, request) =>
           asked.update(_ :+ request) *> toHost.offer(FrameEvent.Answer(id, ConsentOutcome.AllowOnce)).unit
         case FrameEvent.Resize(height) => resized.succeed(height).unit
-        case _                          => ZIO.unit
+        case _                         => ZIO.unit
       }
 
   private val served = suite("a view served across a frame stream")(
@@ -44,10 +44,10 @@ object RemoteFrameSpec extends ZIOSpecDefault:
         asked          <- Ref.make(Chunk.empty[ConsentRequest])
         resized        <- Promise.make[Nothing, Double]
         ready          <- Promise.make[Nothing, String]
-        _ <- browser(toBrowser, toHost, toView, asked, resized, ready).forkScoped
-        remote <- RemoteFrame.connect(event => toBrowser.offer(event).unit, ZStream.fromQueue(toHost))
-        _      <- remote.serve(mount)
-        html   <- ready.await
+        _              <- browser(toBrowser, toHost, toView, asked, resized, ready).forkScoped
+        remote         <- RemoteFrame.connect(event => toBrowser.offer(event).unit, ZStream.fromQueue(toHost))
+        _              <- remote.serve(mount)
+        html           <- ready.await
         view = ViewPort.from(
           message => toHost.offer(FrameEvent.FromView(message)).unit,
           ZStream.fromQueue(toView),
@@ -78,8 +78,7 @@ object RemoteFrameSpec extends ZIOSpecDefault:
         sent      <- toBrowser.take
         _         <- toHost.shutdown
         outcome   <- waiting.join
-      yield assertTrue(sent == FrameEvent.Ask(1, incAsk), outcome == ConsentOutcome.Unavailable)
-    ,
+      yield assertTrue(sent == FrameEvent.Ask(1, incAsk), outcome == ConsentOutcome.Unavailable),
   )
 
   private val codec = suite("FrameEvent")(

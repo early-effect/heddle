@@ -69,13 +69,11 @@ object HashPinsSpec extends ZIOSpecDefault:
         err  <- ZIO.service[HashPins].provide(HashPins.durable(file)).flip
       yield assertTrue(err match
         case PinFileError.Corrupt(detail) => detail.contains("repeats")
-        case _                            => false
-      )
-    ,
+        case _                            => false),
   )
 
   private final class MemoryFile(body: Ref[Option[String]], val refuse: Ref[Boolean]) extends PinFile:
-    def read: IO[PinFileError, Option[String]] = body.get
+    def read: IO[PinFileError, Option[String]]      = body.get
     def write(text: String): IO[PinFileError, Unit] =
       ZIO.ifZIO(refuse.get)(ZIO.fail(PinFileError.Unwritable("refused")), body.set(Some(text)))
 
