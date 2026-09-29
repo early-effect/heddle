@@ -117,7 +117,10 @@ final case class Mount(
       pending <- Ref.make(Map.empty[RequestId, Promise[Nothing, Unit]])
       // Bounded, so a view that floods the log costs the host at most one budget of memory.
       logs <- Queue.dropping[LoggingLevel](settings.logs.lines.toInt.max(1))
-      talk = Mount.Conversation(this, port, frame, gate, audit, state, ended, leaving, pending, logs)
+      // The calls in flight, which the end of the mount interrupts.
+      calls <- ZIO.serviceWithZIO[Scope](_.fork)
+      _     <- ended.await.zipRight(calls.close(Exit.unit)).forkScoped
+      talk = Mount.Conversation(this, port, frame, gate, audit, state, ended, leaving, pending, logs, calls)
       _ <- talk.drainLogs.forkScoped
       _ <- port.receive
         .interruptWhen(ended.await)
@@ -163,6 +166,7 @@ object Mount:
       leaving: Promise[Nothing, String],
       pending: Ref[Map[RequestId, Promise[Nothing, Unit]]],
       logs: Queue[LoggingLevel],
+      calls: Scope,
   ):
     private val settings = mount.settings
     private val view     = mount.view
@@ -217,15 +221,17 @@ object Mount:
                 record(Action.Navigated, Decision.DroppedAfterNavigate) *> ended.succeed(Ending.Navigated).unit
               else record(plain, Decision.Allowed) *> answer(id, json(initializeResult))
             }
-        case ViewRequest.CallTool(name, arguments) => callTool(id, name, arguments)
+        case ViewRequest.CallTool(name, arguments) => inFlight(callTool(id, name, arguments))
         case ViewRequest.ReadResource(uri)         =>
           if uri != view.uri.value then
             record(plain, Decision.Denied(Denial.NotTheView(uri))) *> fail(id, refused(Denial.NotTheView(uri)))
           else
             record(plain, Decision.Allowed) *>
-              mount.server.session
-                .readResource(uri)
-                .foldZIO(e => fail(id, RpcError.Internal(e.message)), c => answer(id, json(ReadResourceResult(c))))
+              inFlight(
+                mount.server.session
+                  .readResource(uri)
+                  .foldZIO(e => fail(id, RpcError.Internal(e.message)), c => answer(id, json(ReadResourceResult(c))))
+              )
         case ViewRequest.OpenLink(url) =>
           Url.decode(url).toOption.filter(link) match
             case Some(u) =>
@@ -248,6 +254,11 @@ object Mount:
         case ViewRequest.Ping => answer(id, Json.Obj())
       end match
     end viewRequest
+
+    /** Work that waits on the user or the server runs on its own fiber, so the view is heard meanwhile: its pings, its
+      * size, its next call, its answer to teardown. JSON-RPC ids pair the answers; the mount's end interrupts it.
+      */
+    private def inFlight(work: UIO[Unit]): UIO[Unit] = work.forkIn(calls).unit
 
     private def link(u: Url): Boolean = u.absolute && u.scheme.exists(s => s == Scheme.Http || s == Scheme.Https)
 
@@ -313,20 +324,25 @@ object Mount:
         .enforce(ZStream.fromQueue(logs))
         .foreach(level => record(Action.Notification("notifications/message"), Decision.Logged(level)))
 
-    /** One teardown per mount: the first reason wins, and a mount that already ended is left alone. */
+    /** One teardown per mount: the first reason wins, and a mount that already ended is left alone. A view that has not
+      * said `initialized` is not asked, since the host may send it nothing before then; it has nothing to save yet.
+      */
     def leave(reason: String): UIO[Unit] =
-      val id = RequestId.Str(s"heddle-teardown-${mount.generation.value}")
       ZIO.unlessZIODiscard(ended.isDone)(
-        for
-          heard <- Promise.make[Nothing, Unit]
-          _     <- pending.update(_.updated(id, heard))
-          _     <- send(HostRequest.ResourceTeardown(Some(reason)).message(id))
-          _     <- heard.await.timeout(settings.teardownWait)
-          _     <- record(Action.Teardown, Decision.TornDown(reason))
-          _     <- ended.succeed(Ending.TornDown(reason))
-        yield ()
+        ZIO.whenZIODiscard(state.get.map(_.initialized))(ask(reason)) *>
+          record(Action.Teardown, Decision.TornDown(reason)) *>
+          ended.succeed(Ending.TornDown(reason))
       )
-    end leave
+
+    /** Sends `ui/resource-teardown`, and waits for the view's answer or the host's patience. */
+    private def ask(reason: String): UIO[Unit] =
+      val id = RequestId.Str(s"heddle-teardown-${mount.generation.value}")
+      for
+        heard <- Promise.make[Nothing, Unit]
+        _     <- pending.update(_.updated(id, heard))
+        _     <- send(HostRequest.ResourceTeardown(Some(reason)).message(id))
+        _     <- heard.await.timeout(settings.teardownWait)
+      yield ()
 
     private def initializeResult: InitializeResult =
       InitializeResult(

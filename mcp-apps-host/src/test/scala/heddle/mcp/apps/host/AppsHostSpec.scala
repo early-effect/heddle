@@ -318,11 +318,13 @@ object AppsHostSpec extends ZIOSpecDefault:
         (view, back) <- ViewPort.pair
         p            <- page
         served       <- m.serve(back, p).provideSome[Scope & Audit](ZLayer.succeed(gate))
-        _            <- AppBridge.connect(
+        bridge       <- AppBridge.connect(
           CounterHost.shed,
           view,
           AppBridge.Settings(Implementation("counter-view", "1"), onTeardown = saved.succeed(()).unit),
         )
+        // The host sends the run once it has heard initialized, which is when it may ask the view anything.
+        _      <- bridge.run.collect { case Run.Returned(_, _) => () }.runHead
         ending <- served.teardown("the user closed it")
         done   <- saved.isDone
         log    <- audited
@@ -330,6 +332,80 @@ object AppsHostSpec extends ZIOSpecDefault:
         ending == Ending.TornDown("the user closed it"),
         done,
         log.exists(_.decision == Decision.TornDown("the user closed it")),
+      )
+    ,
+    test("while a call waits on the user, the view is still heard, and its next call is asked too"):
+      for
+        held  <- Promise.make[Nothing, ConsentOutcome]
+        asked <- Queue.unbounded[ConsentRequest]
+        gate = new ConsentGate:
+          def decide(request: ConsentRequest): UIO[ConsentOutcome] = asked.offer(request) *> held.await
+        (v, _, count, _) <- raw(gate)
+        first            <- v.ask(1, "tools/call", Json.Obj("name" -> Json.Str("inc"))).fork
+        one              <- asked.take
+        pong             <- v.ask(2, "ping")
+        second           <- v.ask(3, "tools/call", Json.Obj("name" -> Json.Str("inc"))).fork
+        two              <- asked.take
+        _                <- held.succeed(ConsentOutcome.AllowOnce)
+        a                <- first.join
+        b                <- second.join
+        n                <- count.get
+      yield assertTrue(
+        one.tool == ToolName("inc"),
+        two.tool == ToolName("inc"),
+        pong == Message.Result(RequestId.Num(2), Json.Obj()),
+        a match
+          case Message.Result(RequestId.Num(1), _) => true
+          case _                                   => false
+        ,
+        b match
+          case Message.Result(RequestId.Num(3), _) => true
+          case _                                   => false
+        ,
+        n == 2,
+      )
+    ,
+    test("a call still waiting when the mount ends is interrupted, and never answered"):
+      for
+        asked       <- Queue.unbounded[ConsentRequest]
+        interrupted <- Promise.make[Nothing, Unit]
+        gate = new ConsentGate:
+          def decide(request: ConsentRequest): UIO[ConsentOutcome] =
+            asked.offer(request) *> ZIO.never.onInterrupt(interrupted.succeed(()))
+        (v, served, count, _) <- raw(gate)
+        _     <- v.port.send(Message.Request(RequestId.Num(1), "tools/call", Json.Obj("name" -> Json.Str("inc"))))
+        _     <- asked.take
+        _     <- v.notify(SandboxMessage.Navigated.method)
+        _     <- served.ending
+        _     <- interrupted.await
+        heard <- v.heard.get
+        n     <- count.get
+      yield assertTrue(
+        !heard.exists {
+          case Message.Result(RequestId.Num(1), _) | Message.Error(Some(RequestId.Num(1)), _) => true
+          case _                                                                              => false
+        },
+        n == 0,
+      )
+    ,
+    test("a view torn down before it initialized is sent nothing, and ends at once"):
+      for
+        (gate, _) <- answering(ConsentOutcome.Unavailable)
+        (m, _)    <- mounted()
+        (v, end)  <- rawPair
+        p         <- page
+        served    <- m.serve(end, p).provideSome[Scope & Audit](ZLayer.succeed(gate))
+        _         <- v.ask(0, "ui/initialize", initialize)
+        ending    <- served.teardown("the page closed it")
+        heard     <- v.heard.get
+        log       <- audited
+      yield assertTrue(
+        ending == Ending.TornDown("the page closed it"),
+        !heard.exists {
+          case Message.Request(_, "ui/resource-teardown", _) => true
+          case _                                             => false
+        },
+        log.exists(_.decision == Decision.TornDown("the page closed it")),
       )
     ,
     test("a view that asks to go but never answers teardown is torn down when the host's patience runs out"):
