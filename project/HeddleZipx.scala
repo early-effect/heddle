@@ -85,8 +85,10 @@ object HeddleZipx:
         extraSteps = browserCiSetup,
         env = javaOpts,
       ),
-      ZipxCentral.release.withCondition(upstream),
+      ZipxCentral.snapshots.andCondition(upstream),
+      ZipxCentral.pullRequestSnapshots("snapshots"),
       ZipxDocs.pages().andCondition(upstream),
     ),
+    zipxReleaseWorkflow := Some(ZipxCentral.releases),
   )
 end HeddleZipx

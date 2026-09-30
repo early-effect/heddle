@@ -1,15 +1,16 @@
 package heddle.mcp.apps
 
 import zio.Chunk
+import zio.json.JsonCodec
 
 /** One thing a host took away from what a view asked. The audit log records each. */
-enum Narrowing:
+enum Narrowing derives JsonCodec:
   case OriginDropped(directive: Directive, origin: Origin)
   case PermissionDropped(permission: Permission)
   case StableOriginRefused(label: String)
 
 /** One of a view's network lists, named by its `_meta.ui.csp` key. */
-enum Directive(val wire: String):
+enum Directive(val wire: String) derives JsonCodec:
   case Connect  extends Directive("connectDomains")
   case Resource extends Directive("resourceDomains")
   case Frame    extends Directive("frameDomains")

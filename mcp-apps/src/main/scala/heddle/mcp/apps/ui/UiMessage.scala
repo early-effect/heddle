@@ -214,9 +214,14 @@ enum SandboxMessage(val method: String):
   case ResourceReady(html: String, sandbox: Option[String], grant: SandboxGrant)
       extends SandboxMessage("ui/notifications/sandbox-resource-ready")
 
+  /** Heddle's relay only, not the spec's: the view's frame loaded a second document (a reload or a navigation), so the
+    * relay has stopped forwarding for good. Anything that document says would not be the view the host framed.
+    */
+  case Navigated extends SandboxMessage("ui/notifications/sandbox-navigated")
+
   def params: Json.Obj =
     this match
-      case ProxyReady                          => Json.Obj()
+      case ProxyReady | Navigated              => Json.Obj()
       case ResourceReady(html, sandbox, grant) =>
         Json.Obj(
           Chunk("html" -> Json.Str(html)) ++ Chunk
@@ -234,6 +239,7 @@ object SandboxMessage:
     val p = UiWire.Params(method, params)
     method match
       case "ui/notifications/sandbox-proxy-ready"    => Right(ProxyReady)
+      case "ui/notifications/sandbox-navigated"      => Right(Navigated)
       case "ui/notifications/sandbox-resource-ready" =>
         for
           html    <- p.required[String]("html")
@@ -241,6 +247,7 @@ object SandboxMessage:
           grant   <- p.whole[SandboxGrant]
         yield ResourceReady(html, sandbox, grant)
       case other => Left(UiError.UnknownMethod(other))
+    end match
   end decode
 end SandboxMessage
 

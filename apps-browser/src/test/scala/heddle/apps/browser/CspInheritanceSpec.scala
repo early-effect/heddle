@@ -44,8 +44,11 @@ object CspInheritanceSpec extends ZIOSpecDefault:
   /** Every relay's view reported; decoding fails until all three have. */
   final case class Reports(served: Report, opaque: Report, control: Report) derives JsonDecoder
 
-  /** The host page's origin, and the Served relay's. */
-  final case class Origins(host: Origin, relay: Origin)
+  /** The host page's origin, the Served relay's, and an unrelated page's. */
+  final case class Origins(host: Origin, relay: Origin, elsewhere: Origin)
+
+  /** What the unrelated page saw once it had waited: whether the relay it framed ever spoke. */
+  final case class Embedded(spoke: Boolean) derives JsonDecoder
 
   private def sha256(script: String): String =
     val digest = MessageDigest.getInstance("SHA-256").digest(script.getBytes(StandardCharsets.UTF_8))
@@ -87,6 +90,21 @@ object CspInheritanceSpec extends ZIOSpecDefault:
   /** Only the relay's script and the view's probe may run, and nothing may connect. */
   private def policy(host: Origin): String =
     s"default-src 'none'; script-src ${sha256(relayScript(host))} ${sha256(probe(host))}; connect-src 'none'"
+
+  /** The served relay's header also names the one page that may frame it; a `<meta>` cannot carry this. */
+  private def servedPolicy(host: Origin): String = s"${policy(host)}; frame-ancestors ${host.render}"
+
+  /** A page on a third origin that frames the served relay and records whether anything inside it spoke. */
+  private def embedPage(relay: Origin): String =
+    s"""<!doctype html><html><head><title>elsewhere</title></head><body>
+       |<script>
+       |window.embedded = null;
+       |let spoke = false;
+       |window.addEventListener("message", e => { if (e.data && e.data.spike) spoke = true; });
+       |setTimeout(() => { window.embedded = { spoke }; }, 3000);
+       |</script>
+       |<iframe sandbox="allow-scripts allow-same-origin" src="${relay.render}/relay"></iframe>
+       |</body></html>""".stripMargin
 
   private def relayHtml(host: Origin, csp: Csp): String =
     val meta = csp match
@@ -131,12 +149,19 @@ object CspInheritanceSpec extends ZIOSpecDefault:
       relay      <- Server.install(
         Routes(
           Method.GET / "relay" -> Handler.succeed(
-            Response.html(relayHtml(hostOrigin, Csp.Header)).withHeader("Content-Security-Policy", policy(hostOrigin))
+            Response
+              .html(relayHtml(hostOrigin, Csp.Header))
+              .withHeader("Content-Security-Policy", servedPolicy(hostOrigin))
           )
         ),
         loopback,
       )
-      origins <- at(relay).map(Origins(hostOrigin, _))
+      relayOrigin <- at(relay)
+      elsewhere   <- Server.install(
+        Routes(Method.GET / "elsewhere" -> Handler.succeed(Response.html(embedPage(relayOrigin)))),
+        loopback,
+      )
+      origins <- at(elsewhere).map(Origins(hostOrigin, relayOrigin, _))
       _       <- bound.succeed(origins)
     yield origins
 
@@ -147,16 +172,16 @@ object CspInheritanceSpec extends ZIOSpecDefault:
       case other            => Left(s"not a serialized value: $other")
     }
 
-  /** The page's reports, polled until every view has posted, or the last reading when they never do. */
-  private def reports(page: Page): IO[ChekhovError | String, Reports] =
+  /** `window.<name>`, polled until it decodes, or the last reading when it never does. */
+  private def poll[A: JsonDecoder](page: Page, name: String): IO[ChekhovError | String, A] =
     val read = page
-      .evaluate("() => JSON.stringify(window.results)", isFunction = true)
-      .map(raw => unwrap(raw).flatMap(text => text.fromJson[Reports].left.map(e => s"$e in $text")))
+      .evaluate(s"() => JSON.stringify(window.$name)", isFunction = true)
+      .map(raw => unwrap(raw).flatMap(text => text.fromJson[A].left.map(e => s"$e in $text")))
     read
       .repeat(Schedule.spaced(100.millis) *> Schedule.recurUntil(_.isRight))
       .timeout(15.seconds)
       .someOrElseZIO(read)
-      .flatMap(r => ZIO.fromEither(r).mapError(e => s"the views never all reported: $e"))
+      .flatMap(r => ZIO.fromEither(r).mapError(e => s"window.$name never settled: $e"))
 
   private def sandboxed(r: Report): TestResult =
     assertTrue(r.origin == "null", r.topThrows.contains("SecurityError"), r.topLocation.isEmpty)
@@ -174,21 +199,27 @@ object CspInheritanceSpec extends ZIOSpecDefault:
 
   /** One test per browser, each with its own Playwright process. */
   private def on(browser: ChekhovBrowser) =
-    test(s"${browser.channelName}: the view inherits its relay's CSP in both modes, and cannot reach the top page"):
+    test(
+      s"${browser.channelName}: the view inherits its relay's CSP in both modes and cannot reach the top page, " +
+        "and no other page can frame the served relay"
+    ):
       val config =
         ChekhovConfig(browser = browser, headless = true, artifactsDir = java.nio.file.Path.of("target/chekhov"))
       ZIO
         .scoped:
           for
-            origins <- servers
-            page    <- ZIO.service[Page]
-            _       <- page.goto(s"${origins.host.render}/host")
-            seen    <- reports(page)
+            origins  <- servers
+            page     <- ZIO.service[Page]
+            _        <- page.goto(s"${origins.host.render}/host")
+            seen     <- poll[Reports](page, "results")
+            _        <- page.goto(s"${origins.elsewhere.render}/elsewhere")
+            embedded <- poll[Embedded](page, "embedded")
             // The per-browser record the design doc cites; CI logs keep it for each run.
-            _ <- ZIO.logInfo(s"${browser.channelName} sandbox reports: $seen")
+            _ <- ZIO.logInfo(s"${browser.channelName} sandbox reports: $seen; framed elsewhere: $embedded")
           yield (sandboxed(seen.served) && confined(seen.served)).label("served") &&
             (sandboxed(seen.opaque) && confined(seen.opaque)).label("opaque") &&
-            (sandboxed(seen.control) && unconfined(seen.control)).label("control")
+            (sandboxed(seen.control) && unconfined(seen.control)).label("control") &&
+            assertTrue(!embedded.spoke).label("framed elsewhere")
         .provide(ZLayer.succeed(config), PlaywrightDriver.suiteLayers)
 
   def spec = suite("MCP Apps sandbox: CSP inheritance (S2)")(

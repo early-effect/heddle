@@ -64,11 +64,6 @@ developers := List(
 )
 versionScheme := Some("early-semver")
 
-publishTo := {
-  val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-  if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-  else localStaging.value
-}
 publishMavenStyle    := true
 pomIncludeRepository := { _ => false }
 
@@ -94,8 +89,19 @@ lazy val root = project
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
-      mcpApps.projectRefs ++
-      Seq[sbt.ProjectReference](example, bench, docs, docsJS, appsBrowser))*
+      mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++
+      appsBrowserShared.projectRefs ++
+      Seq[sbt.ProjectReference](
+        mcpAppsRelay,
+        mcpAppsFrame,
+        example,
+        bench,
+        docs,
+        docsJS,
+        appsBrowserView,
+        appsBrowserHost,
+        appsBrowser,
+      ))*
   )
   .settings(
     name           := "heddle-root",
@@ -289,11 +295,67 @@ lazy val mcpApps = (projectMatrix in file("mcp-apps"))
   .jvmPlatform(scalaVersions = scalaVersions)
   .jsPlatform(
     scalaVersions = scalaVersions,
-    MyVersions.jsRuntime ++ Seq(
+    MyVersions.jsRuntime ++ MyVersions.domFacade ++ Seq(
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+
+/** The sandbox proxy's script: a browser app, linked once and carried inside the host kit, never published alone. */
+lazy val mcpAppsRelay = project
+  .in(file("mcp-apps-relay"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .enablePlugins(ScalaJSPlugin)
+  .dependsOn(mcpApps.js(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name                            := "heddle-mcp-apps-relay",
+    publish / skip                  := true,
+    zipxPublish                     := Some(false),
+    scalaJSUseMainModuleInitializer := true,
+    // A classic script, so it runs inline in the relay document under a CSP hash.
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
+  )
+
+lazy val mcpAppsHost = (projectMatrix in file("mcp-apps-host"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .dependsOn(mcpApps % "compile->compile;test->test")
+  .settings(commonSettings)
+  .settings(MyVersions.coreTest)
+  .settings(
+    name                 := "heddle-mcp-apps-host",
+    description          := "MCP Apps host kit: effective policy, CSP, hash pins, audit, consent, and the view pipeline",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+    // The relay every mount carries: sbt-splice's production script (Scala.js full link, then esbuild's minify).
+    Compile / sourceGenerators += Def.task {
+      val linked = (mcpAppsRelay / spliceFull).value
+      val out    = (Compile / sourceManaged).value / "heddle" / "mcp" / "apps" / "host" / "RelayScript.scala"
+      IO.write(out, RelayScriptGen.source(IO.read(linked)))
+      Seq(out)
+    }.taskValue,
+  )
+  .jvmPlatform(scalaVersions = scalaVersions)
+  .jsPlatform(
+    scalaVersions = scalaVersions,
+    MyVersions.jsRuntime ++ Seq(
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    ),
+  )
+
+/** The host page's half of the sandbox: the relay iframe, its handshake, and a mount served through it. */
+lazy val mcpAppsFrame = project
+  .in(file("mcp-apps-frame"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .enablePlugins(ScalaJSPlugin)
+  .dependsOn(mcpAppsHost.js(scala3Version))
+  .settings(commonSettings)
+  .settings(
+    name                 := "heddle-mcp-apps-frame",
+    description          := "MCP Apps host frame: the relay iframe and its handshake, in the host page",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
 
 lazy val browserCheck = taskKey[Unit]("fail if the browser-side MCP surface links a Node module")
 
@@ -326,12 +388,44 @@ lazy val browser = project
     },
   )
 
-/** What the MCP Apps sandbox assumes of real browsers, proven in Chromium, Firefox, and WebKit with Chekhov. Test-only
-  * and never published; it grows into the host kit's hostile-view suite.
+/** What both ends of the browser suite share: the counter MCP App, and the reference host page's config and outcomes. */
+lazy val appsBrowserShared = (projectMatrix in file("apps-browser/shared"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .dependsOn(mcpAppsHost)
+  .settings(commonSettings)
+  .settings(name := "heddle-apps-browser-shared", publish / skip := true, zipxPublish := Some(false))
+  .jvmPlatform(scalaVersions = Seq(scala3Version))
+  .jsPlatform(scalaVersions = Seq(scala3Version))
+
+/** A browser app that is one inline script: a classic script, run once, never published. */
+def inlineApp(id: String, dir: String) =
+  Project(id, file(dir))
+    .disablePlugins(chekhov.sbt.ChekhovPlugin)
+    .enablePlugins(ScalaJSPlugin)
+    .settings(commonSettings)
+    .settings(
+      publish / skip                  := true,
+      zipxPublish                     := Some(false),
+      scalaJSUseMainModuleInitializer := true,
+      scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
+    )
+
+/** The counter's view: heddle's own AppBridge over postMessage, typed from the shed. */
+lazy val appsBrowserView = inlineApp("appsBrowserView", "apps-browser/view")
+  .dependsOn(appsBrowserShared.js(scala3Version))
+  .settings(name := "heddle-apps-browser-view")
+
+/** The reference host page: host kit, frame, and MCP client, all in the browser. */
+lazy val appsBrowserHost = inlineApp("appsBrowserHost", "apps-browser/host")
+  .dependsOn(mcpAppsFrame, appsBrowserShared.js(scala3Version))
+  .settings(name := "heddle-apps-browser-host")
+
+/** The MCP Apps sandbox and host kit, proven in Chromium, Firefox, and WebKit with Chekhov: what the browser guarantees
+  * (S2), and the reference host against a heddle view and a hostile one. Test-only and never published.
   */
 lazy val appsBrowser = project
   .in(file("apps-browser"))
-  .dependsOn(heddle.jvm(scala3Version), mcpApps.jvm(scala3Version))
+  .dependsOn(heddle.jvm(scala3Version), mcpAppsHost.jvm(scala3Version), appsBrowserShared.jvm(scala3Version))
   .settings(commonSettings)
   .settings(
     name            := "heddle-apps-browser",
@@ -341,6 +435,17 @@ lazy val appsBrowser = project
     MyVersions.browserTest,
     chekhovBrowsers := Seq(ChekhovBrowser.Chromium, ChekhovBrowser.Firefox, ChekhovBrowser.WebKit),
     Test / fork     := true,
+    // The view and host page, fast-linked for the suite (a production host ships sbt-splice's spliceFull).
+    Test / resourceGenerators += Def.task {
+      val _    = (appsBrowserView / Compile / fastLinkJS).value
+      val _    = (appsBrowserHost / Compile / fastLinkJS).value
+      val out  = (Test / resourceManaged).value / "apps-browser"
+      val view = out / "counter-view.js"
+      val host = out / "reference-host.js"
+      IO.copyFile((appsBrowserView / Compile / fastLinkJSOutput).value / "main.js", view)
+      IO.copyFile((appsBrowserHost / Compile / fastLinkJSOutput).value / "main.js", host)
+      Seq(view, host)
+    }.taskValue,
   )
 
 lazy val docs = project
@@ -379,15 +484,7 @@ lazy val docs = project
     specularMetaProject    := Some(LocalProject("heddle")),
     specularArtifactKind   := "library",
     specularSiteDirectory  := (ThisBuild / baseDirectory).value / "target" / "site",
-    specularDisplayVersion := {
-      val fallback = previousStableVersion.value.getOrElse("0.2.0")
-      (v: String) => {
-        val stripped = stripCi(v)
-        if (stripped != v) stripped
-        else if (v.contains('+')) fallback
-        else v
-      }
-    },
+    specularDisplayVersion := ((v: String) => v.stripSuffix("-SNAPSHOT")),
     specularJsLink := Def.uncached {
       (docsJS / Compile / fastLinkJS).value
       val outDir = (docsJS / Compile / fastLinkJSOutput).value
@@ -411,11 +508,11 @@ addCommandAlias("testBrowsers", "appsBrowser/testFull")
 addCommandAlias("docsPreview", "~docs/specularPreview")
 addCommandAlias(
   "testJVM",
-  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; mcpApps/testFull; example/testFull; docs/testFull; docs/specularSite",
+  "heddle/testFull; brotli/testFull; oauth/testFull; mcpProtocol/testFull; mcp/testFull; mcpApps/testFull; mcpAppsHost/testFull; example/testFull; docs/testFull; docs/specularSite",
 )
 addCommandAlias(
   "testJS",
-  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; oauthJS/testFull; browser/browserCheck",
+  "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; mcpAppsHostJS/testFull; oauthJS/testFull; browser/browserCheck",
 )
 addCommandAlias(
   "testNative",

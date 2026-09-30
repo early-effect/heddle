@@ -1,16 +1,19 @@
 package heddle.mcp.apps
 
 import zio.Chunk
+import zio.json.*
 import zio.json.ast.Json
 
 /** A tool's `_meta.ui`: the view it renders in, and who may call it. */
 final case class ToolUi(resourceUri: Option[UiUri], visibility: Visibility)
 
 /** What a host could not accept while reading `_meta.ui`. Unreadable asks are dropped, never widened. */
-enum MetaProblem:
+enum MetaProblem derives JsonCodec:
   case BadOrigin(directive: Directive, raw: String, reason: OriginError)
   case BadResourceUri(raw: String)
   case UnknownPermission(name: String)
+  case BadScriptHash(raw: String, reason: ScriptHashError)
+  case BadScriptHashes(reason: String)
 
 /** `_meta.ui` in both directions. `encode*` writes what a Heddle server sends; `decode*` reads any server's, keeps what
   * it can trust, and reports what it dropped.
@@ -18,6 +21,9 @@ enum MetaProblem:
 object UiMeta:
   val Key               = "ui"
   val LegacyResourceKey = "ui/resourceUri"
+
+  /** Heddle's own additions to a view resource's `_meta`: the hashes of its inline scripts, for a host's CSP. */
+  val HeddleKey = "rocks.earlyeffect/heddle"
 
   /** `text/html;profile=mcp-app`: an MCP App view. */
   val MimeType = "text/html;profile=mcp-app"
@@ -116,4 +122,26 @@ object UiMeta:
       case _                      => Border.HostDefault
     (UiPolicy(network, known, origin, border), cspProblems ++ unknown)
   end decodeResource
+
+  /** `_meta["rocks.earlyeffect/heddle"]` as a server writes it. Hashes arrive as text and are parsed one by one, so a
+    * bad one is reported and the rest kept.
+    */
+  private final case class HeddleMeta(scriptHashes: Chunk[String]) derives JsonCodec
+
+  def encodeScripts(hashes: Chunk[ScriptHash]): Json.Obj =
+    Json.Obj(HeddleKey -> HeddleMeta(hashes.map(_.value)).toJsonAST.getOrElse(Json.Obj()))
+
+  /** `None` when the server declared no hashes. Once it has declared any, only canonical ones survive, and a
+    * declaration that does not decode at all leaves none: a view whose hashes were corrupted runs no script of its own,
+    * rather than every inline one.
+    */
+  def decodeScripts(meta: Option[Json.Obj]): (Option[Chunk[ScriptHash]], Chunk[MetaProblem]) =
+    meta.flatMap(_.get(HeddleKey)) match
+      case None       => (None, Chunk.empty)
+      case Some(json) =>
+        json.as[HeddleMeta] match
+          case Left(reason)    => (Some(Chunk.empty), Chunk(MetaProblem.BadScriptHashes(reason)))
+          case Right(declared) =>
+            val parsed = declared.scriptHashes.map(r => ScriptHash.from(r).left.map(MetaProblem.BadScriptHash(r, _)))
+            (Some(parsed.flatMap(_.toOption)), parsed.flatMap(_.left.toOption))
 end UiMeta

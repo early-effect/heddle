@@ -103,6 +103,7 @@ object UiProtocolLawsSpec extends ZIOSpecDefault:
 
   private val sandbox: Gen[Any, SandboxMessage] = Gen.oneOf(
     Gen.const(SandboxMessage.ProxyReady),
+    Gen.const(SandboxMessage.Navigated),
     (text <*> Gen.option(Gen.const("allow-scripts")) <*> AppGens.network <*> AppGens.permissions).map((h, s, n, p) =>
       SandboxMessage.ResourceReady(h, s, SandboxGrant(n, p))
     ),

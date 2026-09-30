@@ -37,7 +37,9 @@ object LeakSpec extends ZIOSpecDefault:
             _     <- ZIO.attemptBlocking {
               val sock = Socket("127.0.0.1", port)
               sock.getOutputStream.write(
-                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10000\r\n\r\nab".getBytes(StandardCharsets.US_ASCII)
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10000\r\n\r\nab".getBytes(
+                  StandardCharsets.US_ASCII
+                )
               )
               sock.getOutputStream.flush()
               sock.close()
@@ -48,6 +50,7 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
+          end for
         }
       ,
       test("idle keep-alive then client close returns TCP to baseline"):
@@ -72,6 +75,7 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
+          end for
         }
       ,
       test("client disconnect on a streaming response does not leak"):
@@ -102,12 +106,13 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
+          end for
         }
       ,
       test("three load cycles do not stair-step heap or TCP"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         LiveServer(routes) { base =>
-          val port = java.net.URI.create(base).getPort
+          val port  = java.net.URI.create(base).getPort
           def burst =
             hits(port, 16) *>
               ZIO.succeed(Resources.gc()) *>
@@ -130,7 +135,8 @@ object LeakSpec extends ZIOSpecDefault:
               case _             => true
             }
             assertTrue(stair, tcpOk, heaps.forall(_ <= heap0 + 16L * 1024 * 1024))
-        }
+          end for
+        },
     ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds) @@ TestAspect.sequential
 
   private def cycle(n: Int, keepAlive: Boolean): ZIO[Any, Any, TestResult] =
@@ -161,7 +167,9 @@ object LeakSpec extends ZIOSpecDefault:
         fd1   <- ZIO.succeed(Resources.openFiles)
         pt1   <- ZIO.succeed(Resources.platformThreads)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1) && assertTrue(pt1 <= pt0 + 8)
+      end for
     }
+  end cycle
 
   private def soakKeepAlive(n: Int): ZIO[Any, Any, TestResult] =
     val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -188,7 +196,9 @@ object LeakSpec extends ZIOSpecDefault:
         heap1 <- ZIO.succeed(Resources.heapUsed)
         fd1   <- ZIO.succeed(Resources.openFiles)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
+      end for
     }
+  end soakKeepAlive
 
   private def hits(port: Int, n: Int): Task[Unit] =
     ZIO.foreachDiscard(0 until n) { _ =>
@@ -219,4 +229,5 @@ object LeakSpec extends ZIOSpecDefault:
       case (Some(a), Some(b)) => b <= a + 8
       case _                  => true
     assertTrue(tcpOk, fdOk, heap1 <= heap0 + 16L * 1024 * 1024)
+  end leaked
 end LeakSpec

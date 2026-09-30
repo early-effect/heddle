@@ -8,7 +8,7 @@ final case class UiDocument private (title: String, script: String):
   private def safeScript: String = script.replace("</script", "<\\/script")
 
   /** The CSP hash source for the inline script, as a host puts it in `script-src`. */
-  def scriptHash: String = Sha256.cspSource(safeScript)
+  def scriptHash: ScriptHash = ScriptHash.of(safeScript)
 
   def html: String =
     s"""<!doctype html>

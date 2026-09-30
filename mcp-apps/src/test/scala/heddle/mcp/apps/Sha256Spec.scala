@@ -17,9 +17,6 @@ object Sha256Spec extends ZIOSpecDefault:
         of("a" * 1000000) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
       )
     ,
-    test("a CSP hash source is sha256- and the base64 digest"):
-      assertTrue(Sha256.cspSource("abc") == "sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=")
-    ,
     test("every block boundary pads correctly"):
       check(Gen.int(0, 200))(n => assertTrue(of("x" * n).length == 64)),
   ) @@ TestAspect.timeout(60.seconds)

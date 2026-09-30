@@ -2,6 +2,7 @@ package heddle.mcp.apps
 
 import scala.annotation.publicInBinary
 import scala.quoted.*
+import zio.json.JsonCodec
 
 /** One web origin a view may reach: scheme, host, and a port when it is not the scheme's default. No wildcards, no
   * path, no userinfo: a policy names exactly what it allows.
@@ -19,6 +20,9 @@ object Origin:
 
   /** A literal (`Origin("https://api.example.com")`), checked at compile time. A runtime value goes through `from`. */
   inline def apply(inline raw: String): Origin = ${ literal('raw) }
+
+  /** A JSON string in its rendering, decoded strictly. */
+  given JsonCodec[Origin] = JsonCodec.string.transformOrFail(from(_).left.map(_.message), _.render)
 
   /** `https://api.example.com`, `http://localhost:8080`. A path, query, or `*` is a `Left`. */
   def from(raw: String): Either[OriginError, Origin] =

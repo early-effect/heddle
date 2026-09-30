@@ -1,6 +1,6 @@
 package heddle.mcp.apps.ui
 
-import heddle.mcp.apps.{Network, Permission, UiMeta}
+import heddle.mcp.apps.{MetaProblem, Network, Permission, UiMeta}
 import heddle.mcp.protocol.{Implementation, RequestId, Tool}
 import zio.Chunk
 import zio.json.*
@@ -351,12 +351,34 @@ object SandboxGrant:
         )
       },
       Json.decoder.mapOrFail {
+        case o: Json.Obj => Right(read(o)._1)
+        case other       => Left(s"not a sandbox grant: $other")
+      },
+    )
+
+  /** Refuses a grant that loses anything in decoding, where the lenient codec drops it. For whoever must run under
+    * exactly what was written (a relay, or the server that compiles a relay's CSP), as the given in their scope.
+    */
+  val strict: JsonCodec[SandboxGrant] =
+    JsonCodec(
+      summon[JsonCodec[SandboxGrant]].encoder,
+      Json.decoder.mapOrFail {
         case o: Json.Obj =>
-          val obj = (k: String) => o.get(k).collect { case v: Json.Obj => v }.getOrElse(Json.Obj())
-          Right(SandboxGrant(UiMeta.decodeCsp(obj("csp"))._1, UiMeta.decodePermissions(obj("permissions"))._1))
+          val (grant, problems) = read(o)
+          Either.cond(
+            problems.isEmpty,
+            grant,
+            s"the grant has entries that cannot be honored: ${problems.mkString(", ")}",
+          )
         case other => Left(s"not a sandbox grant: $other")
       },
     )
+
+  private def read(o: Json.Obj): (SandboxGrant, Chunk[MetaProblem]) =
+    val obj                   = (k: String) => o.get(k).collect { case v: Json.Obj => v }.getOrElse(Json.Obj())
+    val (network, badOrigins) = UiMeta.decodeCsp(obj("csp"))
+    val (perms, badPerms)     = UiMeta.decodePermissions(obj("permissions"))
+    (SandboxGrant(network, perms), badOrigins ++ badPerms)
 end SandboxGrant
 
 /** `McpUiHostCapabilities`: what the host offers the view. */

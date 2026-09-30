@@ -206,7 +206,9 @@ A view connects to its host with `AppBridge.connect(shed, port, settings)`. The 
 until its scope closes. `ViewPort` is the transport. In a browser it is
 `PostMessageBridge.toParent`: the view posts to `window.parent` and hears only messages from it,
 as the ext-apps SDK does, and anything that is not JSON-RPC is dropped. `ViewPort.pair` joins a
-host and a view in one process, as the tests do.
+host and a view in one process, as the tests do. A host process that is not the page serves with
+`RemoteFrame`: `Mount.serve` runs there, and the page's `Frame.follow` only frames and carries
+`FrameEvent`s.
 
 ```scala
 ZIO.scoped {
