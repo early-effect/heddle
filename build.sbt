@@ -64,11 +64,6 @@ developers := List(
 )
 versionScheme := Some("early-semver")
 
-publishTo := {
-  val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-  if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-  else localStaging.value
-}
 publishMavenStyle    := true
 pomIncludeRepository := { _ => false }
 
@@ -489,15 +484,7 @@ lazy val docs = project
     specularMetaProject    := Some(LocalProject("heddle")),
     specularArtifactKind   := "library",
     specularSiteDirectory  := (ThisBuild / baseDirectory).value / "target" / "site",
-    specularDisplayVersion := {
-      val fallback = previousStableVersion.value.getOrElse("0.2.0")
-      (v: String) => {
-        val stripped = stripCi(v)
-        if (stripped != v) stripped
-        else if (v.contains('+')) fallback
-        else v
-      }
-    },
+    specularDisplayVersion := ((v: String) => v.stripSuffix("-SNAPSHOT")),
     specularJsLink := Def.uncached {
       (docsJS / Compile / fastLinkJS).value
       val outDir = (docsJS / Compile / fastLinkJSOutput).value
