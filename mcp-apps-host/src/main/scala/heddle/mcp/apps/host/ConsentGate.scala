@@ -12,8 +12,16 @@ enum ConsentOutcome derives JsonCodec:
 
   def allows: Boolean = this == AllowOnce || this == AllowForSession
 
-/** One call a view asked to make, as the user is shown it. */
-final case class ConsentRequest(server: ServerName, view: UiUri, tool: ToolName, arguments: Json.Obj) derives JsonCodec
+/** One call a view asked to make, as the user is shown it. `summary` is the tool's own title or description. A host that
+  * did not read one leaves it off the wire, and a missing field is the same as none.
+  */
+final case class ConsentRequest(
+    server: ServerName,
+    view: UiUri,
+    tool: ToolName,
+    arguments: Json.Obj,
+    summary: Option[String] = None,
+) derives JsonCodec
 
 /** The one gate between a view and a tool call. The iframe is never the answerer, and installing a server is not
   * consent for what its view asks.

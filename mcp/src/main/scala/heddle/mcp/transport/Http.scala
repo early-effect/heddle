@@ -1,10 +1,11 @@
 package heddle.mcp.transport
 
-import heddle.http.{Method, Request, Response, Status}
+import heddle.http.{MediaType, Method, Request, Response, Status}
 import heddle.http.header.Headers
 import heddle.mcp.protocol.{Era, Message, Methods, ProtocolVersion, RequestMeta, RpcError}
-import heddle.mcp.server.{Engine, Envelope}
+import heddle.mcp.server.{Engine, Envelope, SessionHub}
 import heddle.route.{Handler, Routes}
+import heddle.sse.{ServerSentEvent, Sse}
 import zio.json.*
 import zio.json.ast.Json
 import zio.{ZIO, ZNothing}
@@ -18,44 +19,99 @@ object Http:
   val NameHeader     = "Mcp-Name"
   val SessionHeader  = Envelope.SessionHeader
 
-  def routes[R](engine: Engine[R], path: String = "mcp"): Routes[R, ZNothing] =
+  def routes[R](engine: Engine[R], hub: SessionHub, path: String = "mcp"): Routes[R, ZNothing] =
     val segs = path.split('/').filter(_.nonEmpty).toList
     Routes.fromHandler(Handler { (req: Request) =>
       if req.path.segments.toList != segs then ZIO.succeed(Response.notFound())
       else
         req.method match
-          case Method.POST   => post(engine, req)
-          case Method.DELETE => ZIO.succeed(Response.empty(Status.Ok))
-          case _             => ZIO.succeed(Response.methodNotAllowed("POST, DELETE"))
+          case Method.POST   => post(engine, hub, req)
+          case Method.GET    => get(hub, req)
+          case Method.DELETE => delete(hub, req)
+          case _             => ZIO.succeed(Response.methodNotAllowed("GET, POST, DELETE"))
     })
   end routes
 
-  private def post[R](engine: Engine[R], req: Request): ZIO[R, Nothing, Response] =
+  private def get(hub: SessionHub, req: Request): ZIO[Any, Nothing, Response] =
+    val sid    = req.headers.get(SessionHeader)
+    val accept = req.headers.get("Accept")
+    (sid, accept) match
+      case (None, _) =>
+        ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("GET /mcp needs a session id"))))
+      case (Some(id), Some(value)) if value.contains(MediaType.EventStream.render) =>
+        hub.contains(id).flatMap {
+          case false => ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("unknown session"))))
+          case true  =>
+            ZIO.succeed(
+              Sse.response(
+                // Firefox does not resolve fetch until the first body byte.
+                zio.stream.ZStream.unwrapScoped {
+                  hub.attach(id).foldZIO(
+                    _ => ZIO.succeed(zio.stream.ZStream.empty),
+                    queue =>
+                      ZIO.succeed(
+                        zio.stream.ZStream.succeed(ServerSentEvent.Heartbeat) ++
+                          zio.stream.ZStream.fromQueue(queue).map(message => ServerSentEvent(message.json.toJson))
+                      ),
+                  )
+                }
+              )
+            )
+        }
+      case _ =>
+        ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("GET /mcp needs Accept: text/event-stream"))))
+    end match
+  end get
+
+  private def delete(hub: SessionHub, req: Request): ZIO[Any, Nothing, Response] =
+    req.headers
+      .get(SessionHeader)
+      .fold(ZIO.succeed(Response.empty(Status.Ok)))(id => hub.close(id).as(Response.empty(Status.Ok)))
+
+  private def post[R](engine: Engine[R], hub: SessionHub, req: Request): ZIO[R, Nothing, Response] =
     req.body.utf8.orElseSucceed("").flatMap { raw =>
       raw.fromJson[Json] match
         case Left(_)     => ZIO.succeed(reply(Message.Error(None, RpcError.ParseError("Parse error"))))
         case Right(json) =>
           Message.decode(json) match
             case Left(err)                       => ZIO.succeed(reply(err))
-            case Right(msg) if session(req, msg) => sessionPost(engine, req, msg)
+            case Right(msg) if session(req, msg) => sessionPost(engine, hub, req, msg)
             case Right(msg)                      =>
               mismatch(req.headers, msg) match
                 case Some(err) => ZIO.succeed(reply(err))
-                case None      => engine.respond(msg, req.headers, Era.Stateless).map(accepted(_))
+                case None      => engine.respond(msg, req.headers, Era.Stateless, None).map(accepted(_))
     }
 
   private def session(req: Request, msg: Message): Boolean =
     method(msg).contains(Methods.Initialize) || req.headers.get(ProtocolHeader).contains(ProtocolVersion.Legacy.value)
 
-  private def sessionPost[R](engine: Engine[R], req: Request, msg: Message): ZIO[R, Nothing, Response] =
+  private def sessionPost[R](
+      engine: Engine[R],
+      hub: SessionHub,
+      req: Request,
+      msg: Message,
+  ): ZIO[R, Nothing, Response] =
     val opening = method(msg).contains(Methods.Initialize)
-    val sid     =
-      if opening then heddle.internal.Ids.uuid.map(id => Some(id.toString))
-      else ZIO.succeed(req.headers.get(Envelope.SessionHeader))
-    (sid <*> engine.respond(msg, req.headers, Era.Session)).map { (id, out) =>
-      val res = accepted(out)
-      id.fold(res)(res.withHeader(Envelope.SessionHeader, _))
-    }
+    if opening then
+      heddle.internal.Ids.uuid.flatMap { raw =>
+        val id = raw.toString
+        hub.open(id) *> engine.respond(msg, req.headers, Era.Session, Some(id)).map { out =>
+          accepted(out).withHeader(Envelope.SessionHeader, id)
+        }
+      }
+    else
+      req.headers.get(Envelope.SessionHeader) match
+        case None     => ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("missing session id"))))
+        case Some(id) =>
+          hub.contains(id).flatMap {
+            case false => ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("unknown session"))))
+            case true  =>
+              engine.respond(msg, req.headers, Era.Session, Some(id)).map { out =>
+                accepted(out).withHeader(Envelope.SessionHeader, id)
+              }
+          }
+    end if
+  end sessionPost
 
   private def method(msg: Message): Option[String] =
     msg match

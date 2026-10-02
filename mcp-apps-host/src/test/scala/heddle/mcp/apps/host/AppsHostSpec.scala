@@ -2,7 +2,7 @@ package heddle.mcp.apps.host
 
 import heddle.mcp.apps.*
 import heddle.mcp.apps.ui.*
-import heddle.mcp.client.{McpCallFailure, McpError}
+import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
 import heddle.mcp.protocol.*
 import zio.*
 import zio.json.*
@@ -149,6 +149,7 @@ object AppsHostSpec extends ZIOSpecDefault:
         out == Count(1),
         n == 1,
         who.map(_.tool) == Chunk(ToolName("inc")),
+        who.map(_.summary) == Chunk(Some("Increment")),
         calls(log) == Chunk(Decision.ConsentAsked(ConsentOutcome.AllowOnce), Decision.Allowed),
       )
     ,
@@ -195,7 +196,7 @@ object AppsHostSpec extends ZIOSpecDefault:
           .provideSome[HashPins](Audit.layer())
       }
     ,
-    test("only the view's own resource can be read"):
+    test("a view can read any resource on its server"):
       for
         (gate, _)    <- answering(ConsentOutcome.Unavailable)
         (v, _, _, _) <- raw(gate)
@@ -204,9 +205,71 @@ object AppsHostSpec extends ZIOSpecDefault:
         ownUris = own match
           case Message.Result(_, r) => r.as[ReadResourceResult].toOption.map(_.contents.map(_.uri))
           case _                    => None
+        missing = other match
+          case Message.Error(_, RpcError.ResourceNotFound(message)) => message.contains("ui://other/secret")
+          case _                                                    => false
       yield assertTrue(
-        other == refusal(1, Denial.NotTheView("ui://other/secret")),
+        missing,
         ownUris.contains(Chunk(CounterHost.shed.uri.value)),
+      )
+    ,
+    test("subscribe is forwarded only when the host offers it, and a list change reaches the view"):
+      val uri = Json.Obj("uri" -> Json.Str(CounterHost.shed.uri.value))
+      for
+        (gate, _)         <- answering(ConsentOutcome.AllowForSession)
+        (closed, _, _, _) <- raw(gate)
+        refused           <- closed.ask(1, "resources/subscribe", uri)
+        (openGate, _)     <- answering(ConsentOutcome.AllowForSession)
+        (mcp, live, _)    <- serving(view, handshake = McpClient.Handshake.Session)
+        host              <- AppsHost.make(settings.copy(resourceSubscribe = true))
+        launch            <- launched(live)
+        mounted           <- host.mount(live, launch)
+        (opened, end)     <- rawPair
+        p                 <- page
+        _                 <- mounted.serve(end, p).provideSome[Scope & Audit](ZLayer.succeed(openGate))
+        _                 <- opened.ask(0, "ui/initialize", initialize)
+        _                 <- opened.notify("ui/notifications/initialized")
+        allowed           <- opened.ask(2, "resources/subscribe", uri)
+        _                 <- mcp.toolsChanged
+        seen              <- ZIO
+          .iterate((Chunk.empty[String], 0))((ns, i) => !ns.contains(Notifications.ToolsListChanged) && i < 40) {
+            case (_, i) => opened.notified.zipLeft(ZIO.yieldNow).map(ns => (ns, i + 1))
+          }
+          .map(_._1)
+        subscribed = allowed match
+          case Message.Result(_, _) => true
+          case _                    => false
+      yield assertTrue(
+        refused == refusal(1, Denial.NotOffered("resources/subscribe")),
+        subscribed,
+        seen.contains(Notifications.ToolsListChanged),
+      )
+      end for
+    ,
+    test("subscribe forwards the uri the view named, including one this server does not have"):
+      val uri    = "notes://today"
+      val params = Json.Obj("uri" -> Json.Str(uri))
+      for
+        (gate, _)         <- answering(ConsentOutcome.AllowForSession)
+        (closed, _, _, _) <- raw(gate)
+        refused           <- closed.ask(1, "resources/subscribe", params)
+        (openGate, _)     <- answering(ConsentOutcome.AllowForSession)
+        (_, live, _)      <- serving(view, handshake = McpClient.Handshake.Session)
+        host              <- AppsHost.make(settings.copy(resourceSubscribe = true))
+        launch            <- launched(live)
+        mounted           <- host.mount(live, launch)
+        (opened, end)     <- rawPair
+        p                 <- page
+        _                 <- mounted.serve(end, p).provideSome[Scope & Audit](ZLayer.succeed(openGate))
+        _                 <- opened.ask(0, "ui/initialize", initialize)
+        _                 <- opened.notify("ui/notifications/initialized")
+        forwarded         <- opened.ask(2, "resources/subscribe", params)
+        reached = forwarded match
+          case Message.Error(_, RpcError.ResourceNotFound(message)) => message.contains(uri)
+          case _                                                    => false
+      yield assertTrue(
+        refused == refusal(1, Denial.NotOffered("resources/subscribe")),
+        reached,
       )
     ,
     test("what this host does not offer is refused in the shape the spec gives each method"):

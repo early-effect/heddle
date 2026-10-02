@@ -1,6 +1,7 @@
 package heddle.mcp
 
 import heddle.*
+import heddle.sse.SseCodec
 import heddle.mcp.protocol.{
   CallToolResult,
   ContentBlock,
@@ -283,13 +284,67 @@ object McpSpec extends ZIOSpecDefault:
           res.body.text.is(_.some).contains("-32020") || res.body.text.is(_.some).contains("\"code\":-32020"),
         )
       ,
-      test("GET /mcp is 405"):
+      test("GET /mcp without a session is 400"):
         for
           store <- Ref.make(Map.empty[Int, Item])
           mcp   <- mcpOf(store)
           res   <- mcp.routes(Request.get("/mcp"))
-        yield assertTrue(res.status == Status.MethodNotAllowed)
+        yield assertTrue(
+          res.status == Status.BadRequest,
+          res.body.text.is(_.some).contains("session id"),
+        )
       ,
+      test("a session hears resources/updated, and a stateless subscribe is refused") {
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          plain <- mcpOf(store)
+          mcp   <- built(plain.withResources(ServedResource.text(Resource("notes://board", "board"), "[]")))
+          init  <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          id <- ZIO.fromOption(init.header(Legacy.SessionHeader)).orElseFail(Unexpected.NoAnswer)
+          deniedBody = req("resources/subscribe", obj("uri" -> Json.Str("notes://board")), 9).toJson
+          denied <- mcp.routes(
+            Request
+              .post("/mcp", Body.json(deniedBody))
+              .withHeader(Http.ProtocolHeader, ProtocolVersion)
+              .withHeader(Http.MethodHeader, "resources/subscribe")
+          )
+          sub <- postLegacy(
+            mcp,
+            "resources/subscribe",
+            obj("uri" -> Json.Str("notes://board")),
+            2,
+            session = Some(id),
+          )
+          stream <- mcp.routes(
+            Request
+              .get("/mcp")
+              .withHeader(Legacy.SessionHeader, id)
+              .withHeader("Accept", "text/event-stream")
+          )
+          heard <- SseCodec.stream(stream.body.toStream).take(2).runCollect.fork
+          _     <- ZIO.iterate((0, 0))((n, i) => n < 1 && i < 40) { case (_, i) =>
+            mcp.listeners(id).zipLeft(ZIO.sleep(5.millis)).map(n => (n, i + 1))
+          }
+          _      <- mcp.resourceUpdated("notes://board")
+          _      <- mcp.toolsChanged
+          events <- heard.join
+          text = events.map(_.data).mkString("\n")
+        yield assertTrue(
+          denied.status == Status.BadRequest,
+          denied.body.text.is(_.some).contains("needs a session"),
+          sub.status == Status.Ok,
+          stream.status == Status.Ok,
+          text.contains("notifications/resources/updated"),
+          text.contains("notes://board"),
+          text.contains("notifications/tools/list_changed"),
+        )
+      } @@ TestAspect.withLiveClock,
       test("stdio discover list and call round-trip"):
         val lines =
           List(
@@ -514,7 +569,7 @@ object McpSpec extends ZIOSpecDefault:
             .flatMap(_.toJson.fromJson[ReadResourceResult].toOption)
             .map(_.contents)
           assertTrue(
-            disc.exists(_.toJson.contains("\"resources\":{}")),
+            disc.exists(_.toJson.contains("\"subscribe\":true")),
             listed.exists(_.toJson.contains("ui://shop/board")),
             contents.contains(Chunk(ResourceContents.Text("ui://shop/board", page.mimeType, "<p>hi</p>", None))),
             miss.exists(_.toJson.contains("-32002")),

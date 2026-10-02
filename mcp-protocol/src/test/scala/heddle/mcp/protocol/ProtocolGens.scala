@@ -102,5 +102,7 @@ object ProtocolGens:
     Gen.option(text).map(ClientRequest.ListResources(_)),
     Gen.option(text).map(ClientRequest.ListResourceTemplates(_)),
     text.map(ClientRequest.ReadResource(_)),
+    text.map(ClientRequest.SubscribeResource(_)),
+    text.map(ClientRequest.UnsubscribeResource(_)),
   )
 end ProtocolGens

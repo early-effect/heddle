@@ -56,11 +56,26 @@ end MountRefusal
 /** A view as the server links it: its `ui://` resource, the tool that opened it, and the tools it may call. The host
   * reads all of this from the live `tools/list`, never from the view.
   */
-final case class LinkedView(server: ServerName, uri: UiUri, launch: Tool, appTools: Set[ToolName]):
+final case class LinkedView(
+    server: ServerName,
+    uri: UiUri,
+    launch: Tool,
+    appTools: Set[ToolName],
+    summaries: Map[ToolName, String] = Map.empty,
+):
   /** The shed gate: the tool is app-visible, linked to this view, and in this server's live list. */
   def admits(tool: ToolName): Boolean = appTools.contains(tool)
 
+  /** The phrase a person reads for this call: the tool's title, else its description. */
+  def summary(tool: ToolName): Option[String] =
+    summaries.get(tool).orElse(if launch.name == tool then LinkedView.phrase(launch) else None)
+
 object LinkedView:
+  /** Title, then description, then the annotation title. Blank text is no phrase. */
+  def phrase(tool: Tool): Option[String] =
+    def text(raw: Option[String]): Option[String] = raw.map(_.trim).filter(_.nonEmpty)
+    text(tool.title).orElse(text(tool.description)).orElse(text(tool.annotations.flatMap(_.title)))
+
   def of(server: ServerName, launch: ToolName, live: Chunk[Tool]): Either[MountRefusal, LinkedView] =
     for
       tool <- live.find(_.name == launch).toRight(MountRefusal.NotListed(launch))
@@ -70,7 +85,8 @@ object LinkedView:
         val ui = UiMeta.decodeTool(t.meta)._1
         ui.resourceUri.contains(uri) && ui.visibility.app
       }
-      LinkedView(server, uri, tool, linked.map(_.name).toSet)
+      val summaries = linked.flatMap(t => phrase(t).map(t.name -> _)).toMap
+      LinkedView(server, uri, tool, linked.map(_.name).toSet, summaries)
 end LinkedView
 
 /** A view's document as the server sent it, with the policy it asks for and the inline scripts it may run. What the

@@ -2,7 +2,7 @@ package heddle.mcp.client
 
 import heddle.LinePipe
 import heddle.client.Client
-import heddle.http.{Body, MediaType, Method, Request, Response, Url}
+import heddle.http.{Body, MediaType, Method, Request, Response, Status, Url}
 import heddle.http.header.Headers
 import heddle.mcp.protocol.*
 import heddle.mcp.transport.Http as HttpTransport
@@ -16,6 +16,10 @@ private[client] trait Carrier:
   def exchange(req: Message.Request, era: Era): IO[McpError, Message]
   def notify(note: Message.Notification, era: Era): IO[McpError, Unit]
 
+  /** Attach the session's server-to-client stream. A pipe already carries those lines, so it does nothing. */
+  def openEvents(sink: Hub[Message.Notification]): ZIO[Scope, McpError, Unit] =
+    ZIO.succeed(sink).whenDiscard(false).unit
+
 /** Streamable HTTP. Each request is one POST; the answer is a JSON body or an event stream carrying it. */
 private[client] final class HttpCarrier(client: Client, url: Url, headers: Headers, session: Ref[Option[String]])
     extends Carrier:
@@ -28,6 +32,28 @@ private[client] final class HttpCarrier(client: Client, url: Url, headers: Heade
 
   def notify(note: Message.Notification, era: Era): IO[McpError, Unit] =
     ZIO.scoped(post(note.json, note.method, note.params, era).flatMap(remember)).unit
+
+  override def openEvents(sink: Hub[Message.Notification]): ZIO[Scope, McpError, Unit] =
+    session.get.flatMap {
+      case None     => ZIO.fail(McpError.Protocol("no session id"))
+      case Some(id) =>
+        val streamed = headers.add("Accept", MediaType.EventStream.render).add(HttpTransport.SessionHeader, id)
+        client.streaming(Request(Method.GET, url, streamed)).mapError(McpError.Transport(_)).flatMap { res =>
+          res.headers.contentType match
+            case Some(mt) if mt.isEventStream && res.status == Status.Ok =>
+              SseCodec
+                .stream(res.body.toStream)
+                .mapError(McpError.Pipe(_))
+                .foreach { ev =>
+                  ev.data.fromJson[Json].toOption.flatMap(Message.decode(_).toOption) match
+                    case Some(note: Message.Notification) => sink.publish(note)
+                    case _                                => ZIO.unit
+                }
+                .forkScoped
+                .unit
+            case _ => ZIO.fail(McpError.Http(res.status))
+        }
+    }
 
   private def post(body: Json.Obj, method: String, params: Json.Obj, era: Era): ZIO[Scope, McpError, Response] =
     session.get.flatMap { sid =>

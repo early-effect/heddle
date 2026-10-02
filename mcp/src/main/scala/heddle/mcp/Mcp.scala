@@ -6,13 +6,13 @@ import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
-import heddle.mcp.protocol.{Era, ExtensionId, Implementation, Structured, Tool, ToolName}
-import heddle.mcp.server.{Engine, Offer, ToolCall}
+import heddle.mcp.protocol.{Era, ExtensionId, Implementation, Message, Notifications, Structured, Tool, ToolName}
+import heddle.mcp.server.{Engine, Offer, SessionHub, ToolCall}
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
 import zio.json.*
 import zio.json.ast.Json
-import zio.{Chunk, NonEmptyChunk, ZIO, ZNothing}
+import zio.{Chunk, NonEmptyChunk, UIO, ZIO, ZNothing}
 
 import java.io.{InputStream, OutputStream}
 
@@ -26,8 +26,24 @@ final class Mcp[-R] private (
     instructions: Option[String],
     path: String,
 ):
-  def serverName: String    = server.name
-  def serverVersion: String = server.version
+  private val hub = new SessionHub
+
+  /** Tells every session that subscribed to `uri`. A session that did not subscribe hears nothing. */
+  def resourceUpdated(uri: String): UIO[Unit] =
+    hub.publish(Message.Notification(Notifications.ResourceUpdated, Json.Obj("uri" -> Json.Str(uri))), Some(uri))
+
+  /** Tells every open session that `tools/list` changed. */
+  def toolsChanged: UIO[Unit] =
+    hub.publish(Message.Notification(Notifications.ToolsListChanged, Json.Obj()), None)
+
+  /** Tells every open session that `resources/list` changed. */
+  def resourcesChanged: UIO[Unit] =
+    hub.publish(Message.Notification(Notifications.ResourcesListChanged, Json.Obj()), None)
+
+  /** How many GET streams are attached to `id`. Zero when the session is unknown. */
+  def listeners(id: String): UIO[Int] = hub.listeners(id)
+  def serverName: String              = server.name
+  def serverVersion: String           = server.version
 
   /** Adds `search_operations` and `invoke`, which reach every promotable operation, promoted or not. */
   def withCatalog: Either[NonEmptyChunk[McpBuildError], Mcp[R]] =
@@ -93,7 +109,7 @@ final class Mcp[-R] private (
     new Mcp(server, offer.copy(extensions = offer.extensions.updated(id, settings)), catalogOps, instructions, path)
 
   def routes: Routes[R, ZNothing] =
-    Http.routes(engine, path)
+    Http.routes(engine, hub, path)
 
   def discovery(
       resource: String,
@@ -103,20 +119,20 @@ final class Mcp[-R] private (
     ProtectedResource.routes(resource, authorizationServers, scopes)
 
   def stdio(): ZIO[R, Throwable, Unit] =
-    Stdio.run(engine, LinePipe.standard)
+    Stdio.run(engine, hub, LinePipe.standard)
 
   def stdio(pipe: LinePipe): ZIO[R, Throwable, Unit] =
-    Stdio.run(engine, pipe)
+    Stdio.run(engine, hub, pipe)
 
   def stdio(in: InputStream, out: OutputStream): ZIO[R, Throwable, Unit] =
-    Stdio.run(engine, LinePipe.streams(in, out))
+    Stdio.run(engine, hub, LinePipe.streams(in, out))
 
   /** Answers one 2026-07-28 JSON-RPC value, as `POST /mcp` would. */
   def handle(json: Json, headers: Headers = Headers.empty): ZIO[R, Nothing, Option[Json]] =
-    engine.handle(json, headers, Era.Stateless).map(_.map(_.json))
+    engine.handle(json, headers, Era.Stateless, None).map(_.map(_.json))
 
   private def engine: Engine[R] =
-    Engine(server, offer, instructions, 300000)
+    Engine(server, offer, instructions, 300000, hub)
 
   private def copy(instructions: Option[String] = instructions, path: String = path): Mcp[R] =
     new Mcp(server, offer, catalogOps, instructions, path)

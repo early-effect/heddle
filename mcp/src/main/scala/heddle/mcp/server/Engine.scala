@@ -22,26 +22,30 @@ final class Engine[-R](
     val offer: Offer[R],
     val instructions: Option[String],
     val listTtlMs: Long,
+    hub: SessionHub,
 ):
   private val byName: Map[ToolName, ToolCall[R]]    = offer.tools.map(t => t.tool.name -> t).toMap
   private val byUri: Map[String, ServedResource[R]] = offer.resources.map(r => r.resource.uri -> r).toMap
 
   /** `tools` always; `resources` when there are any; `extensions` as `server/discover` and `initialize` send them. */
   val capabilities: Json.Obj =
-    val resources  = Option.when(offer.resources.nonEmpty)("resources" -> Json.Obj())
+    val resources = Option.when(offer.resources.nonEmpty)(
+      "resources" -> Json.Obj("subscribe" -> Json.Bool(true))
+    )
     val extensions = Option.when(offer.extensions.nonEmpty)(
       "extensions" -> Json.Obj(Chunk.fromIterable(offer.extensions.map((id, settings) => id.value -> settings)))
     )
     Json.Obj(Chunk("tools" -> Json.Obj()) ++ Chunk.fromIterable(resources) ++ Chunk.fromIterable(extensions))
 
   /** Parses and answers one JSON value. Notifications and stray responses get no reply. */
-  def handle(raw: Json, headers: Headers, era: Era): ZIO[R, Nothing, Option[Message]] =
-    Message.decode(raw).fold(e => ZIO.some(e), respond(_, headers, era))
+  def handle(raw: Json, headers: Headers, era: Era, session: Option[String]): ZIO[R, Nothing, Option[Message]] =
+    Message.decode(raw).fold(e => ZIO.some(e), respond(_, headers, era, session))
 
-  def respond(msg: Message, headers: Headers, era: Era): ZIO[R, Nothing, Option[Message]] =
+  def respond(msg: Message, headers: Headers, era: Era, session: Option[String]): ZIO[R, Nothing, Option[Message]] =
     msg match
-      case Message.Request(id, method, params) => answer(method, params, headers, era).map(reply(id, era, _)).asSome
-      case _                                   => ZIO.none
+      case Message.Request(id, method, params) =>
+        answer(method, params, headers, era, session).map(reply(id, era, _)).asSome
+      case _ => ZIO.none
 
   private def reply(id: RequestId, era: Era, out: Either[RpcError, Json.Obj]): Message =
     out match
@@ -56,10 +60,11 @@ final class Engine[-R](
       params: Json.Obj,
       headers: Headers,
       era: Era,
+      session: Option[String],
   ): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
     admit(params, era).flatMap(_ => ClientRequest.decode(method, params)) match
       case Left(e)    => ZIO.left(e)
-      case Right(req) => serve(req, headers, era)
+      case Right(req) => serve(req, headers, era, session)
 
   /** 2026 requests must name the one revision this server speaks. */
   private def admit(params: Json.Obj, era: Era): Either[RpcError, Unit] =
@@ -72,7 +77,12 @@ final class Engine[-R](
             Left(RpcError.UnsupportedVersion(v.value, Chunk(ProtocolVersion.Current)))
           case Some(_) => Right(())
 
-  private def serve(req: ClientRequest, headers: Headers, era: Era): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
+  private def serve(
+      req: ClientRequest,
+      headers: Headers,
+      era: Era,
+      session: Option[String],
+  ): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
     (req, era) match
       case (ClientRequest.Discover, Era.Stateless)          => ZIO.right(discover)
       case (ClientRequest.Initialize(_, _, _), Era.Session) =>
@@ -87,15 +97,43 @@ final class Engine[-R](
         ZIO.right(listed("resources", Json.Arr(offer.resources.map(r => encoded(r.resource)))))
       case (ClientRequest.ListResourceTemplates(_), _) =>
         ZIO.right(listed("resourceTemplates", Json.Arr()))
-      case (ClientRequest.ReadResource(uri), _) =>
-        byUri.get(uri) match
-          case None         => ZIO.left(RpcError.ResourceNotFound(s"Resource not found: $uri"))
-          case Some(served) =>
-            served.read.fold(
-              e => Left(RpcError.Internal(s"Resource $uri is unavailable: ${e.reason}")),
-              contents => Right(Envelope.complete(encoded(ReadResourceResult(contents)))),
-            )
+      case (ClientRequest.ReadResource(uri), _)                => read(uri)
+      case (ClientRequest.SubscribeResource(uri), Era.Session) =>
+        membership(session, uri, subscribe = true, "resources/subscribe")
+      case (ClientRequest.UnsubscribeResource(uri), Era.Session) =>
+        membership(session, uri, subscribe = false, "resources/unsubscribe")
+      case (ClientRequest.SubscribeResource(_), Era.Stateless) =>
+        ZIO.left(RpcError.InvalidRequest("resources/subscribe needs a session"))
+      case (ClientRequest.UnsubscribeResource(_), Era.Stateless) =>
+        ZIO.left(RpcError.InvalidRequest("resources/unsubscribe needs a session"))
       case (other, _) => ZIO.left(RpcError.methodNotFound(other.method))
+
+  private def read(uri: String): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
+    byUri.get(uri) match
+      case None         => ZIO.left(RpcError.ResourceNotFound(s"Resource not found: $uri"))
+      case Some(served) =>
+        served.read.fold(
+          e => Left(RpcError.Internal(s"Resource $uri is unavailable: ${e.reason}")),
+          contents => Right(Envelope.complete(encoded(ReadResourceResult(contents)))),
+        )
+
+  /** Subscribe requires the resource. Unsubscribe of a missing URI is still success: the client is already done. */
+  private def membership(
+      session: Option[String],
+      uri: String,
+      subscribe: Boolean,
+      method: String,
+  ): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
+    session match
+      case None     => ZIO.left(RpcError.InvalidRequest(s"$method needs a session"))
+      case Some(id) =>
+        if subscribe && !byUri.contains(uri) then ZIO.left(RpcError.ResourceNotFound(s"Resource not found: $uri"))
+        else
+          val changed = if subscribe then hub.subscribe(id, uri) else hub.unsubscribe(id, uri)
+          changed.map {
+            case false => Left(RpcError.InvalidRequest("unknown session"))
+            case true  => Right(Envelope.complete())
+          }
 
   private def discover: Json.Obj =
     Envelope.complete(
