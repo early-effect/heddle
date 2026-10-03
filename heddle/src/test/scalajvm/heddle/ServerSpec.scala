@@ -143,7 +143,7 @@ object ServerSpec extends ZIOSpecDefault:
         }
       ,
       test("keep-alive serves swagger html then openapi.json"):
-        val spec = OpenApi.from("Ping", "0.0.1", Endpoint.get("health").outText())
+        val spec = OpenApi.from("Ping", "0.0.1", Endpoint.get("health").out[Text])
         val app  = spec.routes("docs")
         LiveServer(app) { base =>
           val port = java.net.URI.create(base).getPort

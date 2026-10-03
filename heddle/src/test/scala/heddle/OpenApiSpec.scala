@@ -26,7 +26,7 @@ object OpenApiSpec extends ZIOSpecDefault:
         )
       ,
       test("swagger routes serve HTML and the spec"):
-        val ep   = Endpoint.get("ping").outText()
+        val ep   = Endpoint.get("ping").out[Text]
         val spec = OpenApi.from("Ping", "0.0.1", ep)
         val app  = spec.routes("docs")
         for
@@ -42,7 +42,7 @@ object OpenApiSpec extends ZIOSpecDefault:
         val create = Endpoint
           .post("books")
           .query[String]("q")
-          .inJson[Book]
+          .in[Book]
           .out[Book](Status.Created)
           .outError[String](Status.BadRequest)
           .tag("books")

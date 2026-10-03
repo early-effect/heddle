@@ -54,7 +54,7 @@ object AuthSpec extends ZIOSpecDefault:
         routes(req).map(res => assertTrue(res.body.text.is(_.some) == "ada"))
       ,
       test("OpenAPI emits securitySchemes and operation security"):
-        val ep   = Endpoint.get("me").outText().auth(SecurityScheme.HttpBearer())
+        val ep   = Endpoint.get("me").out[Text].auth(SecurityScheme.HttpBearer())
         val json = OpenApi.from("Api", "1.0.0", ep).toJson
         assertTrue(
           json.contains("\"securitySchemes\""),

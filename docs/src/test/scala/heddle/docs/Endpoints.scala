@@ -19,8 +19,9 @@ then [Docs and HTTP fall out](docs-and-http-fall-out.html).
     illustrationIO(Hub.Lives.openApi).live.withMountKey(InteractiveRegistry.EndpointsOpenApi),
     section("The DSL")(
       md"""
-`.inJson` / `.out` / `.outError` need `Schema` and `JsonCodec`. `.query`, `.header`, `.auth`,
-`.summary`, `.tag` are documentation that also drives decoding.
+`.in[A]`, `.out[A]`, and `.outError[E]` need a `BodyCodec`. A type that `derives Schema, JsonCodec`
+gets JSON. A `given BodyCodec[A]` replaces that default. `.query`, `.header`, `.auth`, `.summary`,
+`.tag` are documentation that also drives decoding.
 """,
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
@@ -54,7 +55,7 @@ enum SeatingError derives Schema, JsonCodec:
 
 Endpoint
   .post("parties")
-  .inJson[Party]
+  .in[Party]
   .out[PartySeated](Status.Created)
   .outErrors[SeatingError](
     ErrorCase[SeatingError.SoldOut](Status.Conflict),
@@ -66,10 +67,11 @@ The list is checked against the type at compile time. A missing case, a case lis
 type that is not a case of `E` does not compile, and the error names the case. Cases may share a
 status. A nested `sealed trait` counts as one case covering all of its leaves.
 
-The body is `JsonCodec[E]`'s encoding: `{"SoldOut":{"showId":1}}` for a case with fields,
+The default body is `JsonCodec[E]`'s encoding: `{"SoldOut":{"showId":1}}` for a case with fields,
 `{"Closed":{}}` for a singleton next to cases with fields, and a bare `"Red"` when every case is a
-singleton. OpenAPI documents each status with that case's schema. `Client.call` reads the status
-back to the typed case as `CallFailure.Domain(case)`, and MCP returns the same body as `isError`. Derived `Schema` follows
+singleton. A `given BodyCodec[E]` replaces that body. The statuses stay. OpenAPI documents each
+status with that case's schema. `Client.call` reads the status back to the typed case as
+`CallFailure.Domain(case)`, and MCP returns that JSON body as `isError`. Derived `Schema` follows
 zio-json's default sum encoding; `@jsonDiscriminator`, `@jsonHint`, or a custom
 `JsonCodecConfiguration` change the wire shape without changing the `Schema`.
 """,
@@ -122,8 +124,10 @@ Endpoint
   .as[Lookup]
 ```
 
-The output side is the same. `.out[O]` reads JSON with `O`'s codec, `.outText` reads text,
-`.outEmpty` reads nothing, and no content type is guessed. MCP arguments are a third view:
+The output side is the same. `.out[O]` reads and writes `O` with its `BodyCodec`. A domain type is
+JSON. `Text`, `Html`, `Javascript`, `Css`, `Svg`, `Octet`, `Form`, and `EventStream` are the other
+bodies, and a `given BodyCodec[A]` is any body you want. `.outEmpty` reads nothing. MCP arguments
+are a third view:
 `OpArgs.arguments` turns a request into tool arguments and `OpArgs.request` turns them back. The
 suite checks both directions as laws over generated inputs, including path values like `a/b` and
 `50%`, which travel as one encoded segment and never change the route.
@@ -146,10 +150,10 @@ suite checks both directions as laws over generated inputs, including path value
         assertTrue(url == "/items/7?tag=a%2Fb", args == """{"id":7,"tag":"a/b"}""", out == "7:a/b")
       },
       md"""
-A body that streams is not read whole. `Client.call` on an `outSse` endpoint does not compile;
+A body that streams is not read whole. `Client.call` on an `out[EventStream]` endpoint does not compile;
 `Client.subscribe` streams its events and holds the connection for as long as you read.
 """,
-      expectFail("""Client.call(Endpoint.get("ticks").outSse)(())""").assert { errors =>
+      expectFail("""Client.call(Endpoint.get("ticks").out[EventStream])(())""").assert { errors =>
         assertTrue(errors.exists(_.message.contains("Read it with Client.subscribe")))
       },
     ),

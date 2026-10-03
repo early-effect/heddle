@@ -90,6 +90,15 @@ export heddle.endpoint.{
   OpArgs,
   OpArgsError,
   BodyError,
+  BodyCodec,
+  Payload,
+  Text,
+  Html,
+  Javascript,
+  Css,
+  Svg,
+  Octet,
+  EventStream,
 }
 export heddle.auth.Auth
 export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}

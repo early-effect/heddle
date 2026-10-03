@@ -13,4 +13,7 @@ enum BodyError(val message: String) extends HeddleError:
   /** An error body whose case answers with another status than the response carried. */
   case WrongStatus(declared: Status, actual: Status)
       extends BodyError(s"the error body answers with ${declared.code}, the response was ${actual.code}")
+
+  /** The media type names a charset this codec does not read or write. */
+  case Charset(name: String) extends BodyError(s"charset $name is not supported; this codec reads and writes UTF-8")
 end BodyError

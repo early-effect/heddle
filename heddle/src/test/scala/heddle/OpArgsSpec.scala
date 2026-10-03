@@ -12,7 +12,7 @@ object OpArgsSpec extends ZIOSpecDefault:
         val ep = Endpoint
           .post("items" / int("id"))
           .query[String]("q")
-          .inJson[NewItem]
+          .in[NewItem]
           .out[Item]
         OpArgs.inputSchema(ep.doc) match
           case Left(err)                                    => assertNever(err.message)
@@ -27,13 +27,13 @@ object OpArgsSpec extends ZIOSpecDefault:
         end match
       ,
       test("fails on path and body name collision"):
-        val ep = Endpoint.post("items" / int("name")).inJson[NewItem].out[Item]
+        val ep = Endpoint.post("items" / int("name")).in[NewItem].out[Item]
         OpArgs.inputSchema(ep.doc) match
           case Left(err) => assertTrue(err == OpArgsError.NameCollision(List("name")))
           case Right(_)  => assertTrue(false)
       ,
       test("nestBody keeps the body as one property"):
-        val ep = Endpoint.post("items" / int("name")).inJson[NewItem].out[Item].nestBody
+        val ep = Endpoint.post("items" / int("name")).in[NewItem].out[Item].nestBody
         OpArgs.inputSchema(ep.doc) match
           case Right(SchemaDoc.Object(_, fields, _)) =>
             assertTrue(fields.map(_.name) == List("name", "NewItem"))
@@ -50,7 +50,7 @@ object OpArgsSpec extends ZIOSpecDefault:
         val ep = Endpoint
           .post("items" / int("id"))
           .query[String]("q")
-          .inJson[NewItem]
+          .in[NewItem]
           .out[Item]
         val args = Json.Obj(
           "id"   -> Json.Num(7),
@@ -67,9 +67,10 @@ object OpArgsSpec extends ZIOSpecDefault:
               req.body.text.is(_.some).contains("ada"),
             )
       ,
-      test("GET with JSON out is promotable; SSE is not"):
+      test("GET with JSON out is promotable; HTML and event streams are not"):
         val json = Endpoint.get("items").out[Item]
-        val sse  = Endpoint.get("stream").outSse
-        assertTrue(OpArgs.promotable(json.doc), !OpArgs.promotable(sse.doc)),
+        val page = Endpoint.get("page").out[Html]
+        val sse  = Endpoint.get("stream").out[EventStream]
+        assertTrue(OpArgs.promotable(json.doc), !OpArgs.promotable(page.doc), !OpArgs.promotable(sse.doc)),
     ) @@ TestAspect.timeout(5.seconds)
 end OpArgsSpec

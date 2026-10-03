@@ -59,7 +59,7 @@ object Endpoints:
   def createHold(issuer: String) =
     Endpoint
       .post("holds")
-      .inJson[NewHold]
+      .in[NewHold]
       .out[Hold](Status.Created)
       .outErrors[SeatingError](
         ErrorCase[SeatingError.SoldOut](Status.Conflict),
@@ -73,7 +73,7 @@ object Endpoints:
   def createOrder(issuer: String) =
     Endpoint
       .post("orders")
-      .inJson[NewOrder]
+      .in[NewOrder]
       .out[Order](Status.Created)
       .outError[NotFound](Status.NotFound)
       .name("create_order")
@@ -84,7 +84,7 @@ object Endpoints:
   def seatTheParty(issuer: String) =
     Endpoint
       .post("parties")
-      .inJson[Party]
+      .in[Party]
       .out[PartySeated](Status.Created)
       .outErrors[SeatingError](
         ErrorCase[SeatingError.SoldOut](Status.Conflict),

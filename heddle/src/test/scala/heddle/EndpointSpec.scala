@@ -11,22 +11,22 @@ object EndpointSpec extends ZIOSpecDefault:
   def spec =
     suite("Endpoint")(
       test("text endpoint implements to a route"):
-        val ep     = Endpoint.get("hello").outText()
-        val routes = ep.implement(_ => ZIO.succeed("world"))
+        val ep     = Endpoint.get("hello").out[Text]
+        val routes = ep.implement(_ => ZIO.succeed(Text("world")))
         routes(Request.get("/hello")).map { res =>
           assertTrue(res.status == Status.Ok, res.body.text.contains("world"))
         }
       ,
       test("path parameter is the implement input"):
-        val ep     = Endpoint.get("echo" / int("n")).outText()
-        val routes = ep.implement(n => ZIO.succeed(n.toString))
+        val ep     = Endpoint.get("echo" / int("n")).out[Text]
+        val routes = ep.implement(n => ZIO.succeed(Text(n.toString)))
         routes(Request.get("/echo/4")).map { res =>
           assertTrue(res.body.text.contains("4"))
         }
       ,
       test("query parameter is combined with the path input"):
-        val ep     = Endpoint.get("echo" / int("n")).query[String]("name").outText()
-        val routes = ep.implement { case (n, name) => ZIO.succeed(s"$name:$n") }
+        val ep     = Endpoint.get("echo" / int("n")).query[String]("name").out[Text]
+        val routes = ep.implement { case (n, name) => ZIO.succeed(Text(s"$name:$n")) }
         routes(Request.get("/echo/2?name=ada")).map { res =>
           assertTrue(res.body.text.contains("ada:2"))
         }
@@ -42,7 +42,7 @@ object EndpointSpec extends ZIOSpecDefault:
         }
       ,
       test("json input uses the provided JsonCodec"):
-        val ep     = Endpoint.post("echo").inJson[String].out[String]
+        val ep     = Endpoint.post("echo").in[String].out[String]
         val routes = ep.implement(body => ZIO.succeed(body))
         routes(Request.post("/echo", Body.json("\"ping\""))).map { res =>
           assertTrue(res.body.text.contains("\"ping\""))
@@ -56,14 +56,14 @@ object EndpointSpec extends ZIOSpecDefault:
         }
       ,
       test("header input is combined into implement"):
-        val ep     = Endpoint.get("who").header[String]("X-User").outText()
-        val routes = ep.implement(name => ZIO.succeed(name))
+        val ep     = Endpoint.get("who").header[String]("X-User").out[Text]
+        val routes = ep.implement(name => ZIO.succeed(Text(name)))
         routes(Request.get("/who").withHeader("X-User", "ada")).map { res =>
           assertTrue(res.body.text.contains("ada"))
         }
       ,
-      test("inText passes the raw body"):
-        val ep     = Endpoint.post("echo").inText.outText()
+      test("in[Text] passes the raw body"):
+        val ep     = Endpoint.post("echo").in[Text].out[Text]
         val routes = ep.implement(body => ZIO.succeed(body))
         routes(Request.post("/echo", Body.text("ping"))).map { res =>
           assertTrue(res.body.text.contains("ping"))
@@ -74,15 +74,15 @@ object EndpointSpec extends ZIOSpecDefault:
           .get("echo" / int("n"))
           .query[String]("name")
           .mapIn((n, name) => Greeting(n, name))(g => (g.n, g.name))
-          .outText()
-        val routes = ep.implement(g => ZIO.succeed(s"${g.name}:${g.n}"))
+          .out[Text]
+        val routes = ep.implement(g => ZIO.succeed(Text(s"${g.name}:${g.n}")))
         routes(Request.get("/echo/2?name=ada")).map { res =>
           assertTrue(res.body.text.contains("ada:2"))
         }
       ,
       test("missing required query is 400"):
-        val ep     = Endpoint.get("echo").query[Int]("n").outText()
-        val routes = ep.implement(n => ZIO.succeed(n.toString))
+        val ep     = Endpoint.get("echo").query[Int]("n").out[Text]
+        val routes = ep.implement(n => ZIO.succeed(Text(n.toString)))
         routes(Request.get("/echo")).map { res =>
           assertTrue(res.status == Status.BadRequest)
         }
@@ -105,7 +105,7 @@ object EndpointSpec extends ZIOSpecDefault:
       ,
       test("toRequest encodes path query header and json body"):
         val ep =
-          Endpoint.post("echo" / int("n")).query[String]("name").header[String]("X-User").inJson[String].out[String]
+          Endpoint.post("echo" / int("n")).query[String]("name").header[String]("X-User").in[String].out[String]
         val req = ep.toRequest((4, "ada", "russ", "hi"), Url.root)
         assertTrue(
           req.method == Method.POST,
@@ -116,12 +116,12 @@ object EndpointSpec extends ZIOSpecDefault:
         )
       ,
       test("inMemory Client.call roundtrips an endpoint"):
-        val ep     = Endpoint.get("echo" / int("n")).query[String]("name").outText()
-        val routes = ep.implement { case (n, name) => ZIO.succeed(s"$name:$n") }
+        val ep     = Endpoint.get("echo" / int("n")).query[String]("name").out[Text]
+        val routes = ep.implement { case (n, name) => ZIO.succeed(Text(s"$name:$n")) }
         Client
           .call(ep)((2, "ada"))
           .provideLayer(Client.inMemory(routes))
-          .map(out => assertTrue(out == "ada:2"))
+          .map(out => assertTrue(out == Text("ada:2")))
       ,
       test("fromResponse decodes JSON success and typed errors"):
         val ep = Endpoint.get("x").out[String].outError[String](Status.BadRequest)
@@ -146,22 +146,22 @@ object EndpointSpec extends ZIOSpecDefault:
           .get("echo" / int("n"))
           .mapIn(Count(_))(_.n)
           .query[String]("name")
-          .outText()
+          .out[Text]
         val req = ep.toRequest((Count(4), "ada"), Url.root)
         assertTrue(req.path.render == "/echo/4", req.query.get("name").contains("ada"))
       ,
       test("optional query is omitted when empty"):
-        val ep  = Endpoint.get("echo").query[Option[String]]("name").outText()
+        val ep  = Endpoint.get("echo").query[Option[String]]("name").out[Text]
         val req = ep.toRequest(None, Url.root)
         assertTrue(req.query.get("name").isEmpty, req.path.render == "/echo")
       ,
       test("Client.call does not compile for a streaming endpoint"):
-        typeCheck("""Client.call(Endpoint.get("ticks").outSse)(())""").map { result =>
+        typeCheck("""Client.call(Endpoint.get("ticks").out[EventStream])(())""").map { result =>
           assertTrue(result.left.exists(_.contains("Client.subscribe")))
         }
       ,
-      test("Client.subscribe streams an outSse endpoint's events"):
-        val ep     = Endpoint.get("ticks").outSse
+      test("Client.subscribe streams an EventStream endpoint's events"):
+        val ep     = Endpoint.get("ticks").out[EventStream]
         val events = ZStream(heddle.sse.ServerSentEvent("a"), heddle.sse.ServerSentEvent("b"))
         val routes = ep.implement(_ => ZIO.succeed(events))
         Client
@@ -170,14 +170,14 @@ object EndpointSpec extends ZIOSpecDefault:
           .provideLayer(Client.inMemory(routes))
           .map(got => assertTrue(got.map(_.data) == Chunk("a", "b")))
       ,
-      test("an outText endpoint reads its body as text, whatever the Content-Type"):
-        val ep  = Endpoint.get("t").outText()
+      test("an out[Text] endpoint reads its body as text, whatever the Content-Type"):
+        val ep  = Endpoint.get("t").out[Text]
         val res =
           Response(Status.Ok).withBody(Body.fromBytes(Chunk.fromArray("hi".getBytes), Some(MediaType.OctetStream)))
-        ep.fromResponse(res).map(out => assertTrue(out == "hi"))
+        ep.fromResponse(res).map(out => assertTrue(out == Text("hi")))
       ,
       test("inMemory Client.call roundtrips JSON in and out"):
-        val ep     = Endpoint.post("echo").inJson[String].out[String]
+        val ep     = Endpoint.post("echo").in[String].out[String]
         val routes = ep.implement(body => ZIO.succeed(body))
         Client
           .call(ep)("ping")

@@ -1,6 +1,6 @@
 package heddle.endpoint
 
-import heddle.http.{Body, MediaType, QueryParams, Request, Url, UrlEncoding}
+import heddle.http.{Body, QueryParams, Request, Url, UrlEncoding}
 import heddle.http.header.Headers
 import zio.Chunk
 import zio.json.*
@@ -8,11 +8,8 @@ import zio.json.ast.Json
 
 object OpArgs:
   def promotable(doc: EndpointDoc): Boolean =
-    val bodyOk = doc.requestBody.forall(_.contentType == MediaType.Json)
-    val outOk  = doc.responses.exists(r =>
-      r.status.code >= 200 && r.status.code < 300 && r.schema.isDefined &&
-        r.contentType.contains(MediaType.Json)
-    )
+    val bodyOk = doc.requestBody.forall(_.contentType.isJson)
+    val outOk  = doc.responses.exists(r => r.status.isSuccess && r.schema.isDefined && r.contentType.exists(_.isJson))
     bodyOk && outOk
 
   def inputSchema(doc: EndpointDoc): Either[OpArgsError, SchemaDoc] =
@@ -32,8 +29,8 @@ object OpArgs:
 
   private def bodyFields(doc: EndpointDoc, taken: Set[String]): Either[OpArgsError, List[SchemaField]] =
     doc.requestBody match
-      case None                                             => Right(Nil)
-      case Some(body) if body.contentType != MediaType.Json =>
+      case None                                   => Right(Nil)
+      case Some(body) if !body.contentType.isJson =>
         Left(OpArgsError.NonJsonBody)
       case Some(body) =>
         val (inner, optional) = body.schema.unwrapOptional
@@ -91,8 +88,8 @@ object OpArgs:
 
   private def fillBody(doc: EndpointDoc, args: Json.Obj): Either[OpArgsError, Body] =
     doc.requestBody match
-      case None                                               => Right(Body.empty)
-      case Some(media) if media.contentType != MediaType.Json =>
+      case None                                     => Right(Body.empty)
+      case Some(media) if !media.contentType.isJson =>
         Left(OpArgsError.NonJsonBody)
       case Some(media) =>
         val taken      = (doc.pathParams.map(_.name) ++ doc.queries.map(_.name)).toSet
@@ -153,8 +150,8 @@ object OpArgs:
 
   private def bodyArgs(doc: EndpointDoc, req: Request): Either[OpArgsError, List[(String, Json)]] =
     doc.requestBody match
-      case None                                               => Right(Nil)
-      case Some(media) if media.contentType != MediaType.Json =>
+      case None                                     => Right(Nil)
+      case Some(media) if !media.contentType.isJson =>
         Left(OpArgsError.NonJsonBody)
       case Some(media) =>
         val (inner, _) = media.schema.unwrapOptional

@@ -12,6 +12,7 @@ import heddle.mcp.protocol.{
   Resource,
   ResourceContents,
 }
+import heddle.mcp.server.ToolCall
 import heddle.mcp.transport.Http
 import zio.*
 import zio.json.*
@@ -42,7 +43,7 @@ object McpSpec extends ZIOSpecDefault:
   private val listItems =
     Endpoint.get("items").out[List[Item]].summary("List items").mcp
   private val createItem =
-    Endpoint.post("items").inJson[NewItem].out[Item].summary("Create item")
+    Endpoint.post("items").in[NewItem].out[Item].summary("Create item")
 
   private def api(store: Ref[Map[Int, Item]]): Api[Any] =
     Api("Shop", "1.0.0")
@@ -176,7 +177,7 @@ object McpSpec extends ZIOSpecDefault:
       ,
       test("job is listed and resource is not"):
         val getItem    = Endpoint.get("items" / int("id")).out[Item].name("get_item").hints(Hint.ReadOnly)
-        val createItem = Endpoint.post("items").inJson[NewItem].out[Item].name("create_item")
+        val createItem = Endpoint.post("items").in[NewItem].out[Item].name("create_item")
         val api        = Api("Shop", "1.0.0")
           .resource(createItem)(n => ZIO.succeed(Item(2, n.name)))
           .job(getItem)(id => ZIO.succeed(Item(id, "x")))
@@ -186,6 +187,31 @@ object McpSpec extends ZIOSpecDefault:
         yield
           val json = out
           assertTrue(json.contains("get_item"), !json.contains("create_item"), !json.contains("post_items"))
+      ,
+      test("a JSON job is a tool and an HTML page stays on HTTP"):
+        val getItem = Endpoint.get("items" / int("id")).out[Item].name("get_item")
+        val page    = Endpoint.get("page").out[Html].name("home_page")
+        val api     = Api("Shop", "1.0.0")
+          .job(getItem)(id => ZIO.succeed(Item(id, "x")))
+          .job(page)(_ => ZIO.succeed(Html("<p>hi</p>")))
+        val refused = ToolCall.bound(page.implement(_ => ZIO.succeed(Html("<p>hi</p>"))))
+        for
+          mcp    <- built(Mcp.from(api))
+          listed <- mcp.answer(req("tools/list", obj()))
+          http   <- api.routes(Request.get("/page")).either
+        yield assertTrue(
+          listed.contains("get_item"),
+          !listed.contains("home_page"),
+          http.exists { res =>
+            res.status == Status.Ok &&
+            res.header("Content-Type").exists(_.contains("text/html")) &&
+            res.body.text.contains("<p>hi</p>")
+          },
+          refused match
+            case Left(McpBuildError.NotPromotable("home_page", OpArgsError.NonJsonSuccess)) => true
+            case _                                                                          => false,
+        )
+        end for
       ,
       test("withCatalog adds search_operations and invoke"):
         for

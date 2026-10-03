@@ -13,7 +13,7 @@ object EndpointLawsSpec extends ZIOSpecDefault:
       .post("items" / int("id") / string("slug"))
       .query[Option[String]]("tag")
       .query[Int]("n")
-      .inJson[Payload]
+      .in[Payload]
       .as[Probe]
       .out[Probe]
 

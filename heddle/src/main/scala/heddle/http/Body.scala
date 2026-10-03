@@ -79,7 +79,7 @@ object Body:
     text(value, MediaType.HtmlUtf8)
 
   def fromBytes(bytes: Chunk[Byte], contentType: Option[MediaType] = None): Body =
-    if bytes.isEmpty then Empty else Bytes(bytes, contentType)
+    if bytes.isEmpty && contentType.isEmpty then Empty else Bytes(bytes, contentType)
 
   def stream(
       stream: ZStream[Any, Throwable, Byte],

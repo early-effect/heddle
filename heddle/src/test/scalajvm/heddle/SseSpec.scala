@@ -73,13 +73,14 @@ object SseSpec extends ZIOSpecDefault:
           assertTrue(evs == Chunk(ev), rest.isEmpty)
         }
       ,
-      test("Endpoint.outSse documents text/event-stream"):
-        val ep     = Endpoint.get("ticks").outSse
+      test("Endpoint.out[EventStream] documents text/event-stream"):
+        val ep     = Endpoint.get("ticks").out[EventStream]
         val routes = ep.implement(_ => ZIO.succeed(ZStream(ServerSentEvent("n", event = Some(SseField("tick"))))))
         routes(Request.get("/ticks")).map { res =>
           assertTrue(
             res.status == Status.Ok,
             res.header("Content-Type").contains("text/event-stream"),
+            res.header("Cache-Control").contains("no-cache"),
             ep.doc.responses.exists(_.contentType.contains(MediaType.EventStream)),
           )
         }

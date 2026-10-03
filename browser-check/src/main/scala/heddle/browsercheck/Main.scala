@@ -46,7 +46,7 @@ object Main extends ZIOAppDefault:
       yield listed.size
     )
     Console.printLine(
-      s"${request.map(_.json.toJson)} ${decoded.map(_.toJson)} ${getItem.errors.decodeJson("\"x\"")} " +
+      s"${request.map(_.json.toJson)} ${decoded.map(_.toJson)} ${getItem.errors.decodeDocument("\"x\"")} " +
         s"${shed.grants.map(_.toolName)} $clamped $pinned"
     ) *> tools.either.flatMap(r => Console.printLine(r.fold(_.message, _.size.toString))) *>
       inPage.either.flatMap(r => Console.printLine(r.fold(_.toString, _.toString)))

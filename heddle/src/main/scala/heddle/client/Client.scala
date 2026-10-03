@@ -148,7 +148,7 @@ object Client:
     def at(base: Url, in: In): ZIO[Client, CallFailure[Err], Out] =
       Client.batched(ep.toRequest(in, base)).mapError(CallFailure.Transport(_)).flatMap(ep.fromResponse)
 
-  /** Pins an `outSse` endpoint; `apply` streams its events. The connection lives as long as the stream. */
+  /** Pins an `EventStream` endpoint; `apply` streams its events. The connection lives as long as the stream. */
   def subscribe[In, Err](
       ep: Endpoint[In, Err, ZStream[Any, Throwable, ServerSentEvent]]
   ): SubscribePartiallyApplied[In, Err] =
@@ -167,7 +167,8 @@ object Client:
       }
   end SubscribePartiallyApplied
 
-  /** Evidence that `A` is read whole. Streams have none, so `Client.call` on an `outSse` endpoint is a compile error.
+  /** Evidence that `A` is read whole. Streams have none, so `Client.call` on an `EventStream` endpoint does not
+    * compile.
     */
   @scala.annotation.implicitNotFound("${A} is a stream. Read it with Client.subscribe, not Client.call.")
   sealed trait Strict[A]

@@ -55,7 +55,7 @@ Memory and File remain optional provided impls. Bringing your own `ProviderStore
 - Skills over MCP, MCP Apps (capability + `_meta.ui` only; no iframe host).
 - Official `@modelcontextprotocol/conformance` 2026-07-28 kit as a hard check.
 - CIMD / DCR completeness on the OP; MCP authorization-code client flow.
-- Catalog `invoke` for `inForm` / `inBytes` / `outSse` (HTTP-dispatch those; do not flatten into tools).
+- Catalog `invoke` for bodies that are not JSON, such as form, bytes, and event streams (HTTP-dispatch those; do not flatten them into tools).
 - OpenAPI `x-mcp-*` (or equivalent) so hints round-trip in the docs projection.
 - Dual-era 2025-11-25 `initialize` on HTTP and stdio (ephemeral session echo, GET 405). Done. GET SSE as a back-channel, MRTR, and progress stay Later. Native remains 2026-07-28.
 
