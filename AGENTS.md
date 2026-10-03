@@ -26,7 +26,7 @@ Core packages under `heddle/src/main/scala/heddle/`:
 | `http/` | Request, Response, Body, Method, Status, HttpVersion, Url, Path, QueryParams, MediaType, encodings |
 | `http/header/` | HeaderName, Header, Headers, TypedHeader, Cookie, Auth, Host, dates |
 | `route/` | Handler, Route, Routes, Middleware, PathCodec, PathDsl, QueryCodec, HeaderCodec. Path macros stay here. |
-| `endpoint/` | Endpoint, BoundOp, Api, Schema, OpenApi, OpArgs |
+| `endpoint/` | Endpoint, BoundOp, Api, Schema, BodyCodec, OpenApi, OpArgs |
 | `Server.scala` | `package heddle` (ZIO Tag). Do not `export Server`. |
 | `server/` | Tls, Files, Compressor, Http2Config, HeddleApp |
 | `client/` | Client, ClientError, CallFailure, ClientTls (JVM, Native). `client/internal/` is the shared pooled HTTP/1.1 exchange; platforms only supply a `Connector`. |
@@ -36,7 +36,7 @@ Core packages under `heddle/src/main/scala/heddle/`:
 | `internal/` | Ascii, ConnBuf, Nio, Http1, OpenAPI printer |
 | `internal/h2/` | HTTP/2 engine (`private[heddle]`) |
 
-User JSON is `zio.json.JsonCodec` (`import heddle.*` re-exports it). `derives Schema, JsonCodec` on domain types. Schema (OpenAPI shapes) lives in core.
+User JSON is `zio.json.JsonCodec` (`import heddle.*` re-exports it). `.in[A]` and `.out[A]` need a `BodyCodec[A]`. `derives Schema, JsonCodec` is the JSON default. A `given BodyCodec[A]` replaces it. `Text`, `Html`, `Javascript`, `Css`, `Svg`, `Octet`, `Form`, and `EventStream` are the other bodies. Schema (OpenAPI shapes) lives in core.
 
 ## Commands
 

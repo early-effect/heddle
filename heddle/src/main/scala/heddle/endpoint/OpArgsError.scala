@@ -4,8 +4,9 @@ import heddle.error.HeddleError
 
 /** Why an endpoint's input and a flat JSON arguments object (an MCP tool call) do not convert. */
 enum OpArgsError(val message: String) extends HeddleError:
-  case NonJsonBody  extends OpArgsError("a body that is not JSON has no argument form")
-  case StreamedBody extends OpArgsError("a streamed body has no argument form")
+  case NonJsonBody    extends OpArgsError("a body that is not JSON has no argument form")
+  case NonJsonSuccess extends OpArgsError("a tool result has to be a JSON document, and this body is not")
+  case StreamedBody   extends OpArgsError("a streamed body has no argument form")
   case NameCollision(names: List[String])
       extends OpArgsError(s"path, query, and body argument names collide: ${names.mkString(", ")}")
   case NotAnObject extends OpArgsError("arguments must be a JSON object")

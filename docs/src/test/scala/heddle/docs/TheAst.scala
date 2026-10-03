@@ -33,9 +33,10 @@ Interpreters fold that AST:
     illustrationIO(Hub.Lives.opAnatomy).live.withMountKey(InteractiveRegistry.AstAnatomy),
     section("OpArgs is why MCP (and CLI) can share HTTP")(
       md"""
-`OpArgs.promotable` requires JSON in and JSON out. Path params and query strings flatten into
-the same JSON object a tool call (or a future CLI) already knows how to pass. Form, bytes, and
-SSE stay on HTTP. Do not smash them into tools.
+`OpArgs.promotable` is the tool rule: JSON in and JSON out. An endpoint may use any `BodyCodec`.
+Path params and query strings flatten into the same JSON object a tool call (or a future CLI)
+already knows how to pass. HTML, text, form, bytes, and event streams stay on HTTP. Do not smash
+them into tools.
 """,
       exampleValue {
         OpArgs.promotable(BoxOffice.getShow.doc)

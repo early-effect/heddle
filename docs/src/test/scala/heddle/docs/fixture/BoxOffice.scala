@@ -39,7 +39,7 @@ object BoxOffice:
   val createHold =
     Endpoint
       .post("holds")
-      .inJson[NewHold]
+      .in[NewHold]
       .out[Hold](Status.Created)
       .outErrors[SeatingError](
         ErrorCase[SeatingError.SoldOut](Status.Conflict),
@@ -50,7 +50,7 @@ object BoxOffice:
   val seatTheParty =
     Endpoint
       .post("parties")
-      .inJson[Party]
+      .in[Party]
       .out[PartySeated](Status.Created)
       .outErrors[SeatingError](
         ErrorCase[SeatingError.SoldOut](Status.Conflict),

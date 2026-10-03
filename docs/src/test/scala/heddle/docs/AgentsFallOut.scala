@@ -17,7 +17,7 @@ Cursor `url` / `command` configs work. The authoring rule is [The tool is the jo
     illustrationIO(Hub.Lives.harnessWalk).live.withMountKey(InteractiveRegistry.HarnessWalk),
     section("Promote, don't auto-export")(
       md"""
-JSON in and JSON out are required (`OpArgs.promotable`). Form, bytes, and SSE stay on HTTP.
+A tool result is a JSON document (`OpArgs.promotable`). HTML, text, form, bytes, and event streams stay on HTTP.
 
 `tools/list` is promoted-only. `withCatalog` adds `search_operations` and `invoke` so agents can
 still find the rest of the `Api`.

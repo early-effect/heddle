@@ -1,6 +1,7 @@
 package heddle.mcp.server
 
-import heddle.endpoint.{BoundOp, Hint, OpArgs, OpArgsError, SchemaJson}
+import heddle.endpoint.{BodyCodec, BodyError, BoundOp, Hint, OpArgs, OpArgsError, Payload, SchemaJson}
+import heddle.error.HeddleError
 import heddle.http.header.Headers
 import heddle.mcp.{McpBuildError, ToolShapes}
 import heddle.mcp.protocol.{CallToolResult, ContentBlock, Structured, Tool, ToolAnnotations, ToolName}
@@ -21,23 +22,27 @@ object ToolCall:
 
   /** A bound operation as a tool: arguments become the request, the typed output becomes `structuredContent`. */
   def bound[R, In, Err, Out](op: BoundOp[R, In, Err, Out]): Either[McpBuildError, ToolCall[R]] =
-    val doc = op.endpoint.doc
-    for
-      name   <- ToolName.from(doc.toolName).left.map(McpBuildError.InvalidToolName(doc.toolName, _))
-      schema <- OpArgs.inputSchema(doc).left.map(McpBuildError.NotPromotable(doc.toolName, _))
-      input  <- objectSchema(SchemaJson.render(schema), doc.toolName)
-    yield
-      val out = ToolShapes.output(doc)
-      val err = ToolShapes.error(doc)
-      val t   = Tool(
-        name = name,
-        description = doc.description.orElse(doc.summary),
-        inputSchema = input,
-        outputSchema = out.map(_.outputSchema),
-        annotations = annotations(doc.hints),
-      )
-      ToolCall(t)((args, headers) => runBound(op, args, headers, out, err))
-    end for
+    val doc         = op.endpoint.doc
+    val jsonSuccess =
+      doc.responses.exists(r => r.status.isSuccess && r.schema.isDefined && r.contentType.exists(_.isJson))
+    if !jsonSuccess then Left(McpBuildError.NotPromotable(doc.toolName, OpArgsError.NonJsonSuccess))
+    else
+      for
+        name   <- ToolName.from(doc.toolName).left.map(McpBuildError.InvalidToolName(doc.toolName, _))
+        schema <- OpArgs.inputSchema(doc).left.map(McpBuildError.NotPromotable(doc.toolName, _))
+        input  <- objectSchema(SchemaJson.render(schema), doc.toolName)
+      yield
+        val out = ToolShapes.output(doc)
+        val err = ToolShapes.error(doc)
+        val t   = Tool(
+          name = name,
+          description = doc.description.orElse(doc.summary),
+          inputSchema = input,
+          outputSchema = out.map(_.outputSchema),
+          annotations = annotations(doc.hints),
+        )
+        ToolCall(t)((args, headers) => runBound(op, args, headers, out, err))
+    end if
   end bound
 
   def runBound[R, In, Err, Out](
@@ -56,8 +61,17 @@ object ToolCall:
             in =>
               op.run(in)
                 .fold(
-                  e => typedFailure(op.endpoint.errors.json(e), err),
-                  o => success(encode(op, o), out),
+                  e =>
+                    op.endpoint.errors.json(e) match
+                      case Some(raw) => typedFailure(raw, err)
+                      case None      =>
+                        val res = op.endpoint.encodeErr(e)
+                        failed(res.body.text.getOrElse(res.status.text))
+                  ,
+                  o =>
+                    encode(op, o) match
+                      case Right(json) => success(json, out)
+                      case Left(err)   => failed(err.message),
                 ),
           )
 
@@ -80,12 +94,15 @@ object ToolCall:
       case Json.Str(s) => s
       case other       => other.toJson
 
-  private def encode[R, In, Err, Out](op: BoundOp[R, In, Err, Out], out: Out): Json =
-    op.endpoint.outputCodec match
-      case Some(c) =>
-        val raw = c.encoder.encodeJson(out).toString
-        raw.fromJson[Json].getOrElse(Json.Str(raw))
-      case None => Json.Str(out.toString)
+  private def encode[R, In, Err, Out](op: BoundOp[R, In, Err, Out], out: Out): Either[HeddleError, Json] =
+    op.endpoint.outputBody.filter(_.mediaType.isJson) match
+      case Some(codec) =>
+        codec.encode(out) match
+          case Payload.Strict(bytes) =>
+            BodyCodec.utf8(bytes).fromJson[Json].left.map(BodyError.Json(_))
+          case Payload.Streamed(_, _) =>
+            Left(BodyError.Json("a streamed body is not a tool result"))
+      case None => Left(OpArgsError.NonJsonSuccess)
 
   private[server] def objectSchema(schema: Json, tool: String): Either[McpBuildError, Json.Obj] =
     schema match

@@ -22,8 +22,8 @@ object ApiSpec extends ZIOSpecDefault:
         )
       ,
       test("implement still is a Routes"):
-        val ep     = Endpoint.get("hello").outText()
-        val routes = ep.implement(_ => ZIO.succeed("world"))
+        val ep     = Endpoint.get("hello").out[Text]
+        val routes = ep.implement(_ => ZIO.succeed(Text("world")))
         routes(Request.get("/hello")).map { res =>
           assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "world")
         }
@@ -48,7 +48,7 @@ object ApiSpec extends ZIOSpecDefault:
       ,
       test("job promotes; resource does not"):
         val getItem    = Endpoint.get("items" / int("id")).out[Item].name("get_item")
-        val createItem = Endpoint.post("items").inJson[NewItem].out[Item].name("create_item")
+        val createItem = Endpoint.post("items").in[NewItem].out[Item].name("create_item")
         val api        = Api("Shop", "1.0.0")
           .resource(createItem)(n => ZIO.succeed(Item(2, n.name)))
           .job(getItem)(id => ZIO.succeed(Item(id, "x")))

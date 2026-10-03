@@ -2,17 +2,16 @@ package heddle.endpoint
 
 import scala.deriving.Mirror
 import scala.quoted.*
-import zio.json.JsonCodec
 
 /** Checks `outErrors` cases against `Mirror.SumOf[E]` and lays their statuses out by ordinal. */
 private[heddle] object ErrorCaseMacros:
-  inline def codec[E](inline cases: ErrorCase[? <: E]*)(using s: Schema[E], j: JsonCodec[E]): ErrorCodec[E] =
-    ${ codecImpl[E]('cases, 's, 'j) }
+  inline def codec[E](inline cases: ErrorCase[? <: E]*)(using s: Schema[E], b: BodyCodec[E]): ErrorCodec[E] =
+    ${ codecImpl[E]('cases, 's, 'b) }
 
   def codecImpl[E: Type](
       cases: Expr[Seq[ErrorCase[? <: E]]],
       schema: Expr[Schema[E]],
-      codec: Expr[JsonCodec[E]],
+      codec: Expr[BodyCodec[E]],
   )(using q: Quotes): Expr[ErrorCodec[E]] =
     import q.reflect.*
 

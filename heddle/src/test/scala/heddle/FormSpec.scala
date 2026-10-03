@@ -78,9 +78,9 @@ object FormSpec extends ZIOSpecDefault:
           assertTrue(r == Left(MultipartError.Undeclared))
         }
       ,
-      test("Endpoint.inForm decodes the body"):
-        val ep     = Endpoint.post("f").inForm.outText()
-        val routes = ep.implement(form => ZIO.succeed(form.get("n").getOrElse("")))
+      test("Endpoint.in[Form] decodes the body"):
+        val ep     = Endpoint.post("f").in[Form].out[Text]
+        val routes = ep.implement(form => ZIO.succeed(Text(form.get("n").getOrElse(""))))
         routes(Request.post("/f", Body.form(Form("n" -> "ada")))).map { res =>
           assertTrue(res.body.text.is(_.some) == "ada")
         }

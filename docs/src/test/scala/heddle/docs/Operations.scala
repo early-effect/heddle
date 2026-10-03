@@ -46,7 +46,8 @@ val getShow =
 ```
 
 `Api.job` is explicit promotion. Heddle will not auto-export every REST operation as a tool.
-`.inJson` / `.out` need `Schema` and `JsonCodec` (`derives Schema, JsonCodec` on the domain type).
+`.in[A]` and `.out[A]` need a `BodyCodec[A]`. `derives Schema, JsonCodec` on the domain type is the
+JSON default. A `given BodyCodec[A]` replaces it.
 """
     ),
     section("Click a field")(
