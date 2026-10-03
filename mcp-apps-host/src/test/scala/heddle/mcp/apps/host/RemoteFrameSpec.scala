@@ -101,8 +101,7 @@ object RemoteFrameSpec extends ZIOSpecDefault:
     ,
     test("a consent request that omits the summary decodes as none"):
       val raw = """{"server":"counter","view":"ui://counter/view","tool":"inc","arguments":{}}"""
-      assertTrue(raw.fromJson[ConsentRequest] == Right(incAsk.copy(summary = None)))
-    ,
+      assertTrue(raw.fromJson[ConsentRequest] == Right(incAsk.copy(summary = None))),
   )
 
   /** A mounted counter, pinned, as `AppsHostSpec` mounts one. */

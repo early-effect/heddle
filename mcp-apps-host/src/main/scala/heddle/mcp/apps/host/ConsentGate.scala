@@ -12,8 +12,8 @@ enum ConsentOutcome derives JsonCodec:
 
   def allows: Boolean = this == AllowOnce || this == AllowForSession
 
-/** One call a view asked to make, as the user is shown it. `summary` is the tool's own title or description. A host that
-  * did not read one leaves it off the wire, and a missing field is the same as none.
+/** One call a view asked to make, as the user is shown it. `summary` is the tool's own title or description. A host
+  * that did not read one leaves it off the wire, and a missing field is the same as none.
   */
 final case class ConsentRequest(
     server: ServerName,

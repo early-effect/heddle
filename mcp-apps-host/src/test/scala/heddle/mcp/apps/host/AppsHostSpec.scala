@@ -271,6 +271,7 @@ object AppsHostSpec extends ZIOSpecDefault:
         refused == refusal(1, Denial.NotOffered("resources/subscribe")),
         reached,
       )
+      end for
     ,
     test("what this host does not offer is refused in the shape the spec gives each method"):
       val text = Json.Arr(Json.Obj("type" -> Json.Str("text"), "text" -> Json.Str("hi")))

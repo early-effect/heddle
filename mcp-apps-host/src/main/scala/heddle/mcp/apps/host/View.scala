@@ -69,6 +69,7 @@ final case class LinkedView(
   /** The phrase a person reads for this call: the tool's title, else its description. */
   def summary(tool: ToolName): Option[String] =
     summaries.get(tool).orElse(if launch.name == tool then LinkedView.phrase(launch) else None)
+end LinkedView
 
 object LinkedView:
   /** Title, then description, then the annotation title. Blank text is no phrase. */

@@ -1,7 +1,6 @@
 package heddle.mcp.server
 
 import heddle.mcp.protocol.{Message, RpcError}
-import scala.collection.concurrent.TrieMap
 import zio.*
 import zio.stream.ZStream
 
@@ -9,7 +8,7 @@ import zio.stream.ZStream
   * a `Ref`. A session id is issued at `initialize` and is the only name `GET` and `resources/subscribe` accept.
   */
 final class SessionHub:
-  private val sessions = TrieMap.empty[String, Session]
+  private val sessions = ConcurrentMap.empty[String, Session]
 
   def open(id: String): UIO[Unit] =
     ZIO.succeed {
@@ -51,7 +50,7 @@ final class SessionHub:
 
   /** `uri` set: only sessions that subscribed to it. `uri` empty: every open session. */
   def publish(note: Message.Notification, uri: Option[String]): UIO[Unit] =
-    ZIO.foreachDiscard(sessions.values.toList)(_.offer(note, uri))
+    ZIO.foreachDiscard(sessions.values)(_.offer(note, uri))
 
   /** The queue a GET stream reads. Registered before the effect returns, for as long as the scope lives. */
   def attach(id: String): ZIO[Scope, RpcError, Queue[Message]] =
@@ -66,8 +65,8 @@ final class SessionHub:
 end SessionHub
 
 private final class Session:
-  private val uris = TrieMap.empty[String, Unit]
-  private val ears = TrieMap.empty[Long, Queue[Message]]
+  private val uris = ConcurrentMap.empty[String, Unit]
+  private val ears = ConcurrentMap.empty[Long, Queue[Message]]
   private val next = new java.util.concurrent.atomic.AtomicLong
 
   def subscribe(uri: String): Unit =
@@ -87,10 +86,10 @@ private final class Session:
   def offer(note: Message.Notification, uri: Option[String]): UIO[Unit] =
     val wanted = uri.fold(true)(uris.contains)
     if !wanted then ZIO.unit
-    else ZIO.foreachDiscard(ears.values.toList)(_.offer(note).unit)
+    else ZIO.foreachDiscard(ears.values)(_.offer(note).unit)
 
   def shutdown: UIO[Unit] =
-    val queues = ears.values.toList
+    val queues = ears.values
     ears.clear()
     ZIO.foreachDiscard(queues)(_.shutdown)
 end Session

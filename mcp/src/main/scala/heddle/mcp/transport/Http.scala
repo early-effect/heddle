@@ -46,14 +46,16 @@ object Http:
               Sse.response(
                 // Firefox does not resolve fetch until the first body byte.
                 zio.stream.ZStream.unwrapScoped {
-                  hub.attach(id).foldZIO(
-                    _ => ZIO.succeed(zio.stream.ZStream.empty),
-                    queue =>
-                      ZIO.succeed(
-                        zio.stream.ZStream.succeed(ServerSentEvent.Heartbeat) ++
-                          zio.stream.ZStream.fromQueue(queue).map(message => ServerSentEvent(message.json.toJson))
-                      ),
-                  )
+                  hub
+                    .attach(id)
+                    .foldZIO(
+                      _ => ZIO.succeed(zio.stream.ZStream.empty),
+                      queue =>
+                        ZIO.succeed(
+                          zio.stream.ZStream.succeed(ServerSentEvent.Heartbeat) ++
+                            zio.stream.ZStream.fromQueue(queue).map(message => ServerSentEvent(message.json.toJson))
+                        ),
+                    )
                 }
               )
             )

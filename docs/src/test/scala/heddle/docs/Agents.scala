@@ -95,8 +95,8 @@ error, and its JSON travels as `structuredContent` too, so a typed caller gets t
     section("Resources and extensions")(
       md"""
 A resource is something a client lists and reads by URI: a document, a schema, the HTML of an
-MCP App view. `withResources` adds them. The server then advertises `resources` and answers
-`resources/list` and `resources/read`. An unknown URI is `-32002`, and a resource that cannot be read
+MCP App view. `withResources` adds them. The server then advertises `resources`, including
+`subscribe`, and answers `resources/list` and `resources/read`. An unknown URI is `-32002`, and a resource that cannot be read
 right now is an internal error for that one request. `withExtension` advertises an extension, such as
 `ExtensionId.Ui` for MCP Apps, in both handshakes.
 
@@ -120,7 +120,7 @@ a catalog tool that would shadow an operation named `invoke` is a `McpBuildError
         }
       }.assert { case (caps, read) =>
         assertTrue(
-          caps.contains("\"resources\":{}"),
+          caps.contains("\"resources\":{\"subscribe\":true}"),
           caps.contains("io.modelcontextprotocol/ui"),
           read.contains("<p>tonight</p>"),
         )

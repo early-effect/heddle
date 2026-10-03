@@ -121,12 +121,12 @@ object Dialog:
   private def render(request: ConsentRequest, body: dom.HTMLElement): dom.HTMLDivElement =
     val box = dom.document.createElement(dom.HtmlTag.div)
     box.setAttribute("id", "consent")
-    val text = dom.document.createElement(dom.HtmlTag.p)
+    val text   = dom.document.createElement(dom.HtmlTag.p)
     val action = request.summary.map(_.trim).filter(_.nonEmpty).getOrElse(request.tool.value)
     text.textContent = Some(s"$action on ${request.server.value}?")
     val _ = box.appendChild(text)
     request.arguments.fields.foreach { (name, value) =>
-      val row = dom.document.createElement(dom.HtmlTag.p)
+      val row   = dom.document.createElement(dom.HtmlTag.p)
       val shown = value match
         case Json.Str(s)  => s
         case Json.Num(n)  => n.toString
