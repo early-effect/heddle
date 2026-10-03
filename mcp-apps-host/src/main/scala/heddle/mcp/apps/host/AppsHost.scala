@@ -35,6 +35,7 @@ final case class HostSettings(
     heights: HeightBounds = HeightBounds.default,
     logs: LogBudget = LogBudget.default,
     teardownWait: Duration = 2.seconds,
+    resourceSubscribe: Boolean = false,
 )
 
 /** What the host page does for one mounted view. */
@@ -126,6 +127,11 @@ final case class Mount(
       _     <- ended.await.zipRight(calls.close(Exit.unit)).forkScoped
       talk = Mount.Conversation(this, port, frame, gate, audit, state, ended, leaving, pending, logs, calls)
       _ <- talk.drainLogs.forkScoped
+      _ <- server.session.notifications
+        .catchAll(_ => ZStream.empty)
+        .filter(talk.forwardNotice)
+        .foreach(talk.send)
+        .forkScoped
       _ <- port.receive
         .interruptWhen(ended.await)
         .foreach(talk.handle)
@@ -180,11 +186,33 @@ object Mount:
         audit.record(AuditEvent(at, view.server, view.uri, mount.generation, action, decision))
       )
 
-    private def send(message: Message): UIO[Unit] =
+    private[host] def send(message: Message): UIO[Unit] =
       port.send(message).catchAll(_ => ended.succeed(Ending.PortClosed).unit)
 
     private def answer(id: RequestId, result: Json.Obj): UIO[Unit] = send(Message.Result(id, result))
     private def fail(id: RequestId, error: RpcError): UIO[Unit]    = send(Message.Error(Some(id), error))
+
+    /** List changes are part of the stable host claim. Resource updates ride the experimental subscribe flag. */
+    def forwardNotice(note: Message.Notification): Boolean =
+      note.method match
+        case Notifications.ToolsListChanged | Notifications.ResourcesListChanged => true
+        case Notifications.ResourceUpdated                                       => settings.resourceSubscribe
+        case _                                                                   => false
+
+    private def delegated(method: String): Boolean =
+      method == Methods.SubscribeResource || method == Methods.UnsubscribeResource
+
+    private def forward(id: RequestId, method: String, params: Json.Obj): UIO[Unit] =
+      ClientRequest.decode(method, params) match
+        case Left(e)    => fail(id, e)
+        case Right(req) =>
+          record(Action.Request(method, None, None), Decision.Allowed) *>
+            mount.server.session.request(req).foldZIO(relayFailure(id, _), answer(id, _))
+
+    private def relayFailure(id: RequestId, error: McpError): UIO[Unit] =
+      error match
+        case McpError.Rpc(rpc) => fail(id, rpc)
+        case other             => fail(id, RpcError.Internal(other.message))
 
     /** Nothing is handled once the mount has ended: the stream's interruption lands asynchronously, and a message
       * queued behind a navigation is not from the view the host framed.
@@ -202,6 +230,11 @@ object Mount:
 
     private def request(id: RequestId, method: String, params: Json.Obj): UIO[Unit] =
       ViewRequest.decode(method, params) match
+        case Left(UiError.UnknownMethod(m)) if delegated(m) =>
+          if settings.resourceSubscribe then inFlight(forward(id, m, params))
+          else
+            record(Action.Request(m, None, None), Decision.Denied(Denial.NotOffered(m))) *>
+              fail(id, refused(Denial.NotOffered(m)))
         case Left(UiError.UnknownMethod(m)) =>
           record(Action.Request(m, None, None), Decision.Denied(Denial.NotOffered(m))) *>
             fail(id, RpcError.methodNotFound(m))
@@ -227,15 +260,12 @@ object Mount:
             }
         case ViewRequest.CallTool(name, arguments) => inFlight(callTool(id, name, arguments))
         case ViewRequest.ReadResource(uri)         =>
-          if uri != view.uri.value then
-            record(plain, Decision.Denied(Denial.NotTheView(uri))) *> fail(id, refused(Denial.NotTheView(uri)))
-          else
-            record(plain, Decision.Allowed) *>
-              inFlight(
-                mount.server.session
-                  .readResource(uri)
-                  .foldZIO(e => fail(id, RpcError.Internal(e.message)), c => answer(id, json(ReadResourceResult(c))))
-              )
+          record(plain, Decision.Allowed) *>
+            inFlight(
+              mount.server.session
+                .readResource(uri)
+                .foldZIO(relayFailure(id, _), c => answer(id, json(ReadResourceResult(c))))
+            )
         case ViewRequest.OpenLink(url) =>
           Url.decode(url).toOption.filter(link) match
             case Some(u) =>
@@ -272,7 +302,7 @@ object Mount:
       if !view.admits(name) then
         record(action, Decision.Denied(Denial.NotLinked(name))) *> fail(id, refused(Denial.NotLinked(name)))
       else
-        gate.decide(ConsentRequest(view.server, view.uri, name, arguments)).flatMap { outcome =>
+        gate.decide(ConsentRequest(view.server, view.uri, name, arguments, view.summary(name))).flatMap { outcome =>
           record(action, Decision.ConsentAsked(outcome)) *> {
             if !outcome.allows then
               record(action, Decision.Denied(Denial.ConsentRefused(outcome))) *>
@@ -358,6 +388,9 @@ object Mount:
           serverResources = Some(ListChanged()),
           logging = Some(Present),
           sandbox = Some(mount.grant),
+          experimental = Option.when(settings.resourceSubscribe)(
+            Json.Obj("serverResources" -> Json.Obj("subscribe" -> Json.Bool(true)))
+          ),
         ),
         settings.context.copy(
           toolInfo = Some(ToolInfo(None, view.launch)),

@@ -12,7 +12,8 @@ import zio.test.*
 object RemoteFrameSpec extends ZIOSpecDefault:
   import HostFixtures.*
 
-  private val incAsk = ConsentRequest(counter, CounterHost.shed.uri, ToolName("inc"), Json.Obj())
+  private val incAsk =
+    ConsentRequest(counter, CounterHost.shed.uri, ToolName("inc"), Json.Obj(), Some("Increment"))
 
   /** The browser's half, in this process: view messages one way, consent and resize the other. */
   private def browser(
@@ -97,6 +98,10 @@ object RemoteFrameSpec extends ZIOSpecDefault:
         events.forall(event => event.toJson.fromJson[FrameEvent] == Right(event)),
         """{"Nope":{}}""".fromJson[FrameEvent].isLeft,
       )
+    ,
+    test("a consent request that omits the summary decodes as none"):
+      val raw = """{"server":"counter","view":"ui://counter/view","tool":"inc","arguments":{}}"""
+      assertTrue(raw.fromJson[ConsentRequest] == Right(incAsk.copy(summary = None))),
   )
 
   /** A mounted counter, pinned, as `AppsHostSpec` mounts one. */

@@ -11,6 +11,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.JSGlobal
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 import zio.stream.ZStream
 
 /** Where the page publishes what it saw, for a test or a person at the console. */
@@ -120,9 +121,21 @@ object Dialog:
   private def render(request: ConsentRequest, body: dom.HTMLElement): dom.HTMLDivElement =
     val box = dom.document.createElement(dom.HtmlTag.div)
     box.setAttribute("id", "consent")
-    val text = dom.document.createElement(dom.HtmlTag.p)
-    text.textContent = Some(s"${request.server.value} wants to call ${request.tool.value} ${request.arguments.toJson}")
+    val text   = dom.document.createElement(dom.HtmlTag.p)
+    val action = request.summary.map(_.trim).filter(_.nonEmpty).getOrElse(request.tool.value)
+    text.textContent = Some(s"$action on ${request.server.value}?")
     val _ = box.appendChild(text)
+    request.arguments.fields.foreach { (name, value) =>
+      val row   = dom.document.createElement(dom.HtmlTag.p)
+      val shown = value match
+        case Json.Str(s)  => s
+        case Json.Num(n)  => n.toString
+        case Json.Bool(b) => b.toString
+        case Json.Null    => ""
+        case other        => other.toJson
+      row.textContent = Some(s"$name: $shown")
+      val _ = box.appendChild(row)
+    }
     answers.foreach { (id, outcome) =>
       val b = dom.document.createElement(dom.HtmlTag.button)
       b.setAttribute("id", id)

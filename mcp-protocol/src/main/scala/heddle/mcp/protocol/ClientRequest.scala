@@ -14,6 +14,8 @@ enum ClientRequest:
   case ListResources(cursor: Option[String])
   case ListResourceTemplates(cursor: Option[String])
   case ReadResource(uri: String)
+  case SubscribeResource(uri: String)
+  case UnsubscribeResource(uri: String)
 
   def method: String =
     this match
@@ -25,6 +27,8 @@ enum ClientRequest:
       case ListResources(_)         => Methods.ListResources
       case ListResourceTemplates(_) => Methods.ListResourceTemplates
       case ReadResource(_)          => Methods.ReadResource
+      case SubscribeResource(_)     => Methods.SubscribeResource
+      case UnsubscribeResource(_)   => Methods.UnsubscribeResource
 
   def params: Json.Obj =
     def cursor(c: Option[String]) = Json.Obj(Chunk.fromIterable(c.map("cursor" -> Json.Str(_))))
@@ -40,13 +44,18 @@ enum ClientRequest:
       case ListResources(c)         => cursor(c)
       case ListResourceTemplates(c) => cursor(c)
       case ReadResource(uri)        => Json.Obj("uri" -> Json.Str(uri))
+      case SubscribeResource(uri)   => Json.Obj("uri" -> Json.Str(uri))
+      case UnsubscribeResource(uri) => Json.Obj("uri" -> Json.Str(uri))
     end match
   end params
 end ClientRequest
 
 /** Wire notification names. */
 object Notifications:
-  val Initialized = "notifications/initialized"
+  val Initialized          = "notifications/initialized"
+  val ResourceUpdated      = "notifications/resources/updated"
+  val ToolsListChanged     = "notifications/tools/list_changed"
+  val ResourcesListChanged = "notifications/resources/list_changed"
 
 /** Wire method names. */
 object Methods:
@@ -58,9 +67,22 @@ object Methods:
   val ListResources         = "resources/list"
   val ListResourceTemplates = "resources/templates/list"
   val ReadResource          = "resources/read"
+  val SubscribeResource     = "resources/subscribe"
+  val UnsubscribeResource   = "resources/unsubscribe"
 
   val requests: Set[String] =
-    Set(Ping, Discover, Initialize, ListTools, CallTool, ListResources, ListResourceTemplates, ReadResource)
+    Set(
+      Ping,
+      Discover,
+      Initialize,
+      ListTools,
+      CallTool,
+      ListResources,
+      ListResourceTemplates,
+      ReadResource,
+      SubscribeResource,
+      UnsubscribeResource,
+    )
 end Methods
 
 object ClientRequest:
@@ -75,11 +97,10 @@ object ClientRequest:
       case Methods.CallTool              => callTool(params)
       case Methods.ListResources         => cursor(params).map(ListResources(_))
       case Methods.ListResourceTemplates => cursor(params).map(ListResourceTemplates(_))
-      case Methods.ReadResource          =>
-        params.get("uri") match
-          case Some(Json.Str(u)) => Right(ReadResource(u))
-          case _                 => Left(RpcError.InvalidParams("resources/read needs a string uri"))
-      case other => Left(RpcError.methodNotFound(other))
+      case Methods.ReadResource          => uri(params, "resources/read").map(ReadResource(_))
+      case Methods.SubscribeResource     => uri(params, "resources/subscribe").map(SubscribeResource(_))
+      case Methods.UnsubscribeResource   => uri(params, "resources/unsubscribe").map(UnsubscribeResource(_))
+      case other                         => Left(RpcError.methodNotFound(other))
 
   private def initialize(p: Json.Obj): Either[RpcError, ClientRequest] =
     val caps = p.get("capabilities") match
@@ -107,6 +128,11 @@ object ClientRequest:
         case Some(o: Json.Obj) => Right(o)
         case Some(_)           => Left(RpcError.InvalidParams("arguments must be a JSON object"))
     yield CallTool(name, args)
+
+  private def uri(p: Json.Obj, method: String): Either[RpcError, String] =
+    p.get("uri") match
+      case Some(Json.Str(u)) => Right(u)
+      case _                 => Left(RpcError.InvalidParams(s"$method needs a string uri"))
 
   private def cursor(p: Json.Obj): Either[RpcError, Option[String]] =
     p.get("cursor") match

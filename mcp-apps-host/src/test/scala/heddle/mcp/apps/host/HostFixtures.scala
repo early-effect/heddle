@@ -25,6 +25,14 @@ object HostFixtures:
 
   /** The server's count, and a session to it that serves `document` for the view. */
   def server(document: UiDocument, policy: UiPolicy = UiPolicy.closed): ZIO[Scope, BuildError, (AppServer, Ref[Int])] =
+    serving(document, policy).map { case (_, live, n) => (live, n) }
+
+  /** `mcp` is the server the session is connected to, so a test can publish on it. */
+  def serving(
+      document: UiDocument,
+      policy: UiPolicy = UiPolicy.closed,
+      handshake: McpClient.Handshake = McpClient.Handshake.Discover,
+  ): ZIO[Scope, BuildError, (Mcp[Any], AppServer, Ref[Int])] =
     for
       n <- Ref.make(0)
       api = Api("Counter", "1.0.0")
@@ -35,9 +43,9 @@ object HostFixtures:
       mcp <- ZIO.fromEither(Mcp.from(api))
       app <- ZIO.fromEither(mcp.withApp(shed.withPolicy(policy), document))
       s   <- McpClient
-        .http("http://counter.test/mcp", McpClient.Settings(CounterHost.hostInfo))
+        .http("http://counter.test/mcp", McpClient.Settings(CounterHost.hostInfo, handshake = handshake))
         .provideSome[Scope](Client.inMemory(app.routes))
-    yield (AppServer(counter, s), n)
+    yield (app, AppServer(counter, s), n)
 
   val view: UiDocument = UiDocument("Counter", "window.counter = 1;")
 

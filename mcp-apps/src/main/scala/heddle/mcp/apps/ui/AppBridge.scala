@@ -18,6 +18,7 @@ final class AppBridge[In, Err, Out, N <: Tuple, V <: Tuple] private (
     session: AppBridge.HostSession,
     runs: SubscriptionRef[Run[In, Err, Out]],
     contexts: SubscriptionRef[HostContext],
+    updates: Hub[String],
 ):
   /** Pins a grant from the shed; `apply` sends its typed input and reads its typed output or declared error. */
   def call[I, E, O](pick: NamedTuple[N, V] => Grant[I, E, O]): McpSession.CallPartiallyApplied[I, E, O] =
@@ -56,6 +57,26 @@ final class AppBridge[In, Err, Out, N <: Tuple, V <: Tuple] private (
 
   def log(level: LoggingLevel, data: Json, logger: Option[String] = None): IO[McpError, Unit] =
     session.tell(ViewNotification.Log(level, logger, data))
+
+  /** The host advertised experimental `resources/subscribe`. A view that did not read this must not send it. */
+  def offersResourceSubscribe: Boolean =
+    host.hostCapabilities.experimental.exists {
+      _.get("serverResources") match
+        case Some(body: Json.Obj) => body.get("subscribe").contains(Json.Bool(true))
+        case _                    => false
+    }
+
+  /** URIs named by `notifications/resources/updated`. */
+  def resourceUpdates: ZStream[Any, Nothing, String] = ZStream.fromHub(updates)
+
+  def subscribeResource(uri: String): IO[McpError, Unit] =
+    session.request(ClientRequest.SubscribeResource(uri)).unit
+
+  def unsubscribeResource(uri: String): IO[McpError, Unit] =
+    session.request(ClientRequest.UnsubscribeResource(uri)).unit
+
+  def readResource(uri: String): IO[McpError, Chunk[ResourceContents]] =
+    session.readResource(uri)
 end AppBridge
 
 object AppBridge:
@@ -83,6 +104,7 @@ object AppBridge:
       pending  <- Ref.make(Map.empty[RequestId, Promise[McpError, Json.Obj]])
       runs     <- SubscriptionRef.make[Run[In, Err, Out]](Run.waiting)
       contexts <- SubscriptionRef.make(HostContext.empty)
+      updates  <- Hub.sliding[String](16)
       session = HostSession(port, ids, pending, settings.requestTimeout)
       _ <- port.receive
         .foreach {
@@ -90,10 +112,15 @@ object AppBridge:
           case Message.Error(Some(id), e)           => session.settle(id, Left(McpError.Rpc(e)))
           case Message.Error(None, _)               => ZIO.unit
           case Message.Notification(method, params) =>
-            HostNotification.decode(method, params) match
-              case Right(HostNotification.HostContextChanged(patch)) => contexts.update(_.merge(patch))
-              case Right(note) => runs.get.flatMap(Run.step(endpoint)(_, note)).flatMap(runs.set)
-              case Left(_)     => ZIO.unit // a notification a newer host may send
+            if method == Notifications.ResourceUpdated then
+              params.get("uri") match
+                case Some(Json.Str(uri)) => updates.publish(uri).unit
+                case _                   => ZIO.unit
+            else
+              HostNotification.decode(method, params) match
+                case Right(HostNotification.HostContextChanged(patch)) => contexts.update(_.merge(patch))
+                case Right(note) => runs.get.flatMap(Run.step(endpoint)(_, note)).flatMap(runs.set)
+                case Left(_)     => ZIO.unit // a notification a newer host may send
           case Message.Request(id, method, params) =>
             HostRequest.decode(method, params) match
               case Right(HostRequest.ResourceTeardown(_)) =>
@@ -107,7 +134,7 @@ object AppBridge:
       host <- ZIO.fromEither(init.as[InitializeResult]).mapError(McpError.Protocol(_))
       _    <- contexts.set(host.hostContext)
       _    <- session.tell(ViewNotification.Initialized)
-    yield AppBridge(shed, host, session, runs, contexts)
+    yield AppBridge(shed, host, session, runs, contexts, updates)
     end for
   end connect
 

@@ -13,7 +13,7 @@ import zio.json.ast.Json
 /** A counter shed, a real heddle MCP server for it, and a fake host between a view and that server. */
 object CounterHost:
   val show  = Endpoint.get("counter").out[Count].name("show_counter").summary("Open the counter")
-  val inc   = Endpoint.post("counter" / "inc").out[Count].name("inc")
+  val inc   = Endpoint.post("counter" / "inc").out[Count].name("inc").summary("Increment")
   val reset = Endpoint.post("counter" / "reset").out[Count].name("reset")
 
   val shed =

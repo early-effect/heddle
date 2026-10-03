@@ -6,6 +6,7 @@ import heddle.mcp.protocol.*
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+import zio.stream.ZStream
 
 /** A connected MCP server. `request` is the one primitive; the rest decode its results into protocol types. */
 trait McpSession:
@@ -17,6 +18,9 @@ trait McpSession:
 
   /** One request and its raw result object. A JSON-RPC error answer is `McpError.Rpc`. */
   def request(req: ClientRequest): IO[McpError, Json.Obj]
+
+  /** Server notifications on the session stream. Empty when this connection did not open one. */
+  def notifications: ZStream[Any, McpError, Message.Notification] = ZStream.empty
 
   final def ping: IO[McpError, Unit] = request(ClientRequest.Ping).unit
 
