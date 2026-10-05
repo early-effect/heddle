@@ -129,7 +129,7 @@ lazy val heddle = (projectMatrix in file("heddle"))
   )
   .nativePlatform(
     scalaVersions = scalaVersions,
-    MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl ++ jvmNativeShared,
+    MyVersions.javaTime ++ nativeThreads ++ nativeOpenssl ++ jvmNativeShared,
   )
 
 lazy val brotli = (projectMatrix in file("brotli"))
@@ -152,7 +152,7 @@ lazy val brotli = (projectMatrix in file("brotli"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.javaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val oauth = (projectMatrix in file("oauth"))
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
@@ -189,7 +189,7 @@ lazy val mcpProtocol = (projectMatrix in file("mcp-protocol"))
   )
   .jvmPlatform(scalaVersions = scalaVersions)
   .jsPlatform(scalaVersions = scalaVersions, MyVersions.jsRuntime)
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.javaTime ++ nativeThreads)
 
 lazy val mcp = (projectMatrix in file("mcp"))
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
@@ -210,7 +210,7 @@ lazy val mcp = (projectMatrix in file("mcp"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.javaTime ++ nativeThreads ++ nativeOpenssl)
 
 lazy val example = project
   .in(file("example"))
@@ -299,7 +299,7 @@ lazy val mcpApps = (projectMatrix in file("mcp-apps"))
       scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
     ),
   )
-  .nativePlatform(scalaVersions = scalaVersions, MyVersions.nativeJavaTime ++ nativeThreads ++ nativeOpenssl)
+  .nativePlatform(scalaVersions = scalaVersions, MyVersions.javaTime ++ nativeThreads ++ nativeOpenssl)
 
 /** The sandbox proxy's script: a browser app, linked once and carried inside the host kit, never published alone. */
 lazy val mcpAppsRelay = project
@@ -469,16 +469,6 @@ lazy val docs = project
     Test / unmanagedSourceDirectories += baseDirectory.value / "shared" / "scala",
     MyVersions.docsTest,
     MyVersions.coreTest,
-    dependencyOverrides += MyVersions.moduleID(MyVersions.zioJson),
-    libraryDependencySchemes += "rocks.earlyeffect" %% "heddle" % VersionScheme.Always,
-    // ascent-preview 0.7.1 / specular 0.16.4 still pull published heddle 0.2.0. Docs
-    // preview must run against this tree. Files is back on import heddle.* so the
-    // preview bytecode (exports$package$.Files) links.
-    excludeDependencies ++= Seq(
-      "rocks.earlyeffect" %% "heddle",
-      "rocks.earlyeffect" %% "heddle-mcp",
-      "rocks.earlyeffect" %% "heddle-oauth",
-    ),
     Test / mainClass       := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),
