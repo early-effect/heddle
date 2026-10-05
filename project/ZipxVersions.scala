@@ -1,6 +1,3 @@
-import sbt.{Def, Setting}
-import sbt.Keys.{dependencyOverrides, libraryDependencySchemes}
-import sbt.librarymanagement.syntax.*
 import zipx.*
 
 /** Typed catalog. `zipxDepUpdate` rewrites constructors here. sbt-zipx and sbt-pgp are not rows. */
@@ -18,21 +15,21 @@ object MyVersions extends ZipxVersions:
 
   val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
 
-  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.17.0")
+  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.19.0-7251800ecbdc-SNAPSHOT")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
-  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.0-a6b10267d4db-SNAPSHOT")
-  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.7.1")
-  val ascentCss       = ascentJs.mod("ascent-css")
+  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.0-19667f3cf23f-SNAPSHOT")
+  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.0-19667f3cf23f-SNAPSHOT")
+  val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.0-19667f3cf23f-SNAPSHOT")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
   val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
-  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.17.0")
+  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.19.0-7251800ecbdc-SNAPSHOT")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
-  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.1")
+  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2-8464547dc109-SNAPSHOT")
 
   val release = ShipGroup("heddle", "0.9.0")(
     "heddle",
@@ -59,13 +56,4 @@ object MyVersions extends ZipxVersions:
   /** Heddle reads only `Instant` and UTC offsets, so region time zones (tzdb) stay the application's choice. */
   def javaTime  = library(scalaJavaTime)
   def jsRuntime = javaTime
-
-  def nativeTestInterface: Seq[Setting[?]] =
-    val testInterface = "org.scala-native" % "test-interface_native0.5_3" % (scalaNative.version: String)
-    Seq(
-      libraryDependencySchemes += "org.scala-native" % "test-interface_native0.5_3" % "early-semver",
-      dependencyOverrides += Def.uncached(testInterface),
-    )
-
-  def nativeJavaTime = javaTime ++ nativeTestInterface
 end MyVersions
