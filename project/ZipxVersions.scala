@@ -18,7 +18,7 @@ object MyVersions extends ZipxVersions:
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.19.0-7251800ecbdc-SNAPSHOT")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
-  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.0-19667f3cf23f-SNAPSHOT")
+  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.10.0")
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.0-19667f3cf23f-SNAPSHOT")
   val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.0-19667f3cf23f-SNAPSHOT")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
