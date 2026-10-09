@@ -159,7 +159,9 @@ object RouteSpec extends ZIOSpecDefault:
       },
       test("an ignored capture is an underscore") {
         val routes = Routes(
-          Method.GET / "p" / long("left") / long("right") -> { (_, right) => ZIO.succeed(Response.text(right.toString)) }
+          Method.GET / "p" / long("left") / long("right") -> { (_, right) =>
+            ZIO.succeed(Response.text(right.toString))
+          }
         )
         routes(Request.get("/p/1/2")).map { res =>
           assertTrue(res.body.text.is(_.some) == "2")

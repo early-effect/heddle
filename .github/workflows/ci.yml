@@ -80,7 +80,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: save
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: cache-rehydrate
         run: sbt 'Test/compile'
   test:
@@ -107,9 +107,9 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: save
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: Pinned snapshots
-        run: echo "::warning title=zipx snapshots::pinned snapshots (rocks.earlyeffect:specular-core:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:specular-zio-test:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:early-effect-docs-theme:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:ascent-js:0.11.0-19667f3cf23f-SNAPSHOT, rocks.earlyeffect:sbt-specular:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:sbt-splice:0.3.2-8464547dc109-SNAPSHOT)"
+        run: echo "::warning title=zipx snapshots::pinned snapshots (rocks.earlyeffect:specular-core:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:specular-zio-test:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:early-effect-docs-theme:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:ascent-js:0.11.0-19667f3cf23f-SNAPSHOT, rocks.earlyeffect:sbt-specular:0.19.0-7251800ecbdc-SNAPSHOT)"
       - name: test
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -143,7 +143,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: fmt
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -177,7 +177,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: workflow-check
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -211,7 +211,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: advisories
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -249,7 +249,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: Fetch PR base SHA
         run: git fetch --no-tags origin "$ZIPX_MODVER_BASE_SHA"
       - name: modver-suggest
@@ -288,7 +288,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: Fetch PR base SHA
         run: git fetch --no-tags origin "$ZIPX_MODVER_BASE_SHA"
       - name: modver-check
@@ -324,7 +324,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: test-js
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -358,7 +358,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: Install Scala Native build dependencies
         run: sudo apt-get update && sudo apt-get install -y clang libstdc++-12-dev libgc-dev libunwind-dev libssl-dev
       - name: test-native
@@ -394,7 +394,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: Install the pinned Playwright browsers
         run: sbt appsBrowser/chekhovInstall
       - name: Install their Linux system libraries
@@ -453,7 +453,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: snapshots
         run: sbt 'zipxSnapshotPublish'
   snapshots-pr:
@@ -483,7 +483,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: d5ee01ffbd52047c
+          cache-epoch: c1597b24d173965a
       - name: snapshots-pr
         run: sbt 'zipxSnapshotPublish pr'
   docs:
