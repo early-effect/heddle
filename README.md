@@ -42,7 +42,7 @@ import zio.*
 
 val routes = Routes(
   Method.GET / "health"            -> Handler.text("ok"),
-  Method.GET / "users" / int("id") -> { (id: Int) =>
+  Method.GET / "users" / int("id") -> { id =>
     ZIO.succeed(Response.text(id.toString))
   },
 )
@@ -52,6 +52,8 @@ val app = routes @@ (Middleware.requestId() ++ Middleware.cors() ++ Middleware.d
 object Hello extends HeddleApp:
   def routes = app
 ```
+
+`id` is the name in `int("id")`. The parameter name is the capture name.
 
 Promote selected endpoints with `Api.job` (or `.mcp`), then `Mcp.from(api)`. Agents hit `POST /mcp` or a
 `--mcp-stdio` process. Swagger is `api.openApi.routes("docs")`. A browser is an HTTP client

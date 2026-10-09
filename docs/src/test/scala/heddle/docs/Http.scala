@@ -26,7 +26,7 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
 """,
       exampleZIO {
         val routes = Routes(
-          Method.GET / "users" / int("id") -> { (id: Int) =>
+          Method.GET / "users" / int("id") -> { id =>
             ZIO.succeed(Response.text(id.toString))
           }
         )
@@ -38,6 +38,32 @@ If you are building a hub, start at [The hub](the-hub.html) and come back here f
       }.assert { case (body, miss) =>
         assertTrue(body == "3", miss == Status.NotFound)
       },
+      md"""
+A capture is a name and a type, written left to right. `->` takes those captures in that order, and the
+parameter names are the names in the path. `long("left") / long("right")` is `(left, right) =>`. The names
+are part of the check, so two captures of one type cannot be swapped and still compile. `(right, left)` does
+not compile. `_` ignores that position. It does not invent a name.
+""",
+      exampleZIO {
+        val routes = Routes(
+          Method.GET / "p" / long("left") / "x" / long("right") -> { (left, right) =>
+            ZIO.succeed(Response.text(s"$left $right"))
+          }
+        )
+        routes(Request.get("/p/1/x/2")).flatMap(_.body.utf8)
+      }.assert(body => assertTrue(body == "1 2")),
+      md"""
+The request is not a capture. `handle` takes the same captures and then the request. A route that does not
+read the request stays on `->` and does not mention it.
+""",
+      exampleZIO {
+        val routes = Routes(
+          Method.PATCH / "p" / long("left") / long("right") handle { (left, right, req) =>
+            ZIO.succeed(Response.text(s"$left $right ${req.method.render}"))
+          }
+        )
+        routes(Request(Method.PATCH, Url.parse("/p/1/2"))).flatMap(_.body.utf8)
+      }.assert(body => assertTrue(body == "1 2 PATCH")),
       illustrationIO(Hub.Lives.pathPlay).live.withMountKey(InteractiveRegistry.PathPlayground),
     ),
     section("Middleware")(

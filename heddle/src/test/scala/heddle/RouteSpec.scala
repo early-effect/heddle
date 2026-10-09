@@ -8,7 +8,7 @@ object RouteSpec extends ZIOSpecDefault:
     suite("Routes")(
       test("trailing captures remaining path"):
         val routes = Routes(
-          Method.GET / trailing -> { (path: Path) => ZIO.succeed(Response.text(path.render)) }
+          Method.GET / trailing -> { path => ZIO.succeed(Response.text(path.render)) }
         )
         for
           root   <- routes.runZIO(Request.get(Url.root))
@@ -24,7 +24,7 @@ object RouteSpec extends ZIOSpecDefault:
       test("literal route wins over trailing"):
         val routes = Routes(
           Method.GET / "sse"    -> Handler.text("sse"),
-          Method.GET / trailing -> { (_: Path) => ZIO.succeed(Response.text("file")) },
+          Method.GET / trailing -> { _ => ZIO.succeed(Response.text("file")) },
         )
         for
           sse  <- routes.runZIO(Request.get("/sse"))
@@ -39,7 +39,7 @@ object RouteSpec extends ZIOSpecDefault:
       ,
       test("typed path parameter is decoded and passed to the handler"):
         val routes = Routes(
-          Method.GET / "users" / int("id") -> { (id: Int) => ZIO.succeed(Response.text(id.toString)) }
+          Method.GET / "users" / int("id") -> { id => ZIO.succeed(Response.text(id.toString)) }
         )
         routes(Request.get("/users/7")).map { res =>
           assertTrue(res.body.text.is(_.some) == "7")
@@ -90,9 +90,8 @@ object RouteSpec extends ZIOSpecDefault:
       ,
       test("nested path codecs combine parameters"):
         val routes = Routes(
-          Method.GET / "users" / int("id") / "posts" / int("post") -> { (pair: (Int, Int)) =>
-            val (user, post) = pair
-            ZIO.succeed(Response.text(s"$user:$post"))
+          Method.GET / "users" / int("id") / "posts" / int("post") -> { (id, post) =>
+            ZIO.succeed(Response.text(s"$id:$post"))
           }
         )
         routes(Request.get("/users/3/posts/9")).map { res =>
@@ -103,9 +102,9 @@ object RouteSpec extends ZIOSpecDefault:
         import java.util.UUID
         val id     = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
         val routes = Routes(
-          Method.GET / "s" / string("name") -> { (name: String) => ZIO.succeed(Response.text(name)) },
-          Method.GET / "n" / long("n")      -> { (n: Long) => ZIO.succeed(Response.text(n.toString)) },
-          Method.GET / "u" / uuid("id")     -> { (u: UUID) => ZIO.succeed(Response.text(u.toString)) },
+          Method.GET / "s" / string("name") -> { name => ZIO.succeed(Response.text(name)) },
+          Method.GET / "n" / long("n")      -> { n => ZIO.succeed(Response.text(n.toString)) },
+          Method.GET / "u" / uuid("id")     -> { id => ZIO.succeed(Response.text(id.toString)) },
         )
         for
           s <- routes(Request.get("/s/ada"))
@@ -119,7 +118,7 @@ object RouteSpec extends ZIOSpecDefault:
       ,
       test("handler receives path params and the request"):
         val routes = Routes(
-          Method.GET / "users" / int("id") -> { (id: Int, req: Request) =>
+          Method.GET / "users" / int("id") handle { (id, req) =>
             val q = req.query.get("q").getOrElse("")
             ZIO.succeed(Response.text(s"$id:$q"))
           }
@@ -130,7 +129,7 @@ object RouteSpec extends ZIOSpecDefault:
       ,
       test("handleError turns route errors into responses"):
         val routes = Routes(
-          Method.GET / "x" -> { (_: Unit) => ZIO.fail("nope") }
+          Method.GET / "x" -> { _ => ZIO.fail("nope") }
         ).handleError(msg => Response.badRequest(msg))
         routes(Request.get("/x")).map { res =>
           assertTrue(res.status == Status.BadRequest, res.body.text.is(_.some) == "nope")
@@ -151,6 +150,83 @@ object RouteSpec extends ZIOSpecDefault:
           PathCodec.empty.matches(Path.decode("/x")).isEmpty,
         )
       ,
+      test("two captures of one type bind in path order") {
+        val pattern = Method.GET / "p" / long("left") / "x" / long("right")
+        val routes  = Routes(pattern -> { (left, right) => ZIO.succeed(Response.text(s"$left $right")) })
+        routes(Request.get("/p/1/x/2")).map { res =>
+          assertTrue(res.body.text.is(_.some) == "1 2")
+        }
+      },
+      test("an ignored capture is an underscore") {
+        val routes = Routes(
+          Method.GET / "p" / long("left") / long("right") -> { (_, right) => ZIO.succeed(Response.text(right.toString)) }
+        )
+        routes(Request.get("/p/1/2")).map { res =>
+          assertTrue(res.body.text.is(_.some) == "2")
+        }
+      },
+      test("handle takes the captures and then the request") {
+        val routes = Routes(
+          Method.GET / "p" handle { req => ZIO.succeed(Response.text(req.method.render)) },
+          Method.PATCH / "p" / long("left") / long("right") handle { (left, right, req) =>
+            ZIO.succeed(Response.text(s"$left $right ${req.method.render}"))
+          },
+        )
+        for
+          none <- routes(Request.get("/p"))
+          both <- routes(Request(Method.PATCH, Url.parse("/p/1/2")))
+        yield assertTrue(none.body.text.is(_.some) == "GET", both.body.text.is(_.some) == "1 2 PATCH")
+      },
+      test("a swapped capture name does not compile") {
+        typeCheck("""
+          import heddle.*
+          import zio.*
+          val _ = Method.GET / "p" / long("left") / long("right") -> { (right, left) =>
+            ZIO.succeed(Response.text("no"))
+          }
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
+      test("a tuple parameter does not stand in for the capture names") {
+        typeCheck("""
+          import heddle.*
+          import zio.*
+          val _ = Method.GET / "p" / long("left") / long("right") -> { pair =>
+            ZIO.succeed(Response.text(pair.toString))
+          }
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
+      test("a case lambda does not bind the captures") {
+        typeCheck("""
+          import heddle.*
+          import zio.*
+          val _ = Method.GET / "p" / long("left") / long("right") -> {
+            case ((left, right), req) => ZIO.succeed(Response.text(left.toString))
+          }
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
+      test("a path ascribed without its names cannot bind a lambda") {
+        typeCheck("""
+          import heddle.*
+          import zio.*
+          val path: PathCodec[Long] = long("left")
+          val _ = Method.GET / path -> { left => ZIO.succeed(Response.text(left.toString)) }
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
+      test("a method reference does not carry capture names") {
+        typeCheck("""
+          import heddle.*
+          import zio.*
+          val f: (Long, Long) => ZIO[Any, Nothing, Response] =
+            (left, right) => ZIO.succeed(Response.text(s"$left $right"))
+          val _ = Method.GET / "p" / long("left") / long("right") -> f
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
+      test("the same capture name twice does not compose") {
+        typeCheck("""
+          import heddle.*
+          val _ = long("left") / long("left")
+        """).map(compiled => assertTrue(compiled.isLeft))
+      },
       test("path decode keeps a single interned segment"):
         val codec = PathCodec.lit("health")
         val path  = Path.decode("/health")

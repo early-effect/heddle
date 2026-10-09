@@ -29,12 +29,14 @@ to `Endpoint` / `Api`. That is the next page, not a rewrite of this one.
 ```scala
 val routes = Routes(
   Method.GET / "health"            -> Handler.text("ok"),
-  Method.GET / "users" / int("id") -> { (id: Int) =>
+  Method.GET / "users" / int("id") -> { id =>
     ZIO.succeed(Response.text(id.toString))
   },
 )
 val app = routes @@ (Middleware.requestId() ++ Middleware.cors())
 ```
+
+`id` is the name in `int("id")`. The parameter name is the capture name.
 """,
       md"""
 To bind a port:
