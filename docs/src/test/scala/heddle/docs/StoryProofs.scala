@@ -20,7 +20,7 @@ object StoryProofs extends ZIOSpecDefault:
     test("a one-file server answers GET /users/7"):
       val routes = Routes(
         Method.GET / "health"            -> Handler.text("ok"),
-        Method.GET / "users" / int("id") -> { (id: Int) =>
+        Method.GET / "users" / int("id") -> { id =>
           ZIO.succeed(Response.text(id.toString))
         },
       )

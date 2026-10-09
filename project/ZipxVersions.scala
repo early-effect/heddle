@@ -32,9 +32,9 @@ object MyVersions extends ZipxVersions:
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
   val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.19.0-7251800ecbdc-SNAPSHOT")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
-  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2-8464547dc109-SNAPSHOT")
+  val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 
-  val release = ShipGroup("heddle", "0.9.1")(
+  val release = ShipGroup("heddle", "0.10.0")(
     "heddle",
     "brotli",
     "oauth",

@@ -228,23 +228,23 @@ sealed abstract class Endpoint[In, Err, Out]:
 end Endpoint
 
 object Endpoint:
-  inline def get[A](inline path: PathCodec[A]): Endpoint[A, Nothing, Unit] =
+  inline def get[N <: Tuple, A](inline path: PathCodec[A] { type Names = N }): Endpoint[A, Nothing, Unit] =
     make(Method.GET, PathCodec.specialize(path))
   inline def get(inline path: String): Endpoint[Unit, Nothing, Unit] =
     get(PathCodec.lit(path))
-  inline def post[A](inline path: PathCodec[A]): Endpoint[A, Nothing, Unit] =
+  inline def post[N <: Tuple, A](inline path: PathCodec[A] { type Names = N }): Endpoint[A, Nothing, Unit] =
     make(Method.POST, PathCodec.specialize(path))
   inline def post(inline path: String): Endpoint[Unit, Nothing, Unit] =
     post(PathCodec.lit(path))
-  inline def put[A](inline path: PathCodec[A]): Endpoint[A, Nothing, Unit] =
+  inline def put[N <: Tuple, A](inline path: PathCodec[A] { type Names = N }): Endpoint[A, Nothing, Unit] =
     make(Method.PUT, PathCodec.specialize(path))
   inline def put(inline path: String): Endpoint[Unit, Nothing, Unit] =
     put(PathCodec.lit(path))
-  inline def patch[A](inline path: PathCodec[A]): Endpoint[A, Nothing, Unit] =
+  inline def patch[N <: Tuple, A](inline path: PathCodec[A] { type Names = N }): Endpoint[A, Nothing, Unit] =
     make(Method.PATCH, PathCodec.specialize(path))
   inline def patch(inline path: String): Endpoint[Unit, Nothing, Unit] =
     patch(PathCodec.lit(path))
-  inline def delete[A](inline path: PathCodec[A]): Endpoint[A, Nothing, Unit] =
+  inline def delete[N <: Tuple, A](inline path: PathCodec[A] { type Names = N }): Endpoint[A, Nothing, Unit] =
     make(Method.DELETE, PathCodec.specialize(path))
   inline def delete(inline path: String): Endpoint[Unit, Nothing, Unit] =
     delete(PathCodec.lit(path))
