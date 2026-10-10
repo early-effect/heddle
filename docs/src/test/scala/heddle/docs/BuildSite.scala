@@ -1,12 +1,10 @@
 package heddle.docs
 
-import ascent.html.Html
 import earlyeffect.docs.EarlyEffectTheme
 import specular.*
 import specular.site.*
 import zio.*
 
-import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 
 /** Docs-as-tests site builder (Test classpath; `docs/specularSite`). */
@@ -57,20 +55,22 @@ object BuildSite extends DocsSite:
 
   private val siteNav: NavModel = SiteNav[HeddleNav].toNavModel
 
-  def pages: Vector[DocPage] = siteNav.pages
+  /** Not a nav item. The sidebar is the table of contents; this page is the front. */
+  private val frontPage: DocPage = Front.doc
 
-  override def site: SiteModel =
-    val m       = meta
-    val branded = EarlyEffectTheme.brand(super.site)
+  def pages: Vector[DocPage] = frontPage +: siteNav.pages
+
+  override def site(settings: DocsSettings): SiteModel =
+    val branded = EarlyEffectTheme.brand(super.site(settings))
     branded.copy(
       nav = Some(siteNav),
-      pages = siteNav.pages,
+      pages = pages,
       clientScript = Some("assets/client.js"),
-      summaryMarkdown = Some("Start at [The hub](the-hub.html)."),
+      summaryMarkdown = None,
       installSnippets = Vector.empty,
       brand = Some(
         Brand(
-          name = m.title.getOrElse("heddle"),
+          name = settings.meta.displayTitle,
           links = Vector(EarlyEffectTheme.github("https://github.com/early-effect/heddle")),
         )
       ),
@@ -80,51 +80,34 @@ object BuildSite extends DocsSite:
   override def layers: ZLayer[Any, Nothing, SiteBuilder] =
     EarlyEffectTheme.layers
 
-  override def afterBuild(out: Path, result: SiteOutput): Task[Unit] =
+  override def afterBuild(out: Path, result: SiteOutput): IO[SiteError, Unit] =
     val _ = result
-    EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out) *> writeLanding(out)
-
-  private def writeLanding(out: Path): Task[Unit] =
-    Html.renderPage(Landing.document).flatMap { page =>
-      ZIO.attempt {
-        val html =
-          s"""<!DOCTYPE html>
-             |<html lang="en">
-             |<head>
-             |  <meta charset="utf-8"/>
-             |  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-             |  <title>heddle</title>
-             |  <meta name="description" content="One bind on JVM, Node, and Native. HTTP, OpenAPI, and MCP are hosts of the same BoundOp."/>
-             |  <link rel="icon" href="images/logo.png"/>
-             |  <link rel="stylesheet" href="assets/theme.css"/>
-             |  <link rel="stylesheet" href="assets/index.css"/>
-             |  <script type="module" src="assets/client.js"></script>
-             |  <style>html,body{margin:0;background:var(--specular-bg);}</style>
-             |</head>
-             |<body>
-             |${page.html}
-             |</body>
-             |</html>
-             |""".stripMargin
-        Files.writeString(out.resolve("index.html"), html, StandardCharsets.UTF_8)
-        Files.writeString(out.resolve("assets/index.css"), page.css, StandardCharsets.UTF_8)
-        ()
+    // Specular always writes index.html as a summary plus a second copy of the nav.
+    // The front DocPage is the index. Copy it over that file. Asset paths stay site-relative.
+    val front   = out.resolve(s"${frontPage.slug}.html")
+    val index   = out.resolve("index.html")
+    val promote =
+      ZIO.attemptBlockingIO(Files.copy(front, index, StandardCopyOption.REPLACE_EXISTING)).mapError { err =>
+        SiteError.WriteFailed(index, err)
       }
-    }
+    promote *> EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out)
+  end afterBuild
 
-  private def copyClientBundle(out: Path): Task[Unit] =
-    ZIO.attempt {
-      val dest = out.resolve("assets/client.js")
-      val src  = findClientJs.getOrElse {
-        throw new RuntimeException(
-          "JS client not linked; run docs/specularSite (or docsJS/fastLinkJS) first. " +
-            s"Looked for marker ${clientJsMarker}"
-        )
-      }
-      Files.createDirectories(dest.getParent)
-      Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING)
-      ()
-    }
+  private def copyClientBundle(out: Path): IO[SiteError, Unit] =
+    val dest = out.resolve("assets/client.js")
+    findClientJs match
+      case None =>
+        ZIO.fail(SiteError.MissingFile(clientJsMarker))
+      case Some(src) =>
+        ZIO
+          .attemptBlockingIO {
+            Files.createDirectories(dest.getParent)
+            Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING)
+            ()
+          }
+          .mapError(err => SiteError.WriteFailed(dest, err))
+    end match
+  end copyClientBundle
 
   private def clientJsMarker: Path =
     repoRoot.resolve("target/specular-client-js.path")

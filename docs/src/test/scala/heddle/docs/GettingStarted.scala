@@ -15,8 +15,8 @@ and `heddle-mcp-apps` publish for all three runtimes (`%%%`). `heddle-oauth` is 
 `HeddleApp` is JVM-only.
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "${Landing.docsVersion}"
-libraryDependencies += "rocks.earlyeffect" %% "heddle-mcp" % "${Landing.docsVersion}"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "${DocsVersion.version}"
+libraryDependencies += "rocks.earlyeffect" %% "heddle-mcp" % "${DocsVersion.version}"
 ```
 
 `import heddle.*` is the facade. SSE, WebSocket, and Datastar stay in their own packages.

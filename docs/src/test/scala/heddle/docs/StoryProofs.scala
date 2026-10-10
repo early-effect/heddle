@@ -105,19 +105,6 @@ object StoryProofs extends ZIOSpecDefault:
       BoxOffice.seed.map { store =>
         val json = BoxOffice.api(store).openApi.toJson
         assertTrue(json.contains("/shows/{id}"), json.contains("\"get\""), json.contains("One bill"))
-      }
-    ,
-    test("landing HTML is the manifesto"):
-      ascent.html.Html.renderPage(Landing.document).map { page =>
-        assertTrue(
-          page.html.contains("One bind. Three runtimes."),
-          page.html.contains("JVM"),
-          page.html.contains("Node"),
-          page.html.contains("Native"),
-          !page.html.contains("libraryDependencies"),
-          page.html.contains("data-specular-mount=\"landing-poster\""),
-          page.html.contains("data-specular-mount=\"desk-app\""),
-        )
       },
   )
 end StoryProofs

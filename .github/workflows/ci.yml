@@ -108,8 +108,6 @@ jobs:
           cache-mode: save
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
           cache-epoch: c1597b24d173965a
-      - name: Pinned snapshots
-        run: echo "::warning title=zipx snapshots::pinned snapshots (rocks.earlyeffect:specular-core:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:specular-zio-test:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:early-effect-docs-theme:0.19.0-7251800ecbdc-SNAPSHOT, rocks.earlyeffect:ascent-js:0.11.0-19667f3cf23f-SNAPSHOT, rocks.earlyeffect:sbt-specular:0.19.0-7251800ecbdc-SNAPSHOT)"
       - name: test
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then

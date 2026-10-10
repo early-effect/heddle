@@ -1,15 +1,16 @@
 package heddle.docs
 
 import heddle.docs.ui.Hub
+import specular.MountKey
 import specular.client.{Mounter, SpecularClient}
 import zio.*
 
 /** Browser entry: remount every live illustration on the current page. */
 object ClientMain extends ZIOAppDefault:
 
-  val extraMounters: Map[String, Mounter] = Map(
-    InteractiveRegistry.LandingPoster    -> Mounter.fromAscent(Hub.Lives.landingPoster),
+  val extraMounters: Map[MountKey, Mounter] = Map(
     InteractiveRegistry.HubPoster        -> Mounter.fromAscent(Hub.Lives.landingPoster),
+    InteractiveRegistry.FrontHosts       -> Mounter.fromAscent(Hub.Lives.hostFanout),
     InteractiveRegistry.HostsPoster      -> Mounter.fromAscent(Hub.Lives.landingPoster),
     InteractiveRegistry.HostFanout       -> Mounter.fromAscent(Hub.Lives.hostFanout),
     InteractiveRegistry.OpAnatomy        -> Mounter.fromAscent(Hub.Lives.opAnatomy),
