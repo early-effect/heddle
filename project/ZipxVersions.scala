@@ -15,22 +15,26 @@ object MyVersions extends ZipxVersions:
 
   val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
 
-  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.19.0-7251800ecbdc-SNAPSHOT")
+  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.20.0")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
-  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.0")
-  // Not direct dependencies. Stated so these releases overrule the commit pins ascent-js and specular still bring.
-  val ascentDomTypes  = Lib("rocks.earlyeffect", "ascent-dom-types", "0.11.0")
-  val ascentCore      = Lib("rocks.earlyeffect", "ascent-core", "0.10.0")
-  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.0-19667f3cf23f-SNAPSHOT")
-  val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.0")
+
+  /** Docs figures only. No published heddle artifact selects this. */
+  val mermoidAscent = Lib("rocks.earlyeffect", "mermoid-ascent", "0.2.0")
+  // ascent-js 0.11.0 depends on facade 0.11.1. Core 0.10.1 depends on types 0.11.1.
+  // Those are what specular 0.20 and mermoid-ascent 0.2.0 resolve. The older pins are stale.
+  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.1")
+  val ascentDomTypes  = Lib("rocks.earlyeffect", "ascent-dom-types", "0.11.1")
+  val ascentCore      = Lib("rocks.earlyeffect", "ascent-core", "0.10.1")
+  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.0")
+  val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.1")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
   val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
-  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.19.0-7251800ecbdc-SNAPSHOT")
+  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.20.0")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 
@@ -49,8 +53,8 @@ object MyVersions extends ZipxVersions:
   def coreTest    = library(zioTest, zioTestSbt)
   def benchLib    = library(zioHttp)
   def brotliTest  = library(brotliDec)
-  def docsTest    = library(specularZioTest, specularTheme, ascentCss)
-  def docsJs      = library(specular, ascentJs, ascentCss, zio)
+  def docsTest    = library(specularZioTest, specularTheme, mermoidAscent.test, ascentCss)
+  def docsJs      = library(specular, mermoidAscent, ascentJs, ascentCss, zio)
   def browserTest = library(chekhov, chekhovDriver)
 
   /** The browser DOM, as ascent's WebIDL-generated facade types it: what an MCP App's relay, frame, and view touch. */

@@ -1,19 +1,8 @@
 # Heddle
 
-![One bind. Three runtimes.](docs/landing.png)
+One BoundOp. HTTP, OpenAPI, and MCP are hosts.
 
-A capability compiler for human-centric AI service hubs. One `BoundOp` on the JVM, on Node, and
-on Scala Native.
-
-Write the service once (`Endpoint` / `BoundOp` / `Api`) and host it for every reader that shows
-up: HTTP + OpenAPI / Swagger for humans and systems, MCP 2026-07-28 for agents (HTTP and stdio
-also answer the 2025-11-25 `initialize` handshake), a web UI as just another HTTP client. CLI is
-a later interpreter of the same AST. Do not grow a second tool DSL.
-
-Handlers are `Request => ZIO[R, E, Response]`. The bind is `In => ZIO[R, E, Out]`. Routing is
-data. Middleware is `@@`. `Server.install` is that bind on all three runtimes.
-
-Docs (tests-as-docs, live Ascent examples): [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
+Docs: [https://www.earlyeffect.rocks/heddle/](https://www.earlyeffect.rocks/heddle/)
 
 `import heddle.*` is a curated facade over `heddle.http`, `heddle.route`, `heddle.endpoint`,
 `heddle.server`, `heddle.client`, and `heddle.error`. SSE, WebSocket, and Datastar stay in
@@ -24,7 +13,7 @@ their own packages.
 Core (ZIO only):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.5.0"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.10.0"
 ```
 
 Optional artifacts, same version: `heddle-mcp`, `heddle-mcp-protocol`, `heddle-mcp-apps`, `heddle-oauth`,

@@ -474,7 +474,13 @@ lazy val docs = project
     specularMetaProject    := Some(LocalProject("heddle")),
     specularArtifactKind   := "library",
     specularSiteDirectory  := (ThisBuild / baseDirectory).value / "target" / "site",
-    specularDisplayVersion := ((v: String) => v.stripSuffix("-SNAPSHOT")),
+    // Do not strip -ci first. sbt-dynver-ci names a distance build 0.11.0-ci, and stripping
+    // that suffix yields 0.11.0, which is not the published coordinate. A raw version that
+    // contains -ci, +, or SNAPSHOT advertises the last Central tag.
+    specularDisplayVersion := { raw =>
+      val distance = raw.contains("-ci") || raw.contains("+") || raw.contains("SNAPSHOT")
+      if raw.nonEmpty && !distance then raw else "0.10.0"
+    },
     specularJsLink := Def.uncached {
       (docsJS / Compile / fastLinkJS).value
       val outDir = (docsJS / Compile / fastLinkJSOutput).value

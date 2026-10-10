@@ -1,30 +1,36 @@
 package heddle.docs
 
-/** Mount keys for live illustrations. Shared by JVM pages, the JS client, and the contract spec. */
-object InteractiveRegistry:
-  val LandingPoster: String    = "landing-poster"
-  val HubPoster: String        = "hub-poster"
-  val HostsPoster: String      = "hosts-poster"
-  val HostFanout: String       = "host-fanout"
-  val OpAnatomy: String        = "op-anatomy"
-  val AstAnatomy: String       = "ast-anatomy"
-  val EffectTrace: String      = "effect-trace"
-  val EffectWalk: String       = "effect-walk"
-  val SwaggerWalk: String      = "swagger-walk"
-  val SchemaPoster: String     = "schema-poster"
-  val EndpointsOpenApi: String = "endpoints-openapi"
-  val HarnessWalk: String      = "harness-walk"
-  val DeskApp: String          = "desk-app"
-  val PathPlayground: String   = "path-playground"
-  val MiddlewareStack: String  = "middleware-stack"
-  val OpenApiPreview: String   = "openapi-preview"
-  val PromoteVsCatalog: String = "promote-vs-catalog"
-  val JsonRpcInspector: String = "jsonrpc-inspector"
-  val SseTape: String          = "sse-tape"
-  val DatastarPatches: String  = "datastar-patches"
+import specular.MountKey
 
-  val liveKeys: Set[String] = Set(
+/** Mount keys for live illustrations. Shared by JVM pages, the JS client, and the contract spec.
+  *
+  * Literals, not strings: `withMountKey`'s `String` overload only accepts a literal.
+  */
+object InteractiveRegistry:
+  val HubPoster: MountKey        = MountKey("hub-poster")
+  val FrontHosts: MountKey       = MountKey("front-hosts")
+  val HostsPoster: MountKey      = MountKey("hosts-poster")
+  val HostFanout: MountKey       = MountKey("host-fanout")
+  val OpAnatomy: MountKey        = MountKey("op-anatomy")
+  val AstAnatomy: MountKey       = MountKey("ast-anatomy")
+  val EffectTrace: MountKey      = MountKey("effect-trace")
+  val EffectWalk: MountKey       = MountKey("effect-walk")
+  val SwaggerWalk: MountKey      = MountKey("swagger-walk")
+  val SchemaPoster: MountKey     = MountKey("schema-poster")
+  val EndpointsOpenApi: MountKey = MountKey("endpoints-openapi")
+  val HarnessWalk: MountKey      = MountKey("harness-walk")
+  val DeskApp: MountKey          = MountKey("desk-app")
+  val PathPlayground: MountKey   = MountKey("path-playground")
+  val MiddlewareStack: MountKey  = MountKey("middleware-stack")
+  val OpenApiPreview: MountKey   = MountKey("openapi-preview")
+  val PromoteVsCatalog: MountKey = MountKey("promote-vs-catalog")
+  val JsonRpcInspector: MountKey = MountKey("jsonrpc-inspector")
+  val SseTape: MountKey          = MountKey("sse-tape")
+  val DatastarPatches: MountKey  = MountKey("datastar-patches")
+
+  val liveKeys: Set[MountKey] = Set(
     HubPoster,
+    FrontHosts,
     HostsPoster,
     HostFanout,
     OpAnatomy,
