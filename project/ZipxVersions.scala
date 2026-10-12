@@ -39,7 +39,7 @@ object MyVersions extends ZipxVersions:
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 
-  val release = ShipGroup("heddle", "0.11.0")(
+  val release = ShipGroup("heddle", "0.11.1")(
     "heddle",
     "brotli",
     "oauth",
