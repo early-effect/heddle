@@ -1,11 +1,15 @@
 package heddle.docs
 
 import heddle.*
-import heddle.docs.fixture.BoxOffice
+import heddle.datastar.*
+import heddle.docs.fixture.{BoxOffice, DatastarFrames}
 import heddle.docs.fixture.Show
+import heddle.docs.ui.{DatastarTranscript, HarnessScript, HarnessTranscript, SchemaPicture, SchemaTranscript}
+import heddle.endpoint.SchemaDoc
+import heddle.http.Url
 import heddle.mcp.protocol.{ClientRequest, ToolName}
 import zio.*
-import zio.json.EncoderOps
+import zio.json.{DecoderOps, EncoderOps}
 import zio.json.ast.Json
 import zio.test.*
 
@@ -105,6 +109,166 @@ object StoryProofs extends ZIOSpecDefault:
       BoxOffice.seed.map { store =>
         val json = BoxOffice.api(store).openApi.toJson
         assertTrue(json.contains("/shows/{id}"), json.contains("\"get\""), json.contains("One bill"))
-      },
+      }
+    ,
+    test("harness transcript is the bound api"):
+      for
+        fresh <- HarnessScript.load
+        store <- BoxOffice.seed
+        shows <- store.get
+        bill  <- ZIO.fromOption(shows.values.minByOption(_.id)).orElseFail(HarnessScript.Gap.EmptyHouse)
+        api = BoxOffice.api(store)
+        http   <- api.routes(Request.get(s"/shows/${bill.id}"))
+        mcp    <- ZIO.fromEither(BoxOffice.mcpOf(store).flatMap(_.withCatalog))
+        listed <- mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).some
+      yield
+        val docs     = api.ops.map(_.endpoint.doc).toList
+        val promoted = docs.filter(doc => doc.promoted && OpArgs.promotable(doc)).map(_.toolName)
+        val hidden   = docs.filterNot(doc => doc.promoted && OpArgs.promotable(doc)).map(_.toolName)
+        val order    = promoted.map(fresh.list.indexOf)
+        val json     = listed.toJson
+        assertTrue(
+          HarnessTranscript.list == fresh.list,
+          HarnessTranscript.call == fresh.call,
+          HarnessTranscript.catalogPromoted == fresh.catalogPromoted,
+          HarnessTranscript.catalogFull == fresh.catalogFull,
+          HarnessTranscript.rpcRequest == fresh.rpcRequest,
+          HarnessTranscript.rpcResponse == fresh.rpcResponse,
+          HarnessTranscript.rpcKicker == fresh.rpcKicker,
+          order.forall(_ >= 0),
+          order == order.sorted,
+          hidden.forall(fresh.list.contains),
+          fresh.list.contains("not promoted"),
+          http.status.isSuccess,
+          http.body.text.exists(fresh.call.contains),
+          fresh.call.contains(s"GET /shows/${bill.id}"),
+          fresh.call.contains(BoxOffice.getShow.doc.toolName),
+          fresh.call.contains("tools/call"),
+          HarnessScript.catalogTools.forall(json.contains),
+          promoted.forall(json.contains),
+          !json.contains("create_hold"),
+        )
+    ,
+    test("rpc picture is the tools/call wire"):
+      for
+        fresh <- HarnessScript.load
+        store <- BoxOffice.seed
+        shows <- store.get
+        bill  <- ZIO.fromOption(shows.values.minByOption(_.id)).orElseFail(HarnessScript.Gap.EmptyHouse)
+        param <- BoxOffice.getShow.doc.pathParams match
+          case only :: Nil => ZIO.succeed(only)
+          case _           => ZIO.fail(HarnessScript.Gap.PathArgMissing(BoxOffice.getShow.doc.pathTemplate))
+        name <- ZIO
+          .fromEither(ToolName.from(BoxOffice.getShow.doc.toolName))
+          .mapError(HarnessScript.Gap.BadToolName(_))
+        mcp <- ZIO.fromEither(BoxOffice.mcpOf(store)).mapError(HarnessScript.Gap.McpBuild(_))
+        call = BoxOffice.rpc(ClientRequest.CallTool(name, Json.Obj(param.name -> Json.Num(bill.id))))
+        out <- mcp.handle(call).someOrFail(HarnessScript.Gap.NoReply)
+      yield
+        val integer = param.schema.unwrapOptional._1 match
+          case SchemaDoc.Integer(_) => true
+          case _                    => false
+        assertTrue(
+          integer,
+          HarnessTranscript.rpcRequest == fresh.rpcRequest,
+          HarnessTranscript.rpcResponse == fresh.rpcResponse,
+          HarnessTranscript.rpcKicker == fresh.rpcKicker,
+          fresh.rpcRequest == HarnessScript.pretty(call),
+          fresh.rpcResponse == HarnessScript.pretty(out),
+          fresh.rpcKicker == s"same function as GET /shows/${bill.id}",
+          fresh.rpcResponse.contains("Evening bill"),
+          fresh.rpcResponse.contains("structuredContent"),
+        )
+    ,
+    test("datastar picture is the sse wire"):
+      for
+        fresh    <- DatastarFrames.load
+        elements <- sseFrame(
+          ServerSentEventGenerator.patchElements(
+            "<div>hello</div>",
+            PatchElementOptions(selector = Some("#app"), mode = ElementPatchMode.Inner),
+          )
+        )
+        signals <- sseFrame(ServerSentEventGenerator.patchSignals("""{"count":1}"""))
+      yield assertTrue(
+        DatastarTranscript.elements == fresh.elements,
+        DatastarTranscript.signals == fresh.signals,
+        fresh.elements == elements,
+        fresh.signals == signals,
+        elements.contains("event: datastar-patch-elements"),
+        elements.contains("data: selector #app"),
+        elements.contains("data: mode inner"),
+        elements.contains("data: elements <div>hello</div>"),
+        signals.contains("event: datastar-patch-signals"),
+        signals.contains("data: signals {\"count\":1}"),
+      )
+    ,
+    test("schema picture is the Show projections"):
+      for
+        fresh <- SchemaPicture.load
+        store <- BoxOffice.seed
+        shows <- store.get
+        bill  <- ZIO.fromOption(shows.values.minByOption(_.id)).orElseFail(SchemaPicture.Gap.EmptyHouse)
+        api = BoxOffice.api(store)
+        http <- api
+          .routes(BoxOffice.getShow.toRequest(bill.id, Url.root))
+          .mapError(err => SchemaPicture.Gap.ShowNotServed(err.status.render))
+        body <- (http.status.isSuccess, http.body.text) match
+          case (true, Some(text)) => ZIO.succeed(text)
+          case (false, _)         => ZIO.fail(SchemaPicture.Gap.ShowNotServed(http.status.render))
+          case (true, None)       => ZIO.fail(SchemaPicture.Gap.NoBody)
+        title     <- ZIO.fromOption(summon[Schema[Show]].named).orElseFail(SchemaPicture.Gap.UnnamedShow)
+        root      <- ZIO.fromEither(api.openApi.toJson.fromJson[Json]).mapError(SchemaPicture.Gap.OpenApiUnreadable(_))
+        component <- schemaComponent(root, title) match
+          case Some(schema) => ZIO.succeed(schema)
+          case None         => ZIO.fail(SchemaPicture.Gap.NoShowComponent(title))
+        tool = BoxOffice.getShow.doc.toolName
+        mcp    <- ZIO.fromEither(BoxOffice.mcpOf(store)).mapError(SchemaPicture.Gap.McpBuild(_))
+        listed <- mcp.handle(BoxOffice.rpc(ClientRequest.ListTools(None))).someOrFail(SchemaPicture.Gap.NoReply)
+        input  <- listedInput(listed, tool) match
+          case Some(schema) => ZIO.succeed(schema)
+          case None         => ZIO.fail(SchemaPicture.Gap.NoInputSchema(tool))
+      yield assertTrue(
+        SchemaTranscript.json == fresh.json,
+        SchemaTranscript.openApi == fresh.openApi,
+        SchemaTranscript.openApiWhere == fresh.openApiWhere,
+        SchemaTranscript.mcpArgs == fresh.mcpArgs,
+        SchemaTranscript.mcpWhere == fresh.mcpWhere,
+        fresh.json == body,
+        fresh.json.contains("Evening bill"),
+        fresh.openApi == HarnessScript.pretty(component),
+        fresh.openApiWhere == s"components.schemas.$title",
+        fresh.openApi.contains("remaining"),
+        fresh.mcpArgs == HarnessScript.pretty(input),
+        fresh.mcpWhere == s"inputSchema for $tool",
+        fresh.mcpArgs.contains("\"id\""),
+        fresh.mcpArgs.contains("integer"),
+      ),
   )
+
+  /** `components.schemas.<name>` from a rendered OpenAPI document. */
+  private def schemaComponent(root: Json, name: String): Option[Json] =
+    jsonChild(root, "components").flatMap(jsonChild(_, "schemas")).flatMap(jsonChild(_, name))
+
+  /** `inputSchema` of `tool` on a `tools/list` JSON-RPC message. */
+  private def listedInput(message: Json, tool: String): Option[Json] =
+    jsonChild(message, "result").flatMap(jsonChild(_, "tools")).flatMap {
+      case Json.Arr(tools) =>
+        tools.collectFirst {
+          case entry: Json.Obj if entry.get("name").contains(Json.Str(tool)) => entry.get("inputSchema")
+        }.flatten
+      case _ => None
+    }
+
+  private def jsonChild(json: Json, key: String): Option[Json] =
+    json match
+      case obj: Json.Obj => obj.get(key)
+      case _             => None
+
+  /** One Datastar send, as the SSE response body. Independent of `DatastarFrames`. */
+  private def sseFrame(send: URIO[Datastar, Unit]) =
+    Routes(Method.GET / "sse" -> events(send)).runZIO(Request.get("/sse")).flatMap { res =>
+      if res.status.isSuccess then res.body.utf8.mapError(t => DatastarFrames.Gap.BodyFailed(t.getClass.getName))
+      else ZIO.fail(DatastarFrames.Gap.NotServed(res.status.render))
+    }
 end StoryProofs

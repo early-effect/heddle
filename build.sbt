@@ -24,6 +24,16 @@ lazy val nativeOpenssl: Seq[sbt.Setting[?]] = {
   )
 }
 
+/** Renders the docs pictures (harness and Datastar frames). The classpath is the docs project's compile output. */
+def writeHarnessTranscript(classpath: String, out: java.io.File): Unit = {
+  IO.createDirectory(out.getParentFile)
+  val javaBin = System.getProperty("java.home") + java.io.File.separator + "bin" + java.io.File.separator + "java"
+  val argFile = out.getParentFile / "harness-transcript.args"
+  IO.write(argFile, s"-cp\n$classpath\nheddle.docs.fixture.WriteTranscript\n${out.getAbsolutePath}\n")
+  val exit = scala.sys.process.Process(Seq(javaBin, s"@${argFile.getAbsolutePath}")).!
+  if (exit != 0) sys.error(s"WriteTranscript failed ($exit)")
+}
+
 /** Sources the JVM and Native builds share: both have `java.nio` files and blocking reads. */
 lazy val jvmNativeShared: Seq[sbt.Setting[?]] =
   Seq(
@@ -498,6 +508,17 @@ lazy val docs = project
       IO.write(marker, mainJs.getAbsolutePath)
     },
     specularJsLinkDev := Def.uncached(specularJsLink.value),
+    // The shared page (JVM SSR and the Scala.js client) reads HarnessTranscript and DatastarTranscript.
+    Test / sourceGenerators += Def.task {
+      val _    = (Compile / compile).value
+      val conv = fileConverter.value
+      val cp   = (Compile / fullClasspath).value
+        .map(a => conv.toPath(a.data).toAbsolutePath.toString)
+        .mkString(java.io.File.pathSeparator)
+      val out = (Test / sourceManaged).value / "heddle" / "docs" / "ui" / "HarnessTranscript.scala"
+      writeHarnessTranscript(cp, out)
+      Seq(out)
+    }.taskValue,
   )
 
 // Real browsers, kept out of testJVM so the everyday gates never launch one.
@@ -515,3 +536,16 @@ addCommandAlias(
   "testNative",
   "heddleNative/testFull; brotliNative/testFull; mcpProtocolNative/testFull; mcpNative/testFull; mcpAppsNative/testFull",
 )
+
+// Same generator as docs/Test. Kept outside the docsJS project body so that body does not touch `docs` while it is
+// still being defined.
+docsJS / Compile / sourceGenerators += Def.task {
+  val _    = (docs / Compile / compile).value
+  val conv = (docs / Compile / fileConverter).value
+  val cp   = (docs / Compile / fullClasspath).value
+    .map(a => conv.toPath(a.data).toAbsolutePath.toString)
+    .mkString(java.io.File.pathSeparator)
+  val out  = (docsJS / Compile / sourceManaged).value / "heddle" / "docs" / "ui" / "HarnessTranscript.scala"
+  writeHarnessTranscript(cp, out)
+  Seq(out)
+}.taskValue
