@@ -1,6 +1,7 @@
 package heddle
 
 import heddle.internal.duplex.NativeConn
+import heddle.server.Port
 import heddle.internal.openssl.Ssl
 import heddle.internal.posix.{AsyncFd, Net, SslIo}
 import scala.scalanative.posix.fcntl
@@ -9,7 +10,7 @@ import zio.test.*
 
 object NativeTlsCloseSpec extends ZIOSpecDefault:
   private val local: Server.Config =
-    Server.Config.default.copy(host = "127.0.0.1", port = 0, http2 = false)
+    Server.Config.default.copy(host = "127.0.0.1", port = Port(0), http2 = false)
 
   private def open(fd: Int): Boolean = fcntl.fcntl(fd, fcntl.F_GETFD, 0) >= 0
 

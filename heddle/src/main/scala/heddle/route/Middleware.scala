@@ -194,7 +194,7 @@ object Middleware:
     }
 
   def decompress(
-      maxBytes: BytesLength = Server.Config.defaultMaxBodyBytes,
+      maxBytes: BytesLength = BytesLength(Server.Config.defaultMaxBodyBytes.toLong),
       decompressors: Chunk[Decompressor] = Chunk(Decompressor.gzip),
   ): Middleware[Any] =
     interceptZIO { req =>

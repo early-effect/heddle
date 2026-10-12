@@ -1,5 +1,6 @@
 package heddle
 
+import heddle.server.Port
 import zio.*
 import zio.test.*
 
@@ -36,7 +37,7 @@ object ServerHaltSpec extends ZIOSpecDefault:
           (roundTrip *> roundTrip).map(body => assertTrue(body == "pong"))
         ,
         test("open SSE shutdown completes without TestClock.adjust"):
-          val config = Server.Config.default.copy(port = 0, gracefulShutdownTimeout = 50.millis)
+          val config = Server.Config.default.copy(port = Port(0), gracefulShutdownTimeout = 50.millis)
           ZIO.scoped(
             for
               server  <- Server.install(sse, config).mapError(e => RuntimeException(e.message))
@@ -48,7 +49,7 @@ object ServerHaltSpec extends ZIOSpecDefault:
           )
         ,
         test("open SSE scope close completes without an explicit shutdown"):
-          val config = Server.Config.default.copy(port = 0, gracefulShutdownTimeout = 50.millis)
+          val config = Server.Config.default.copy(port = Port(0), gracefulShutdownTimeout = 50.millis)
           ZIO
             .scoped(
               for
@@ -60,12 +61,12 @@ object ServerHaltSpec extends ZIOSpecDefault:
             )
             .timed
             .map((elapsed, _) => assertTrue(elapsed.toMillis < 2000)),
-      ).provideSomeShared[Scope](Server.defaultWith(_.port(0))) @@ TestAspect.withLiveClock @@ TestAspect.timeout(
+      ).provideSomeShared[Scope](Server.defaultWith(_.port(Port(0)))) @@ TestAspect.withLiveClock @@ TestAspect.timeout(
         5.seconds
       ),
       suite("TestClock")(
         test("open SSE shutdown joins only after TestClock.adjust of the grace period"):
-          val config = Server.Config.default.copy(port = 0, gracefulShutdownTimeout = 1.second)
+          val config = Server.Config.default.copy(port = Port(0), gracefulShutdownTimeout = 1.second)
           ZIO.scoped(
             for
               server <- Server.install(sse, config).mapError(e => RuntimeException(e.message))

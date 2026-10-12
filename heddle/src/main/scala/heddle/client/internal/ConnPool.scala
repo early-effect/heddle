@@ -50,9 +50,9 @@ private[heddle] final class ConnPool private (
         val (fresh, stale) = st.idle.partition(c => now - c.since < cfg.poolIdleTimeout.toNanos)
         val opened         = st.opened - stale.length
         val (take, next)   = fresh.headOption.filter(_ => source == Source.PoolFirst) match
-          case Some(c)                                    => (Take.Reuse(c.conn), Slots(fresh.drop(1), opened))
-          case None if opened < cfg.maxConnectionsPerHost => (Take.Open, Slots(fresh, opened + 1))
-          case None                                       => (Take.Exhausted, Slots(fresh, opened))
+          case Some(c)                                          => (Take.Reuse(c.conn), Slots(fresh.drop(1), opened))
+          case None if opened < cfg.maxConnectionsPerHost.toInt => (Take.Open, Slots(fresh, opened + 1))
+          case None                                             => (Take.Exhausted, Slots(fresh, opened))
         ((take, stale.map(_.conn)), m.updated(key, next))
       }
       _     <- ZIO.foreachDiscard(stale)(_.conn.close)
@@ -76,7 +76,8 @@ private[heddle] final class ConnPool private (
       slots
         .modify { m =>
           val st = m.getOrElse(key, Slots(Chunk.empty, 1))
-          if st.idle.length >= cfg.maxIdlePerHost then (Some(conn), m.updated(key, st.copy(opened = st.opened - 1)))
+          if st.idle.length >= cfg.maxIdlePerHost.toInt then
+            (Some(conn), m.updated(key, st.copy(opened = st.opened - 1)))
           else (None, m.updated(key, st.copy(idle = st.idle :+ Idle(conn, now))))
         }
         .flatMap(ZIO.foreachDiscard(_)(_.conn.close))

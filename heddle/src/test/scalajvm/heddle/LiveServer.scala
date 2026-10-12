@@ -1,5 +1,6 @@
 package heddle
 
+import heddle.server.Port
 import zio.*
 
 object LiveServer:
@@ -23,5 +24,5 @@ object LiveServer:
       }
     }
 
-  val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+  val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 end LiveServer

@@ -11,10 +11,74 @@ private[heddle] final class ConnBuf(
     buf: ByteBuffer,
     read: ByteBuffer => IO[HttpError, Int],
     applyTimeout: Duration => UIO[Unit] = _ => ZIO.unit,
+    /** `setReadTimeout` armed `SO_TIMEOUT`. The socket unblocks the read, so the keep-alive loop does not also race a
+      * ZIO timeout.
+      */
+    val socketDeadline: Boolean = false,
 ):
   private var eof = false
 
+  /** `nanoTime` deadline for this header block. `0` until a header read is about to block. */
+  private var headerDeadline = 0L
+
   def setReadTimeout(d: Duration): UIO[Unit] = applyTimeout(d)
+
+  def clearHeaderBudget(): Unit =
+    headerDeadline = 0L
+
+  /** The preface wait timed out. The next header read fails instead of starting a second window. */
+  def expireHeaderBudget(): Unit =
+    headerDeadline = java.lang.System.nanoTime()
+
+  private def headerBudgetSpent: Boolean =
+    val deadline = headerDeadline
+    deadline != 0L && deadline <= java.lang.System.nanoTime()
+
+  def prefaceLook(preface: Array[Byte], maxHeader: Int): PrefaceLook =
+    PrefaceLook.classify(
+      buf.array(),
+      buf.arrayOffset() + buf.position(),
+      buf.remaining(),
+      preface,
+      maxHeader,
+    )
+
+  /** One more header byte. On a live socket the first blocking read stamps `timeout`, and later bytes do not move it.
+    */
+  def fillHeader(timeout: Duration): IO[HttpError, Boolean] =
+    ZIO.suspendSucceed {
+      if !socketDeadline then fillMore
+      else
+        val now = java.lang.System.nanoTime()
+        if headerDeadline == 0L then headerDeadline = now + timeout.toNanos
+        val left = headerDeadline - now
+        if left <= 0L then ZIO.fail(HttpError.Timeout)
+        else
+          setReadTimeout(Duration.fromNanos(left)) *>
+            fillMore.catchSome {
+              case HttpError.Io(e) if IoKind.socketTimeout(e) || IoKind.closedByInterrupt(e) =>
+                headerDeadline = java.lang.System.nanoTime()
+                ZIO.fail(HttpError.Timeout)
+            }
+    }
+
+  /** One more byte toward a preface or header.
+    *
+    * An empty buffer keeps the socket timeout already installed and does not stamp the budget, so a request that
+    * arrives in that read never calls `nanoTime`. Bytes already buffered stamp the budget, and later bytes do not move
+    * it.
+    */
+  def fillPreface(timeout: Duration): IO[HttpError, Boolean] =
+    ZIO.suspendSucceed {
+      val waiting =
+        if socketDeadline && buf.hasRemaining then fillHeader(timeout)
+        else fillMore
+      waiting.catchSome {
+        case HttpError.Io(e) if IoKind.socketTimeout(e) || IoKind.closedByInterrupt(e) =>
+          expireHeaderBudget()
+          ZIO.fail(HttpError.Timeout)
+      }
+    }
 
   def unread(extra: Chunk[Byte]): Unit =
     if extra.isEmpty then ()
@@ -32,28 +96,37 @@ private[heddle] final class ConnBuf(
       else buf.put(arr, 0, need)
       buf.flip()
 
-  def takeHeaders(max: Int): IO[HttpError, Option[Array[Byte]]] =
+  def takeHeaders(max: Int, headerTimeout: Duration = Duration.Zero): IO[HttpError, Option[Array[Byte]]] =
     def go: IO[HttpError, Option[Array[Byte]]] =
       ZIO.suspendSucceed {
-        val idx = indexOfDoubleCrlf
-        if idx >= 0 then
-          if idx + 4 > max then ZIO.fail(HttpError.HeadersTooLarge)
-          else
-            val arr = Array.ofDim[Byte](idx + 4)
-            buf.get(arr)
-            ZIO.succeed(Some(arr))
-        else if buf.remaining() >= max then ZIO.fail(HttpError.HeadersTooLarge)
+        if headerBudgetSpent then ZIO.fail(HttpError.Timeout)
         else
-          fillMore.flatMap {
-            case false if !buf.hasRemaining => ZIO.succeed(None)
-            case false                      => ZIO.fail(HttpError.Malformed(WireError.TruncatedHeaders))
-            case true                       => go
-          }
-        end if
+          val idx = indexOfDoubleCrlf
+          if idx >= 0 then
+            if idx + 4 > max then ZIO.fail(HttpError.HeadersTooLarge)
+            else
+              clearHeaderBudget()
+              val arr = Array.ofDim[Byte](idx + 4)
+              buf.get(arr)
+              ZIO.succeed(Some(arr))
+          else if buf.remaining() >= max then ZIO.fail(HttpError.HeadersTooLarge)
+          else
+            nextHeaderByte(headerTimeout).flatMap {
+              case false if !buf.hasRemaining =>
+                clearHeaderBudget()
+                ZIO.succeed(None)
+              case false => ZIO.fail(HttpError.Malformed(WireError.TruncatedHeaders))
+              case true  => go
+            }
+          end if
       }
     end go
     go
   end takeHeaders
+
+  private def nextHeaderByte(headerTimeout: Duration): IO[HttpError, Boolean] =
+    if socketDeadline && headerTimeout.toNanos > 0L then fillHeader(headerTimeout)
+    else fillMore
 
   /** Block until `n` bytes are buffered or EOF. Does not consume. */
   def fillUntil(n: Int): IO[HttpError, Int] =
@@ -159,7 +232,7 @@ private[heddle] final class ConnBuf(
       case Some(l) => if l.isEmpty then ZIO.unit else skipTrailers(maxLine)
     }
 
-  def chunkedBytes(maxBody: Long = Long.MaxValue, maxLine: Int = 64 * 1024): ZStream[Any, Throwable, Byte] =
+  def chunkedBytes(maxBody: Long, maxLine: Int): ZStream[Any, Throwable, Byte] =
     ZStream.unwrap {
       Ref.make(0L).map { total =>
         ZStream.repeatZIOChunkOption {
@@ -247,9 +320,14 @@ private[heddle] final class ConnBuf(
 end ConnBuf
 
 private[heddle] object ConnBuf:
-  def fromConn(buf: ByteBuffer, conn: heddle.internal.duplex.ByteConn): ConnBuf =
+  def fromConn(
+      buf: ByteBuffer,
+      conn: heddle.internal.duplex.ByteConn,
+      socketDeadline: Boolean = false,
+  ): ConnBuf =
     buf.limit(0)
-    ConnBuf(buf, conn.read, conn.setReadTimeout)
+    val read = if socketDeadline then conn.readOnCarrier else conn.read
+    ConnBuf(buf, read, conn.setReadTimeout, socketDeadline)
 
   def fromPull(
       buf: ByteBuffer,

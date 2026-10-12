@@ -500,9 +500,12 @@ object Hub:
     E.span(Method, name)
 
   def modeButton(mode: Source[String], label: String): UI[Any] =
+    choiceButton(mode, label, label)
+
+  def choiceButton[A](current: Source[A], value: A, label: String)(using Eq[A]): UI[Any] =
     E.button(
-      mode.map(m => if m == label then Set[CssClass](BtnOn) else Set[CssClass](Btn)),
-      Events.onClick(_ => mode.set(label)),
+      current.map(now => if now == value then Set[CssClass](BtnOn) else Set[CssClass](Btn)),
+      Events.onClick(_ => current.set(value)),
       label,
     )
 
@@ -594,54 +597,75 @@ content-type: application/json
 
 {"id":${p.id},"name":"${p.title}"}"""
 
+  /** Which reading of `Show` the schema poster is showing. `Cli` has no host yet. */
+  enum SchemaHost:
+    case Json, OpenApi, McpArgs, Cli
+
+    def label: String =
+      this match
+        case Json    => "JSON"
+        case OpenApi => "OpenAPI"
+        case McpArgs => "MCP args"
+        case Cli     => "CLI flags"
+
+    def blurb: String =
+      this match
+        case Json    => SchemaTranscript.json
+        case OpenApi => SchemaTranscript.openApiWhere
+        case McpArgs => SchemaTranscript.mcpWhere
+        case Cli     => SchemaHost.cliLater
+
+    /** The document that host actually emits. CLI is the one host that does not exist. */
+    def body: String =
+      this match
+        case Json    => SchemaTranscript.json
+        case OpenApi => SchemaTranscript.openApi
+        case McpArgs => SchemaTranscript.mcpArgs
+        case Cli     => SchemaHost.cliLater
+  end SchemaHost
+
+  object SchemaHost:
+    val cliLater = "--id 1   (later interpreter)"
+
   def schemaPoster: UI[Any] =
-    schemaPosterAt("JSON")
+    schemaPosterAt(SchemaHost.Json)
 
-  def schemaPosterAt(selected: String): UI[Any] =
-    val body = schemaBody(selected)
+  def schemaPosterAt(selected: SchemaHost): UI[Any] =
     E.div(
       Poster,
       kicker("one type, three readers · click a host"),
       E.div(Bound, kicker("Schema"), E.h3(Title, "Show"), E.p(Fine, "id: Int, title: String, remaining: Int")),
       E.div(
         Hosts,
-        hostCard("JSON", """{"id":1,"title":"Evening bill","remaining":12}""", on = selected == "JSON"),
-        hostCard("OpenAPI", "components.schemas.Show", on = selected == "OpenAPI"),
-        hostCard("MCP args", "inputSchema for get_show", on = selected == "MCP args"),
-        hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
+        hostCard(SchemaHost.Json.label, SchemaHost.Json.blurb, on = selected == SchemaHost.Json),
+        hostCard(SchemaHost.OpenApi.label, SchemaHost.OpenApi.blurb, on = selected == SchemaHost.OpenApi),
+        hostCard(SchemaHost.McpArgs.label, SchemaHost.McpArgs.blurb, on = selected == SchemaHost.McpArgs),
+        hostCard(SchemaHost.Cli.label, SchemaHost.cliLater, ghost = true),
       ),
-      E.pre(Payload, body),
+      E.pre(Payload, selected.body),
     )
-  end schemaPosterAt
 
-  def schemaBody(selected: String): String =
-    selected match
-      case "OpenAPI"  => "components.schemas.Show"
-      case "MCP args" => "get_show inputSchema  { id: integer }"
-      case "CLI"      => "--id 1   (later interpreter)"
-      case _          => """{"id":1,"title":"Evening bill","remaining":12}"""
-
-  def schemaPosterLive(selected: Source[String]): UI[Any] =
+  def schemaPosterLive(selected: Source[SchemaHost]): UI[Any] =
     E.div(
       Poster,
       kicker("one type, three readers · click a host"),
       E.div(Bound, kicker("Schema"), E.h3(Title, "Show"), E.p(Fine, "id: Int, title: String, remaining: Int")),
       E.div(
         Hosts,
-        hostTile(selected, "JSON", """{"id":1,"title":"Evening bill","remaining":12}"""),
-        hostTile(selected, "OpenAPI", "components.schemas.Show"),
-        hostTile(selected, "MCP args", "inputSchema for get_show"),
-        hostCard("CLI flags", "--id 1   (later interpreter)", ghost = true),
+        schemaTile(selected, SchemaHost.Json),
+        schemaTile(selected, SchemaHost.OpenApi),
+        schemaTile(selected, SchemaHost.McpArgs),
+        hostCard(SchemaHost.Cli.label, SchemaHost.cliLater, ghost = true),
       ),
-      selected.map(s => E.pre(Payload, schemaBody(s))),
+      selected.map(host => E.pre(Payload, host.body)),
     )
 
-  def hostTile(selected: Source[String], label: String, body: String): UI[Any] =
+  def schemaTile(selected: Source[SchemaHost], host: SchemaHost): UI[Any] =
     E.button(
-      selected.map(s => if s == label then Set[CssClass](CardOn) else Set[CssClass](Card)),
-      Events.onClick(_ => selected.set(label)),
-      E.div(Kicker, label),
-      E.p(Fine, body),
+      selected.map(now => if now == host then Set[CssClass](CardOn) else Set[CssClass](Card)),
+      Events.onClick(_ => selected.set(host)),
+      E.div(Kicker, host.label),
+      E.p(Fine, host.blurb),
     )
 
   final case class OpField(id: String, label: String, value: String, readers: String)
@@ -797,26 +821,13 @@ content-type: application/json
     )
 
   def harnessWalk(phase: String): UI[Any] =
-    val body = phase match
-      case "call" =>
-        """Grok  →  tools/call  get_show  {id: 1}
-hub   ←  {"id":1,"title":"Evening bill","remaining":12}
-
-Same function as GET /shows/1."""
-      case _ =>
-        """Grok  →  tools/list
-hub   ←  get_show        GET /shows/{id}  ReadOnly
-         list_shows      GET /shows       ReadOnly
-         seat_the_party  POST /parties
-
-create_hold is not promoted. Catalog can still find it."""
+    val body = if phase == "call" then HarnessTranscript.call else HarnessTranscript.list
     E.div(
       Shell,
       kicker("harness · Grok Build"),
       E.pre(Mono, body),
       E.p(Hint, "Same bind the tests run. JVM, Node, or Native."),
     )
-  end harnessWalk
 
   def desk(selected: Option[Int], host: String = "HTTP"): UI[Any] =
     val person = selected.flatMap(id => bills.find(_.id == id))
@@ -923,46 +934,22 @@ create_hold is not promoted. Catalog can still find it."""
   end middleware
 
   def catalog(mode: String): UI[Any] =
-    val body =
-      if mode == "catalog" then """tools/list  (withCatalog)
-- get_show          GET /shows/{id}   ReadOnly
-- list_shows        GET /shows        ReadOnly
-- seat_the_party    POST /parties
-- search_operations
-- invoke            # create_hold lives here"""
-      else """tools/list  (promoted only)
-- get_show          GET /shows/{id}   ReadOnly
-- list_shows        GET /shows        ReadOnly
-- seat_the_party    POST /parties
-
-create_hold has no .mcp."""
+    val body = if mode == "catalog" then HarnessTranscript.catalogFull else HarnessTranscript.catalogPromoted
     E.div(Shell, kicker("promote, don't auto-export"), E.pre(Mono, body))
-  end catalog
 
-  def rpc(side: String): UI[Any] =
-    val body =
-      if side == "response" then """{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "content": [{ "type": "text", "text": "{\"id\":1,\"title\":\"Evening bill\",\"remaining\":12}" }]
-  }
-}"""
-      else """{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "get_show",
-    "arguments": { "id": 1 }
-  }
-}"""
-    E.div(
-      Shell,
-      kicker("same function as GET /shows/1"),
-      E.pre(Mono, body),
-    )
-  end rpc
+  enum RpcView:
+    case Request, Response
+
+    def label: String =
+      this match
+        case Request  => "request"
+        case Response => "response"
+
+  def rpc(side: RpcView): UI[Any] =
+    val body = side match
+      case RpcView.Request  => HarnessTranscript.rpcRequest
+      case RpcView.Response => HarnessTranscript.rpcResponse
+    E.div(Shell, kicker(HarnessTranscript.rpcKicker), E.pre(Mono, body))
 
   def sseTape(n: Int): UI[Any] =
     val events = (0 to n.max(0)).map(i => s"event: tick\nid: $i\ndata: $i").mkString("\n\n")
@@ -973,14 +960,18 @@ create_hold has no .mcp."""
       E.p(Hint, "Each ServerSentEvent is its own HTTP chunk. The fiber dies with the connection."),
     )
 
-  def datastar(kind: String): UI[Any] =
-    val body =
-      if kind == "signals" then """event: datastar-patch-signals
-data: signals {"count":1}"""
-      else """event: datastar-patch-elements
-data: selector #app
-data: mode inner
-data: elements <div>hello</div>"""
+  enum DatastarPatch:
+    case Elements, Signals
+
+    def label: String =
+      this match
+        case Elements => "elements"
+        case Signals  => "signals"
+
+  def datastar(kind: DatastarPatch): UI[Any] =
+    val body = kind match
+      case DatastarPatch.Elements => DatastarTranscript.elements
+      case DatastarPatch.Signals  => DatastarTranscript.signals
     E.div(Shell, kicker("heddle.datastar"), E.pre(Mono, body))
 
   def openApi(op: String): UI[Any] =
@@ -1082,7 +1073,7 @@ data: elements <div>hello</div>"""
       yield swaggerWalkLive(ran)
 
     def schemaPoster: URIO[Scope, UI[Any]] =
-      for selected <- sq("JSON")
+      for selected <- sq(SchemaHost.Json)
       yield schemaPosterLive(selected)
 
     def harnessWalk: URIO[Scope, UI[Any]] =
@@ -1138,10 +1129,14 @@ data: elements <div>hello</div>"""
       )
 
     def rpc: URIO[Scope, UI[Any]] =
-      for side <- sq("request")
+      for side <- sq(RpcView.Request)
       yield E.div(
         Stack,
-        E.div(Row, modeButton(side, "request"), modeButton(side, "response")),
+        E.div(
+          Row,
+          choiceButton(side, RpcView.Request, RpcView.Request.label),
+          choiceButton(side, RpcView.Response, RpcView.Response.label),
+        ),
         side.map(Hub.rpc),
       )
 
@@ -1158,10 +1153,14 @@ data: elements <div>hello</div>"""
       )
 
     def datastar: URIO[Scope, UI[Any]] =
-      for kind <- sq("elements")
+      for kind <- sq(DatastarPatch.Elements)
       yield E.div(
         Stack,
-        E.div(Row, modeButton(kind, "elements"), modeButton(kind, "signals")),
+        E.div(
+          Row,
+          choiceButton(kind, DatastarPatch.Elements, DatastarPatch.Elements.label),
+          choiceButton(kind, DatastarPatch.Signals, DatastarPatch.Signals.label),
+        ),
         kind.map(Hub.datastar),
       )
   end Lives

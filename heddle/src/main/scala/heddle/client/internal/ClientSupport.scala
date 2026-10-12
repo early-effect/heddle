@@ -1,5 +1,6 @@
 package heddle.client.internal
 
+import heddle.BytesLength
 import heddle.client.{Client, ClientError, Target}
 import heddle.http.{Body, ContentEncoding, Response}
 import heddle.http.header.{HeaderName, Headers}
@@ -20,7 +21,7 @@ private[heddle] object ClientSupport:
       res.body match
         case Body.Bytes(raw, mediaType) =>
           ZIO
-            .fromEither(Compressor.gunzip(raw, cfg.maxBodyBytes))
+            .fromEither(Compressor.gunzip(raw, BytesLength(cfg.maxBodyBytes.toLong)))
             .mapBoth(
               ClientError.Protocol(target.authority, _),
               out =>

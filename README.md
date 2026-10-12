@@ -66,7 +66,7 @@ url = "http://localhost:8080/mcp"
 
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM, JS, Native), Schema, Endpoint, OpenAPI |
+| `heddle` | ZIO, zio-json, neotype | HTTP types, routes, middleware, `Server.install` (JVM, JS, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp-protocol` | zio-json | MCP wire types and codecs: JSON-RPC messages, requests, tools, results, resources |
 | `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-mcp-apps` | heddle-mcp | MCP Apps: sheds of typed grants, `ui://` views, `_meta.ui`, and the policy a host clamps |

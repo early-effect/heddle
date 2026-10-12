@@ -87,13 +87,13 @@ private[heddle] object NodeListener:
                 ZIO.fail(
                   ServerError.BindFailed(
                     config.host,
-                    config.port,
+                    config.port.toInt,
                     java.io.IOException(Option(err.message).getOrElse("listen failed")),
                   )
                 )
               )
         ): js.Function1[js.Error, Unit],
       )
-      val _ = bound.listen(config.port, config.host, () => cb(ZIO.succeed(NodeListener(bound, event, wrap))))
+      val _ = bound.listen(config.port.toInt, config.host, () => cb(ZIO.succeed(NodeListener(bound, event, wrap))))
     }
 end NodeListener

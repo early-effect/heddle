@@ -1,6 +1,6 @@
 package heddle
 
-import heddle.server.Files
+import heddle.server.{Files, Port}
 import java.nio.file.{Files as JFiles, Path}
 import zio.*
 import zio.test.*
@@ -86,5 +86,5 @@ object NativeLiveSpec extends ZIOSpecDefault:
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(30.seconds) @@ TestAspect.withLiveClock
 
-  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 end NativeLiveSpec

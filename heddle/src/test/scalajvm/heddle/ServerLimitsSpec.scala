@@ -1,5 +1,6 @@
 package heddle
 
+import heddle.server.MaxConnections
 import java.io.{ByteArrayOutputStream, InputStream}
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -20,8 +21,9 @@ object ServerLimitsSpec extends ZIOSpecDefault:
           c.soKeepAlive == Server.Config.defaultSoKeepAlive,
           c.idleTimeout == 60.seconds,
           c.headerTimeout == 30.seconds,
-          c.maxConnections == 1024,
-          c.soBacklog == 100,
+          c.maxRequestsPerConnection.isEmpty,
+          c.maxConnections.toInt == 1024,
+          c.soBacklog.toInt == 100,
         )
       ,
       test("idleTimeout closes a quiet keep-alive"):
@@ -49,6 +51,81 @@ object ServerLimitsSpec extends ZIOSpecDefault:
             }
         }
       ,
+      test("HELLO with the socket left open is 400 without waiting out headerTimeout"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        val config = LiveServer.local.copy(headerTimeout = 2.seconds)
+        LiveServer(routes, config) { base =>
+          val port = java.net.URI.create(base).getPort
+          ZIO
+            .attemptBlocking {
+              val sock = Socket("127.0.0.1", port)
+              try
+                sock.setSoTimeout(500)
+                sock.getOutputStream.write("HELLO\r\n\r\n".getBytes(StandardCharsets.US_ASCII))
+                sock.getOutputStream.flush()
+                String(sock.getInputStream.readAllBytes(), StandardCharsets.US_ASCII)
+              finally sock.close()
+            }
+            .map(wire => assertTrue(wire.startsWith("HTTP/1.1 400")))
+        }
+      ,
+      test("bytes that keep arriving do not extend headerTimeout"):
+        val hit    = java.util.concurrent.atomic.AtomicBoolean(false)
+        val routes = Routes(Method.GET / "health" -> handler {
+          ZIO.succeed {
+            hit.set(true)
+            Response.text("ok")
+          }
+        })
+        val config = LiveServer.local.copy(headerTimeout = 200.millis)
+        LiveServer(routes, config) { base =>
+          val port = java.net.URI.create(base).getPort
+          ZIO
+            .attemptBlocking {
+              val sock = Socket("127.0.0.1", port)
+              try
+                sock.setSoTimeout(200)
+                val out = sock.getOutputStream
+                val in  = sock.getInputStream
+                out.write(
+                  "GET /health HTTP/1.1\r\nHost: localhost\r\nX-Slow: ".getBytes(StandardCharsets.US_ASCII)
+                )
+                out.flush()
+                val acc = ByteArrayOutputStream()
+                val buf = new Array[Byte](2048)
+                var i   = 0
+                while i < 12 && acc.size() == 0 do
+                  try
+                    out.write('a')
+                    out.flush()
+                  catch case _: java.io.IOException => i = 12
+                  try
+                    val n = in.read(buf)
+                    if n < 0 then i = 12
+                    else if n > 0 then acc.write(buf, 0, n)
+                  catch case _: java.net.SocketTimeoutException => ()
+                  if acc.size() == 0 && i < 12 then Thread.sleep(50)
+                  i += 1
+                end while
+                var open = acc.size() > 0
+                while open do
+                  try
+                    val n = in.read(buf)
+                    if n < 0 then open = false
+                    else if n > 0 then acc.write(buf, 0, n)
+                  catch
+                    case _: java.net.SocketTimeoutException => open = false
+                    case _: java.io.IOException             => open = false
+                end while
+                (String(acc.toByteArray, StandardCharsets.US_ASCII), hit.get())
+              finally sock.close()
+              end try
+            }
+            .map { (wire, reached) =>
+              assertTrue(wire.startsWith("HTTP/1.1 408"), !reached)
+            }
+        }
+      ,
       test("headerTimeout closes a client that never finishes headers"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         val config = LiveServer.local.copy(headerTimeout = 200.millis)
@@ -73,7 +150,7 @@ object ServerLimitsSpec extends ZIOSpecDefault:
       ,
       test("maxConnections closes the extra handshake"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
-        val config = LiveServer.local.copy(maxConnections = 2)
+        val config = LiveServer.local.copy(maxConnections = MaxConnections(2))
         LiveServer(routes, config) { base =>
           val port = java.net.URI.create(base).getPort
           ZIO

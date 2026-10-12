@@ -1,6 +1,8 @@
 package heddle
 
 import heddle.RawServer.After
+import heddle.client.ConnectionsPerHost
+import heddle.server.BodyBytes
 import zio.*
 import zio.test.*
 
@@ -11,7 +13,7 @@ object ClientPoolSpec extends ZIOSpecDefault:
   )
 
   private def pool(cfg: Client.Config = Client.Config.default): Layer[ClientError, Client] =
-    ZLayer.succeed(cfg.copy(maxConnectionsPerHost = 1)) >>> Client.layer
+    ZLayer.succeed(cfg.copy(maxConnectionsPerHost = ConnectionsPerHost(1))) >>> Client.layer
 
   private val framed    = (_: String) => "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
   private val unframed  = (_: String) => "HTTP/1.1 200 OK\r\n\r\nhello"
@@ -89,7 +91,7 @@ object ClientPoolSpec extends ZIOSpecDefault:
           Client
             .batched(Request.get(s"$base/a"))
             .either
-            .provideLayer(pool(Client.Config.default.copy(maxBodyBytes = 3.B)))
+            .provideLayer(pool(Client.Config.default.copy(maxBodyBytes = BodyBytes(3L))))
             .map(out =>
               assertTrue(out match
                 case Left(ClientError.Protocol(_, HttpError.BodyTooLarge)) => true

@@ -1,52 +1,69 @@
 package heddle
 
-import BytesLength.*
-import heddle.server.{Http2Config, OutOfRange, Setting}
+import heddle.client.{ConnectionsPerHost, IdlePerHost}
+import heddle.server.{Backlog, BodyBytes, ChunkSize, FrameSize, HeaderBytes, KeepAliveRequests, OutstandingFrames, Port}
 import zio.*
 import zio.test.*
 
 object ServerConfigSpec extends ZIOSpecDefault:
-  private val anyLong =
-    Gen.oneOf(Gen.long, Gen.elements(Long.MinValue, -1L, 0L, 1L, Int.MaxValue.toLong + 1, Long.MaxValue))
-
-  private val frameSizes = Gen.oneOf(Gen.long(0, 20_000_000), Gen.elements(16_383L, 16_384L, 16_777_215L, 16_777_216L))
+  private def refused[A](value: Either[String, A], needle: String): Boolean =
+    value.fold(_.contains(needle), _ => false)
 
   def spec = suite("Server.Config")(
-    test("the defaults are valid"):
-      assertTrue(Server.Config.default.validate == Right(Server.Config.default))
-    ,
-    test("validate names exactly the settings out of range, every one of them"):
-      check(Gen.int, anyLong, anyLong, frameSizes, Gen.int(-2, 2)) { (port, chunk, header, frame, outstanding) =>
-        val config = Server.Config.default.copy(
-          port = port,
-          chunkSize = BytesLength(chunk),
-          maxHeaderBytes = BytesLength(header),
-          http2Config = Http2Config(maxFrameSize = BytesLength(frame), maxOutstandingFrames = outstanding),
+    test("make accepts only a value in range"):
+      check(Gen.int, Gen.int, Gen.int, Gen.int, Gen.long) { (port, chunk, frame, outstanding, body) =>
+        assertTrue(
+          Port.make(port).isRight == (port >= 0 && port <= 65535),
+          ChunkSize.make(chunk).isRight == (chunk > 0),
+          HeaderBytes.make(chunk).isRight == (chunk > 0),
+          FrameSize.make(frame).isRight == (frame >= 16_384 && frame <= 16_777_215),
+          OutstandingFrames.make(outstanding).isRight == (outstanding > 0),
+          KeepAliveRequests.make(outstanding).isRight == (outstanding > 0),
+          Backlog.make(port).isRight == (port >= 0),
+          BodyBytes.make(body).isRight == (body >= 0),
+          ConnectionsPerHost.make(outstanding).isRight == (outstanding > 0),
+          IdlePerHost.make(port).isRight == (port >= 0),
         )
-        val expected = Set(
-          Option.when(port < 0 || port > 65535)(Setting.Port),
-          Option.when(chunk < 1 || chunk > Int.MaxValue)(Setting.ChunkSize),
-          Option.when(header < 1 || header > Int.MaxValue)(Setting.MaxHeaderBytes),
-          Option.when(frame < 16_384 || frame > 16_777_215)(Setting.MaxFrameSize),
-          Option.when(outstanding < 1)(Setting.MaxOutstandingFrames),
-        ).flatten
-        val reported = config.validate.fold(_.map(_.setting).toSet, _ => Set.empty[Setting])
-        assertTrue(reported == expected)
       }
     ,
-    test("loading config refuses what validate refuses"):
+    test("rejected values name the bound"):
+      assertTrue(
+        refused(Port.make(-1), "0 to 65535"),
+        refused(Port.make(70_000), "0 to 65535"),
+        refused(ChunkSize.make(0), "positive"),
+        refused(KeepAliveRequests.make(0), "positive"),
+        KeepAliveRequests.make(10).isRight,
+        refused(FrameSize.make(100), "16384"),
+        refused(BodyBytes.make(-1L), ">= 0"),
+      )
+    ,
+    test("a missing keep-alive key is unlimited"):
+      ZIO
+        .config(Server.Config.descriptor)
+        .withConfigProvider(ConfigProvider.fromMap(Map.empty))
+        .map(c => assertTrue(c.maxRequestsPerConnection.isEmpty))
+    ,
+    test("keep-alive 0 fails to load and 10 loads"):
+      val zero = ConfigProvider.fromMap(Map("heddle.server.maxRequestsPerConnection" -> "0"))
+      val ten  = ConfigProvider.fromMap(Map("heddle.server.maxRequestsPerConnection" -> "10"))
+      for
+        bad <- ZIO.config(Server.Config.descriptor).withConfigProvider(zero).flip
+        ok  <- ZIO.config(Server.Config.descriptor).withConfigProvider(ten)
+      yield assertTrue(
+        bad.toString.contains("positive"),
+        ok.maxRequestsPerConnection == Some(KeepAliveRequests(10)),
+      )
+    ,
+    test("a frame size below 16384 fails to load"):
       val provider = ConfigProvider.fromMap(Map("heddle.server.http2.maxFrameSize" -> "100"))
       ZIO.config(Server.Config.descriptor).withConfigProvider(provider).flip.map { err =>
-        assertTrue(err.toString.contains(OutOfRange(Setting.MaxFrameSize, 100, 16_384, 16_777_215).message))
+        assertTrue(err.toString.contains("16384"))
       }
     ,
     test("a size that does not fit an Int saturates instead of wrapping"):
-      check(anyLong) { n =>
+      check(Gen.long) { n =>
         val expected = if n > Int.MaxValue then Int.MaxValue else if n < Int.MinValue then Int.MinValue else n.toInt
         assertTrue(BytesLength(n).toInt == expected)
-      }
-    ,
-    test("K and M compose with the checked sizes"):
-      assertTrue(Server.Config.default.copy(chunkSize = 2.G).validate.isLeft),
+      },
   ) @@ TestAspect.timeout(60.seconds)
 end ServerConfigSpec

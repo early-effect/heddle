@@ -1,6 +1,6 @@
 package heddle
 
-import BytesLength.*
+import heddle.server.{HeaderBytes, KeepAliveRequests}
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import heddle.internal.engine.{Http1, Lifecycle}
@@ -30,7 +30,7 @@ object Http1Spec extends ZIOSpecDefault:
         }
       ,
       test("serveConnection writes 431 when headers exceed maxHeaderBytes"):
-        val config = Server.Config.default.copy(maxHeaderBytes = 64.B)
+        val config = Server.Config.default.copy(maxHeaderBytes = HeaderBytes(64))
         runWire(Routes.empty, get("/x", headers = s"X-Big: ${"a" * 200}"), config).map { wire =>
           assertTrue(wire.startsWith("HTTP/1.1 431"))
         }
@@ -275,7 +275,7 @@ object Http1Spec extends ZIOSpecDefault:
           Method.GET / "a" -> Handler.text("A"),
           Method.GET / "b" -> Handler.text("B"),
         )
-        val config = Server.Config.default.copy(maxRequestsPerConnection = 1)
+        val config = Server.Config.default.copy(maxRequestsPerConnection = Some(KeepAliveRequests(1)))
         runWire(routes, get("/a") + get("/b"), config).map { wire =>
           assertTrue(wire.contains("A"), !wire.contains("B"), wire.contains("Connection: close"))
         }
@@ -353,6 +353,16 @@ object Http1Spec extends ZIOSpecDefault:
           .foreach(heads)(h =>
             runWire(routes, s"POST /echo HTTP/1.1\r\nHost: localhost\r\n$h\r\n\r\n4\r\nping\r\n0\r\n\r\n")
           )
+          .map(wires => assertTrue(wires.forall(w => w.startsWith("HTTP/1.1 400") && !w.contains("reached"))))
+      ,
+      test("two Content-Length headers are a 400, identical values included"):
+        val routes = Routes(Method.POST / "echo" -> Handler.text("reached"))
+        val heads  = List(
+          "Content-Length: 4\r\nContent-Length: 5",
+          "Content-Length: 4\r\nContent-Length: 4",
+        )
+        ZIO
+          .foreach(heads)(h => runWire(routes, s"POST /echo HTTP/1.1\r\nHost: localhost\r\n$h\r\n\r\nping"))
           .map(wires => assertTrue(wires.forall(w => w.startsWith("HTTP/1.1 400") && !w.contains("reached"))))
       ,
       test("Connection is a list of options: keep-alive, close closes"):

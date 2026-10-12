@@ -14,9 +14,17 @@ object BytesLengthSpec extends ZIOSpecDefault:
           8.B.toLong == 8L,
         )
       ,
-      test("Server.Config defaults use K and M"):
-        val c = Server.Config.default
-        assertTrue(c.maxHeaderBytes == 64.K, c.maxBodyBytes == 10.M, c.chunkSize == 8.K)
+      test("server caps match the K and M sizes"):
+        val c  = Server.Config.default
+        val h2 = c.http2Config
+        assertTrue(
+          c.maxHeaderBytes.toInt == 16.K.toInt,
+          c.maxBodyBytes.toLong == 10.M.toLong,
+          c.chunkSize.toInt == 8.K.toInt,
+          h2.initialWindowSize.toInt == (64.K - 1.B).toInt,
+          h2.maxFrameSize.toInt == 16.K.toInt,
+          h2.maxHeaderListSize.toInt == 8.K.toInt,
+        )
       ,
       test("64.K minus 1.B is the HTTP/2 default window"):
         assertTrue((64.K - 1.B).toInt == 65535),

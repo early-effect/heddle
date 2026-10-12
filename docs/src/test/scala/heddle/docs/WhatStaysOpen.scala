@@ -34,7 +34,7 @@ connections we are already serving.
           Server.Config.default.soKeepAlive,
         )
       }.assert { case (max, backlog, keep) =>
-        assertTrue(max == 1024, backlog == 100, keep)
+        assertTrue(max.toInt == 1024, backlog.toInt == 100, keep)
       },
     ),
     section("Keep-alive is a pile of sockets")(
@@ -46,9 +46,15 @@ thread.
 `idleTimeout` (default 60 seconds) closes a connection that is not reading or writing.
 `Duration.Infinity` is the explicit never, and it is a choice you own.
 
+A busy connection is not closed for being busy. `maxRequestsPerConnection` defaults to
+none, so a hot client is not forced to reconnect. Set `Some(KeepAliveRequests(n))` when
+a balancer should see a fresh connection after n requests. That path counts. The default
+does not.
+
 A client that sends one header line every thirty seconds and never finishes the
 request is not idle between requests. It is still sending. `headerTimeout`
 (default 30 seconds) is that clock. Incomplete headers die even if bytes keep dribbling in.
+The next section puts that clock on one shared profile.
 """,
       exampleValue {
         (
@@ -59,6 +65,47 @@ request is not idle between requests. It is still sending. `headerTimeout`
       }.assert { case (idle, header, never) =>
         assertTrue(idle == 60.seconds, header == 30.seconds, never == Duration.Infinity)
       },
+    ),
+    section("One profile, in ratios")(
+      md"""
+Heddle was compared with zio-http 3.11.6 on one shared profile.
+The header cap is 16 KiB. The body cap is 10 MiB. Both are heddle's defaults,
+and zio-http is configured to the same numbers, so a size row is the same cap
+on both servers. One read deadline is set on both. Heddle uses it as
+`headerTimeout` and as `idleTimeout`. zio-http has a single read timer, and a
+byte restarts that timer. Heddle's header budget stays where it was stamped.
+zio-http 3.11.6 has no connection cap. The probe sets one on heddle.
+
+Stopwatch readings belong to the machine that ran the probe. The table is in
+multiples of the shared deadline and the shared caps. `scripts/bench-safety-heddle.sh`
+and `scripts/bench-safety-zio-http.sh` rerun it, one process at a time. Production
+defaults stay 30 seconds, 60 seconds, and 1024 connections. The probe only shortens
+the read deadline and the connection cap, so the ratios show up. Header and body
+caps stay at the defaults. The relationship is the same at the default clocks.
+
+| Probe | Against the profile | Heddle | zio-http 3.11.6 |
+| --- | --- | --- | --- |
+| Finished junk request line, left open or half-closed | complete request line | 400, without waiting out the deadline | 400, without waiting out the deadline |
+| Partial headers, then silence | 1× the deadline | 408 | socket closes, no status |
+| Partial headers, one byte every 1/5 of the deadline | the budget is the whole deadline | 408 at 1× the deadline | still open past the deadline. Each byte restarts the timer |
+| Header block | 3/8 of the header cap, and again at 3/4 | 200 | 200 |
+| Header block | 5/4 of the header cap | 431 | 431 |
+| Body | about 1.5% of the body cap | 200 | 200 |
+| Declared body, nothing sent | 11/10 of the body cap | 413 from the length | 413 from the length |
+| Declared body, then the bytes | 11/10 of the body cap | 413, and the body is not read through | 413, and the body is not read through |
+| `Content-Length` together with `Transfer-Encoding` | framing | 400 | 400 |
+| `Content-Length` is not a run of digits | framing | 400 | 400 |
+| Two `Content-Length` headers, same value | framing | 400 | 400 |
+| One connection past the cap | heddle's cap is set. zio-http 3.11.6 has none | refused | served |
+
+A body under the cap is accepted. zio-http aggregates that body. Heddle streams it.
+The status is 200 either way. The body cap is the 11/10 rows: both answer 413 from
+the declared length, and neither reads the body through.
+
+Silence and a dribble are different failures. Silence ends both servers at the
+deadline. Bytes that never finish the header end heddle at that same deadline.
+They leave zio-http open while they keep arriving.
+"""
     ),
     section("The handler timeout is not the socket timeout")(
       md"""
@@ -73,9 +120,12 @@ connection by itself. Socket clocks live on `Server.Config`. Put the 504 on the
     ),
     section("Uploads and memory")(
       md"""
-`maxBodyBytes` (default `10.M`) is a cap on the request, not a buffer we always
-allocate. `maxHeaderBytes` is `64.K`. `64.K` and `10.M` are `BytesLength`: a size,
-not a collection of bytes.
+`maxBodyBytes` (default 10 MiB, `BodyBytes`) is a cap on the request, not a buffer we
+always allocate. `maxHeaderBytes` (default 16 KiB, `HeaderBytes`) is the header-block
+cap and the per-connection read buffer: each accepted socket allocates
+`max(chunkSize, maxHeaderBytes)`. HTTP/2 keeps a separate header-list cap
+(`maxHeaderListSize`, default 8 KiB). `BytesLength` (`64.K`, `10.M`) is the size
+type for a body or a middleware cap, not these config fields.
 
 If the handler never reads the body, the server still drains leftovers so the next
 keep-alive request is not garbage.
@@ -92,7 +142,7 @@ handler is slow. DATA past the stream window is reset. `maxConcurrentStreams`
           Server.Config.default.http2Config.maxConcurrentStreams,
         )
       }.assert { case (headers, body, streams) =>
-        assertTrue(headers == 64.K, body == 10.M, streams == 100)
+        assertTrue(headers.toInt == 16 * 1024, body.toLong == 10L * 1024 * 1024, streams.toInt == 100)
       },
     ),
     section("Gzip is a Routes wrap")(
@@ -171,7 +221,7 @@ The client inflates a gzip body only when that request asked for gzip.
           Client.Config.default.poolIdleTimeout,
         )
       }.assert { case (n, connect, poolIdle) =>
-        assertTrue(n == 10, connect == 10.seconds, poolIdle == 60.seconds)
+        assertTrue(n.toInt == 10, connect == 10.seconds, poolIdle == 60.seconds)
       },
     ),
   )

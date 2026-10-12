@@ -5,21 +5,24 @@ import java.nio.channels.{ClosedChannelException, ServerSocketChannel, SocketCha
 import java.net.StandardSocketOptions
 import heddle.Server
 import heddle.error.{HttpError, ServerError}
-import heddle.internal.engine.{ConnBufPlatform, Nio}
+import heddle.internal.engine.{Carrier, ConnBufPlatform, Nio}
 import zio.*
 
 private[heddle] final class ChannelConn(val ch: SocketChannel) extends ByteConn:
   private val scratch = ByteBuffer.allocate(8192)
 
   def read(dst: ByteBuffer): IO[HttpError, Int] =
-    val in = ch.socket.getInputStream
-    ZIO
-      .attemptBlockingInterrupt {
-        val n = in.read(dst.array(), dst.arrayOffset() + dst.position(), dst.remaining())
-        if n > 0 then dst.position(dst.position() + n)
-        n
-      }
-      .mapError(HttpError.Io(_))
+    readSocket(dst, interruptible = true)
+
+  override def readOnCarrier(dst: ByteBuffer): IO[HttpError, Int] =
+    readSocket(dst, interruptible = false)
+
+  private def readSocket(dst: ByteBuffer, interruptible: Boolean): IO[HttpError, Int] =
+    val in  = ch.socket.getInputStream
+    val run =
+      if interruptible then ZIO.attemptBlockingInterrupt(ChannelConn.readInto(in, dst))
+      else Carrier.inline(ChannelConn.readInto(in, dst))
+    run.mapError(HttpError.Io(_))
 
   def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
     Nio.writeChunk(ch, chunk, scratch).mapError(HttpError.Io(_))
@@ -33,13 +36,11 @@ end ChannelConn
 private[heddle] final class SslConn(ssl: javax.net.ssl.SSLSocket) extends ByteConn:
   def read(dst: ByteBuffer): IO[HttpError, Int] =
     val in = ssl.getInputStream
-    ZIO
-      .attemptBlockingInterrupt {
-        val n = in.read(dst.array(), dst.arrayOffset() + dst.position(), dst.remaining())
-        if n > 0 then dst.position(dst.position() + n)
-        n
-      }
-      .mapError(HttpError.Io(_))
+    ZIO.attemptBlockingInterrupt(ChannelConn.readInto(in, dst)).mapError(HttpError.Io(_))
+
+  override def readOnCarrier(dst: ByteBuffer): IO[HttpError, Int] =
+    val in = ssl.getInputStream
+    Carrier.inline(ChannelConn.readInto(in, dst)).mapError(HttpError.Io(_))
 
   def write(chunk: Chunk[Byte]): IO[HttpError, Unit] =
     heddle.server.Tls.writer(ssl.getOutputStream)(chunk)
@@ -69,6 +70,12 @@ private[heddle] final class ChannelListener(ss: ServerSocketChannel, tcpNoDelay:
 
   def close: UIO[Unit] = ZIO.attempt(ss.close()).ignore
 end ChannelListener
+
+private[heddle] object ChannelConn:
+  def readInto(in: java.io.InputStream, dst: ByteBuffer): Int =
+    val n = in.read(dst.array(), dst.arrayOffset() + dst.position(), dst.remaining())
+    if n > 0 then dst.position(dst.position() + n)
+    n
 
 private[heddle] object ChannelListener:
   def bind(config: Server.Config): IO[ServerError, ChannelListener] =

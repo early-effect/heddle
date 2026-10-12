@@ -3,6 +3,7 @@ package heddle.apps.browser
 import chekhov.*
 import chekhov.driver.PlaywrightDriver
 import heddle.*
+import heddle.server.Port
 import heddle.error.ServerError
 import heddle.mcp.apps.{Origin, OriginError}
 import java.nio.charset.StandardCharsets
@@ -129,7 +130,7 @@ object CspInheritanceSpec extends ZIOSpecDefault:
        |</body></html>""".stripMargin
   end hostPage
 
-  private val loopback = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+  private val loopback = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 
   private def at(server: Server): IO[OriginError, Origin] =
     server.port.flatMap(p => ZIO.fromEither(Origin.from(s"http://127.0.0.1:$p")))

@@ -1,7 +1,6 @@
 package heddle
 
-import BytesLength.*
-import heddle.server.{OutOfRange, Setting}
+import heddle.server.{BodyBytes, HeaderBytes, Port}
 import java.io.{ByteArrayOutputStream, InputStream}
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -24,7 +23,7 @@ object ServerSpec extends ZIOSpecDefault:
               }
             }
           }
-          .provide(Server.defaultWith(_.port(0)))
+          .provide(Server.defaultWith(_.port(Port(0))))
       ,
       test("Client.live batched fetches an absolute URL"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -173,7 +172,7 @@ object ServerSpec extends ZIOSpecDefault:
       ,
       test("rejects a body larger than maxBodyBytes"):
         val routes = Routes(Method.POST / "echo" -> Handler.text("ok"))
-        val config = LiveServer.local.copy(maxBodyBytes = 4.B)
+        val config = LiveServer.local.copy(maxBodyBytes = BodyBytes(4L))
         LiveServer(routes, config) { base =>
           Client.request(Method.POST, s"$base/echo", body = Body.text("hello")).map { res =>
             assertTrue(res.status == Status.ContentTooLarge)
@@ -182,7 +181,7 @@ object ServerSpec extends ZIOSpecDefault:
       ,
       test("rejects headers larger than maxHeaderBytes"):
         val routes = Routes(Method.GET / "x" -> Handler.text("ok"))
-        val config = LiveServer.local.copy(maxHeaderBytes = 64.B)
+        val config = LiveServer.local.copy(maxHeaderBytes = HeaderBytes(64))
         LiveServer(routes, config) { base =>
           Client.request(Method.GET, s"$base/x", headers = Headers("X-Big", "a" * 200)).map { res =>
             assertTrue(res.status == Status.RequestHeaderFieldsTooLarge)
@@ -203,11 +202,8 @@ object ServerSpec extends ZIOSpecDefault:
           }
           .provide(ZLayer.succeed(LiveServer.local))
       ,
-      test("install refuses an out-of-range port before it binds"):
-        val config = LiveServer.local.copy(port = -1)
-        ZIO.scoped(Server.install(Routes.empty, config)).flip.map { err =>
-          assertTrue(err == ServerError.InvalidConfig(NonEmptyChunk(OutOfRange(Setting.Port, -1, 0, 65535))))
-        }
+      test("a port outside 0 to 65535 does not construct"):
+        assertTrue(Port.make(-1).isLeft, Port.make(70_000).isLeft, Port.make(0).isRight)
       ,
       test("install fails with BindFailed when the address is in use"):
         val config = LiveServer.local.copy(reuseAddress = false)
@@ -215,7 +211,8 @@ object ServerSpec extends ZIOSpecDefault:
           for
             server <- Server.install(Routes.empty, config)
             port   <- server.port
-            err    <- Server.install(Routes.empty, config.copy(port = port)).flip
+            bound  <- ZIO.fromEither(Port.make(port))
+            err    <- Server.install(Routes.empty, config.copy(port = bound)).flip
           yield assertTrue(err match
             case ServerError.BindFailed(host, bound, _) => host == config.host && bound == port
             case _                                      => false)
@@ -326,7 +323,9 @@ object ServerSpec extends ZIOSpecDefault:
 
   /** `reuseAddress = false` plus a sibling `bind(0)` can steal the just-freed port; retry the rebind. */
   private def rebind(config: Server.Config, port: Int) =
-    Server.install(Routes.empty, config.copy(port = port)).retry(Schedule.spaced(20.millis) && Schedule.recurs(25))
+    ZIO.fromEither(Port.make(port)).flatMap { bound =>
+      Server.install(Routes.empty, config.copy(port = bound)).retry(Schedule.spaced(20.millis) && Schedule.recurs(25))
+    }
 
   private def writeGet(sock: Socket, path: String): String =
     val raw = s"GET $path HTTP/1.1\r\nHost: localhost\r\n\r\n"

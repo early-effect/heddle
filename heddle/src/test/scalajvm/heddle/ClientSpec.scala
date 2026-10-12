@@ -1,6 +1,6 @@
 package heddle
 
-import BytesLength.*
+import heddle.client.{ConnectionsPerHost, IdlePerHost}
 import zio.*
 import zio.test.*
 
@@ -10,13 +10,13 @@ object ClientSpec extends ZIOSpecDefault:
       test("named defaults"):
         val c = Client.Config.default
         assertTrue(
-          c.maxConnectionsPerHost == 10,
-          c.maxIdlePerHost == 10,
+          c.maxConnectionsPerHost.toInt == 10,
+          c.maxIdlePerHost.toInt == 10,
           c.connectTimeout == 10.seconds,
           c.idleTimeout == 60.seconds,
           c.poolIdleTimeout == 60.seconds,
-          c.maxHeaderBytes == 64.K,
-          c.maxBodyBytes == 10.M,
+          c.maxHeaderBytes.toInt == 16 * 1024,
+          c.maxBodyBytes.toLong == 10L * 1024 * 1024,
         )
       ,
       test("get does not add Accept-Encoding"):
@@ -62,7 +62,10 @@ object ClientSpec extends ZIOSpecDefault:
           }
       @@ TestAspect.timeout(3.seconds),
       test("pool exhausted when maxConnectionsPerHost is 1 and two stay in flight"):
-        val cfg = Client.Config.default.copy(maxConnectionsPerHost = 1, maxIdlePerHost = 0)
+        val cfg = Client.Config.default.copy(
+          maxConnectionsPerHost = ConnectionsPerHost(1),
+          maxIdlePerHost = IdlePerHost(0),
+        )
         Promise.make[Nothing, Unit].flatMap { gate =>
           val routes =
             Routes(Method.GET / "hold" -> handler(gate.await.as(Response.text("ok"))))

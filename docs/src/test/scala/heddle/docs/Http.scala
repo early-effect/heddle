@@ -1,6 +1,7 @@
 package heddle.docs
 
 import heddle.*
+import heddle.server.Port
 import heddle.brotli.Brotli
 import heddle.docs.ui.Hub
 import specular.*
@@ -101,7 +102,7 @@ value. Idle, header, and connection caps live on `Server.Config`. See
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         ZIO.scoped {
           Server
-            .install(routes, Server.Config.default.copy(host = "127.0.0.1", port = 0))
+            .install(routes, Server.Config.default.copy(host = "127.0.0.1", port = Port(0)))
             .flatMap { server =>
               server.port.flatMap { port =>
                 Client.get(s"http://127.0.0.1:$port/health").flatMap { res =>

@@ -3,6 +3,7 @@ package heddle.apps.browser
 import chekhov.*
 import chekhov.driver.PlaywrightDriver
 import heddle.*
+import heddle.server.Port
 import heddle.apps.browser.counter.{Count, Counter}
 import heddle.apps.browser.host.{Launch, MountOutcome, PageConfig}
 import heddle.error.ServerError
@@ -121,7 +122,7 @@ object ReferenceHostSpec extends ZIOSpecDefault:
         },
         Method.GET / "reference-host.js" -> Handler.succeed(script(page)),
       )
-      loopback = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+      loopback = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
       hostServer  <- Server.install(pageRoutes ++ counterRoutes ++ hostileApp.routes, loopback)
       host        <- hostServer.port.flatMap(p => ZIO.fromEither(Origin.from(s"http://127.0.0.1:$p")))
       relayServer <- Server.install(RelayRoutes(host), loopback)
