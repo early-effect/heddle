@@ -45,7 +45,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: c1597b24d173965a
+          cache-epoch: "9dfc062acfb5bd30"
       - name: Tag is on the default branch
         if: github.event_name == 'push'
         run: |
