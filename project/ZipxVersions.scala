@@ -16,14 +16,14 @@ object MyVersions extends ZipxVersions:
 
   val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
 
-  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.20.1")
+  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.21.0")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
 
   /** Docs figures only. No published heddle artifact selects this. */
   val mermoidAscent = Lib("rocks.earlyeffect", "mermoid-ascent", "0.2.0")
   // ascent-js 0.11.0 depends on facade 0.11.1. Core 0.10.1 depends on types 0.11.1.
-  // Those are what specular 0.20 and mermoid-ascent 0.2.0 resolve. The older pins are stale.
+  // Those are what specular 0.21 and mermoid-ascent 0.2.0 resolve. The older pins are stale.
   val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.1")
   val ascentDomTypes  = Lib("rocks.earlyeffect", "ascent-dom-types", "0.11.1")
   val ascentCore      = Lib("rocks.earlyeffect", "ascent-core", "0.10.1")
@@ -35,7 +35,7 @@ object MyVersions extends ZipxVersions:
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
-  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.20.1")
+  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.21.0")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 

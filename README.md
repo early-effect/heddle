@@ -13,7 +13,7 @@ their own packages.
 Core (ZIO only):
 
 ```scala
-libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.10.0"
+libraryDependencies += "rocks.earlyeffect" %% "heddle" % "0.11.0"
 ```
 
 Optional artifacts, same version: `heddle-mcp`, `heddle-mcp-protocol`, `heddle-mcp-apps`, `heddle-oauth`,
