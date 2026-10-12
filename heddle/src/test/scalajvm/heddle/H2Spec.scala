@@ -1,6 +1,6 @@
 package heddle
 
-import BytesLength.*
+import heddle.server.{BodyBytes, ConcurrentStreams, WindowSize}
 import java.nio.charset.StandardCharsets
 import heddle.internal.h2.{FrameCodec, H2Flow, H2Frame, Hpack}
 import heddle.internal.engine.ConnBuf
@@ -99,7 +99,7 @@ object H2Spec extends ZIOSpecDefault:
         val routes = Routes(
           Method.POST / "echo" -> handler((req: Request) => req.body.collect.orDie.as(Response.ok))
         )
-        val cfg = LiveServer.local.copy(maxBodyBytes = 8.B)
+        val cfg = LiveServer.local.copy(maxBodyBytes = BodyBytes(8L))
         LiveServer(routes, cfg) { base =>
           val port = java.net.URI.create(base).getPort
           h2Exchange(port, List(H2Req.post(1, "/echo", "0123456789abcdef")), untilRst = true).map { got =>
@@ -111,7 +111,7 @@ object H2Spec extends ZIOSpecDefault:
         val routes = Routes(
           Method.POST / "echo" -> handler((req: Request) => req.body.collect.orDie.as(Response.ok))
         )
-        val cfg = LiveServer.local.copy(http2Config = Http2Config(initialWindowSize = 16.B))
+        val cfg = LiveServer.local.copy(http2Config = Http2Config(initialWindowSize = WindowSize(16)))
         LiveServer(routes, cfg) { base =>
           val port = java.net.URI.create(base).getPort
           h2Exchange(port, List(H2Req.post(1, "/echo", "0123456789abcdef0123456789abcdef")), untilRst = true).map {
@@ -125,7 +125,7 @@ object H2Spec extends ZIOSpecDefault:
           Method.GET / "hold" -> handler(ZIO.never),
           Method.GET / "b"    -> Handler.text("B"),
         )
-        val cfg = LiveServer.local.copy(http2Config = Http2Config(maxConcurrentStreams = 1))
+        val cfg = LiveServer.local.copy(http2Config = Http2Config(maxConcurrentStreams = ConcurrentStreams(1)))
         LiveServer(routes, cfg) { base =>
           val port = java.net.URI.create(base).getPort
           h2Exchange(port, List(H2Req.get(1, "/hold"), H2Req.get(3, "/b")), untilRst = true).map { got =>

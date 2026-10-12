@@ -1,6 +1,7 @@
 package heddle.docs
 
 import heddle.*
+import heddle.server.{ChunkSize, KeepAliveRequests, Port}
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -17,7 +18,7 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
       md"""
 | Artifact | Depends on | Role |
 | --- | --- | --- |
-| `heddle` | ZIO, zio-json | HTTP types, routes, middleware, `Server.install` (JVM Loom, Node, Native), Schema, Endpoint, OpenAPI |
+| `heddle` | ZIO, zio-json, neotype | HTTP types, routes, middleware, `Server.install` (JVM Loom, Node, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp-protocol` | zio-json | MCP wire types and codecs: JSON-RPC messages, requests, tools, results, resources |
 | `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
 | `heddle-mcp-apps` | heddle-mcp | [MCP Apps](mcp-apps.html): sheds of typed grants, `ui://` views, `_meta.ui`, and the policy a host clamps |
@@ -63,35 +64,44 @@ Seed users: `ada` / `ada`. Machine client `machine` / `secret`.
     ),
     section("Server config")(
       md"""
-`zio.Config` keys nest under `heddle.server`. Sizes are `BytesLength` (`64.K`, `10.M`).
-Forever is `Duration.Infinity`. Why each clock exists: [What stays open](what-stays-open.html).
+`zio.Config` keys nest under `heddle.server`. Numeric caps are neotypes: a value outside
+its range does not construct, and a present invalid value fails to load. A missing
+`maxRequestsPerConnection` is unlimited. Forever is `Duration.Infinity`. Why each clock
+exists: [What stays open](what-stays-open.html).
 
 | Field | Default | Why |
 | --- | --- | --- |
 | `host` | `0.0.0.0` | Bind address |
-| `port` | 8080 | Bind port |
-| `maxHeaderBytes` | `64.K` | Cap on the header block |
-| `maxBodyBytes` | `10.M` | Cap on the request body |
-| `chunkSize` | `8.K` | Read/write chunk |
+| `port` | `Port(8080)` | Bind port. `Port(0)` asks the OS |
+| `maxHeaderBytes` | `HeaderBytes(16384)` | Cap on the header block. The read buffer is at least this |
+| `maxBodyBytes` | `BodyBytes(10485760)` | Cap on the request body. `0` refuses every body |
+| `chunkSize` | `ChunkSize(8192)` | Read/write chunk |
 | `gracefulShutdownTimeout` | 10s | Finish in-flight work, then close |
 | `idleTimeout` | 60s | Close a quiet keep-alive |
-| `headerTimeout` | 30s | Close incomplete headers |
-| `maxConnections` | 1024 | Cap on accepted sockets |
-| `maxRequestsPerConnection` | 10000 | Bound keep-alive reuse |
-| `soBacklog` | 100 | Kernel accept queue |
+| `headerTimeout` | 30s | Close incomplete headers. Later bytes do not extend it |
+| `maxConnections` | `MaxConnections(1024)` | Cap on accepted sockets |
+| `maxRequestsPerConnection` | none | `Option[KeepAliveRequests]`. Unset does not count requests |
+| `soBacklog` | `Backlog(100)` | Kernel accept queue. `Backlog(0)` leaves it to the OS |
 | `reuseAddress` | true | `SO_REUSEADDR` |
 | `tcpNoDelay` | true | `TCP_NODELAY` |
 | `soKeepAlive` | true | Dead-peer cleanup |
 | `http2` | true | Offer HTTP/2 |
-| `http2Config.maxConcurrentStreams` | 100 | Cap streams per connection |
-| `http2Config.initialWindowSize` | 65535 | Stream flow-control window |
-| `http2Config.maxFrameSize` | `16.K` | Frame cap |
-| `http2Config.maxHeaderListSize` | `8.K` | HPACK list cap |
-| `http2Config.maxOutstandingFrames` | 64 | Bound writer and body queues |
+| `http2Config.maxConcurrentStreams` | `ConcurrentStreams(100)` | Cap streams per connection. `0` refuses new streams |
+| `http2Config.initialWindowSize` | `WindowSize(65535)` | Stream flow-control window. `0` stalls the sender |
+| `http2Config.maxFrameSize` | `FrameSize(16384)` | Frame cap, 16384 through 16777215 |
+| `http2Config.maxHeaderListSize` | `HeaderListSize(8192)` | HPACK list cap |
+| `http2Config.maxOutstandingFrames` | `OutstandingFrames(64)` | Bound writer and body queues |
 
 ```scala
 Server.serve(app).provide(Server.Config.defaults)
-Server.serve(app, Server.Config.default.copy(port = 8080, maxBodyBytes = 1.M, idleTimeout = Duration.Infinity))
+Server.serve(
+  app,
+  Server.Config.default.copy(
+    port = Port(8080),
+    maxBodyBytes = BodyBytes(1024L * 1024),
+    idleTimeout = Duration.Infinity,
+  ),
+)
 Server.serve(app).provide(Server.Config.layer)
 ```
 
@@ -108,22 +118,29 @@ exits 0 on Ctrl-C under sbt 2.
           Server.Config.default.maxConnections,
         )
       }.assert { case (port, idle, max) =>
-        assertTrue(port == 8080, idle == 60.seconds, max == 1024)
+        assertTrue(port.toInt == 8080, idle == 60.seconds, max.toInt == 1024)
       },
       md"""
-A config is checked once, before anything binds. `Server.install` fails with
-`ServerError.InvalidConfig` naming every setting it cannot serve with (a port outside
-0..65535, a buffer size that does not fit an `Int`, a frame size outside RFC 9113's range),
-and `Server.Config.layer` refuses the same values while it loads. `Server.Config#validate`
-is the check itself.
+A `Config` value is already servable: `Port`, `ChunkSize`, and `KeepAliveRequests` refuse
+an out-of-range number in `make`, and the same check runs when `zio.Config` loads a present
+value. `Server.install` does not check again. A missing `maxRequestsPerConnection` stays
+`None`.
 """,
+      exampleValue {
+        (
+          Port.make(70_000),
+          ChunkSize.make(0),
+          KeepAliveRequests.make(0),
+          KeepAliveRequests.make(10),
+        )
+      }.assert { case (port, chunk, zero, ten) =>
+        assertTrue(port.isLeft, chunk.isLeft, zero.isLeft, ten.isRight)
+      },
       exampleZIO {
-        val config = Server.Config.default.copy(port = 70_000, chunkSize = 0.B)
-        ZIO.scoped(Server.install(Routes.empty, config)).flip
+        val provider = ConfigProvider.fromMap(Map("heddle.server.http2.maxFrameSize" -> "100"))
+        ZIO.config(Server.Config.descriptor).withConfigProvider(provider).flip
       }.assert { err =>
-        assertTrue(err match
-          case ServerError.InvalidConfig(problems) => problems.map(_.setting.key).toList == List("port", "chunkSize")
-          case _                                   => false)
+        assertTrue(err.toString.contains("16384"))
       },
     ),
     section("Errors")(
@@ -178,14 +195,14 @@ on the pooled client.
 
 | Field | Default | Why |
 | --- | --- | --- |
-| `maxConnectionsPerHost` | 10 | In-flight cap per host |
-| `maxIdlePerHost` | 10 | Idle sockets kept |
+| `maxConnectionsPerHost` | `ConnectionsPerHost(10)` | In-flight cap per host |
+| `maxIdlePerHost` | `IdlePerHost(10)` | Idle sockets kept. `IdlePerHost(0)` keeps none |
 | `connectTimeout` | 10s | Give up connecting |
 | `idleTimeout` | 60s | Give up reading |
 | `poolIdleTimeout` | 60s | Drop idle pooled sockets |
 | `addUserAgent` | true | Add `User-Agent: heddle` if missing |
-| `maxHeaderBytes` | `64.K` | Cap on response headers |
-| `maxBodyBytes` | `10.M` | Cap on response body |
+| `maxHeaderBytes` | `HeaderBytes(16384)` | Cap on response headers. The read buffer is this |
+| `maxBodyBytes` | `BodyBytes(10485760)` | Cap on response body |
 
 `Accept-Encoding` is not added for you. Set the header if you want gzip. The client inflates
 only when that request asked for gzip.

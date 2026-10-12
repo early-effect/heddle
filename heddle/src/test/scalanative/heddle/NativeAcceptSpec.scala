@@ -1,6 +1,7 @@
 package heddle
 
 import heddle.error.HttpError
+import heddle.server.Port
 import heddle.internal.duplex.{AcceptError, ByteConn, Listener, NativeConn, NativeListener}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -71,7 +72,7 @@ object NativeAcceptSpec extends ZIOSpecDefault:
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(8.seconds) @@ TestAspect.withLiveClock
 
-  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 
   private def serveOnce(listener: Listener[NativeConn]): IO[AcceptError | HttpError | Throwable, Unit] =
     listener.accept.flatMap(serveConn)

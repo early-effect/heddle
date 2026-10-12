@@ -18,7 +18,7 @@ private[heddle] object ServerPlatform:
   ): ZIO[R & Scope, ServerError, Server] =
     for
       clock    <- ZIO.clock
-      live     <- LiveConnections.make(config.maxConnections)
+      live     <- LiveConnections.make(config.maxConnections.toInt)
       listener <- ZIO.acquireRelease(bind(config, tls))(_.close)
       halt0 = live.halt(listener, config.gracefulShutdownTimeout).withClock(clock)
       _ <- live.acceptAll(listener)(runConnection(routes, _, config, live.takingWork, _, tls.isDefined)).forkScoped

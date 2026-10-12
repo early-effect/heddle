@@ -1,6 +1,7 @@
 package heddle.oauth
 
 import heddle.*
+import heddle.server.Port
 import heddle.crypto.Rsa
 import heddle.oauth.client.{AuthzRequest, OAuthClient, OAuthEndpoints, Registration}
 import heddle.oauth.jose.SigningKey
@@ -169,7 +170,7 @@ object ProviderSpec extends ZIOSpecDefault:
         )
         server <- Server.install(
           Provider.routes(ProviderConfig(issuer), stores, key),
-          Server.Config.default.copy(host = "127.0.0.1", port = 0),
+          Server.Config.default.copy(host = "127.0.0.1", port = Port(0)),
         )
         port <- server.port
         a    <- f(s"$issuer:$port", key, stores)

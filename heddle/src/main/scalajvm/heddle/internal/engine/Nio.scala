@@ -14,10 +14,10 @@ private[heddle] object Nio:
       .attempt {
         val ch = ServerSocketChannel.open()
         ch.setOption(StandardSocketOptions.SO_REUSEADDR, config.reuseAddress)
-        ch.bind(InetSocketAddress(config.host, config.port), config.soBacklog)
+        ch.bind(InetSocketAddress(config.host, config.port.toInt), config.soBacklog.toInt)
         ch
       }
-      .mapError(ServerError.BindFailed(config.host, config.port, _))
+      .mapError(ServerError.BindFailed(config.host, config.port.toInt, _))
 
   def localPort(ch: ServerSocketChannel): Int =
     ch.getLocalAddress match
@@ -28,13 +28,13 @@ private[heddle] object Nio:
     ZIO.attempt(ch.accept())
 
   /** `Chunk.fromArray` wraps the array (`ByteArray`). Wrap that same array in a ByteBuffer so the write syscall is
-    * zero-copy. Other chunk shapes copy into the reused scratch buffer.
+    * zero-copy. Other chunk shapes copy into the reused scratch buffer. A virtual thread writes in place. A platform
+    * worker still shifts to the blocking executor.
     */
-  /** A blocking write, on the blocking pool so it never holds a ZIO worker. */
   def writeChunk(ch: SocketChannel, chunk: Chunk[Byte], scratch: ByteBuffer): Task[Unit] =
     if chunk.isEmpty then ZIO.unit
     else
-      ZIO.attemptBlocking {
+      Carrier.inline {
         val buf = chunk match
           case Chunk.ByteArray(array, offset, length) =>
             ByteBuffer.wrap(array, offset, length)

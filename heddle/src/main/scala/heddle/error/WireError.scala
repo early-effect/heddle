@@ -14,6 +14,11 @@ enum WireError(val message: String) extends HeddleError:
   /** RFC 9112 §6.1: a request with both framings is how requests are smuggled past a proxy that reads the other one. */
   case ConflictingFraming extends WireError("a request has both Content-Length and Transfer-Encoding")
 
+  /** RFC 9112 §6.3.5: two Content-Length values, even identical ones, are a request the next hop might count
+    * differently.
+    */
+  case RepeatedContentLength extends WireError("a request has more than one Content-Length")
+
   /** A request's transfer codings must be exactly `chunked`: nothing else is implemented, and chunked must be last. */
   case UnsupportedTransferCoding(raw: String) extends WireError(s"Transfer-Encoding $raw is not chunked alone")
   case TruncatedBody                          extends WireError("the body ends before its declared length")

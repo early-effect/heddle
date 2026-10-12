@@ -63,9 +63,11 @@ object NativeListener:
     for
       inbound  <- Queue.unbounded[Either[AcceptError, Int]]
       listener <- ZIO
-        .suspendSucceed(ZIO.fromEither(Net.listen(config.host, config.port, config.soBacklog, config.reuseAddress)))
+        .suspendSucceed(
+          ZIO.fromEither(Net.listen(config.host, config.port.toInt, config.soBacklog.toInt, config.reuseAddress))
+        )
         .mapBoth(
-          e => ServerError.BindFailed(config.host, config.port, e.exception),
+          e => ServerError.BindFailed(config.host, config.port.toInt, e.exception),
           NativeListener(_, config.tcpNoDelay, config.soKeepAlive, inbound),
         )
       fiber <- listener.produce.fork

@@ -4,7 +4,7 @@ import heddle.error.{H2Violation, HttpError, WireError}
 import heddle.http.{Body, HttpVersion, Method, Request, Response, Url}
 import heddle.http.header.{Header, Headers}
 import heddle.internal.duplex.Sink
-import heddle.internal.engine.{ConnBuf, Lifecycle, Wire}
+import heddle.internal.engine.{ConnBuf, IoKind, Lifecycle, Wire}
 import heddle.route.Routes
 import heddle.Server
 import heddle.server.Http2Config
@@ -68,7 +68,7 @@ private[heddle] object H2Connection:
   private object Conn:
     def make(config: Server.Config, busy: java.util.concurrent.atomic.AtomicBoolean, secure: Boolean): UIO[Conn] =
       for
-        out    <- Queue.bounded[Chunk[H2Frame]](config.http2Config.maxOutstandingFrames)
+        out    <- Queue.bounded[Chunk[H2Frame]](config.http2Config.maxOutstandingFrames.toInt)
         flow   <- H2Flow.make(config.http2Config.initialWindowSize.toInt)
         frame  <- Ref.make(H2Frame.DefaultMaxFrameSize)
         last   <- Ref.make(0)
@@ -88,7 +88,7 @@ private[heddle] object H2Connection:
 
   private def localSettings(h2: Http2Config): Chunk[(Int, Int)] =
     Chunk(
-      3 -> h2.maxConcurrentStreams,
+      3 -> h2.maxConcurrentStreams.toInt,
       4 -> h2.initialWindowSize.toInt,
       5 -> h2.maxFrameSize.toInt,
       6 -> h2.maxHeaderListSize.toInt,
@@ -119,14 +119,29 @@ private[heddle] object H2Connection:
       if !takingWork.get() then ZIO.unit
       else
         src.setReadTimeout(conn.config.idleTimeout) *>
-          Server
-            .awaitWithin(conn.config.idleTimeout)(readFrame(src, conn.h2.maxFrameSize.toInt))
-            .flatMap {
-              case Some(Some(frame)) => handle(routes, conn, state, frame).flatMap(loop)
-              case _                 => ZIO.unit
-            }
+          nextFrame(src, conn).flatMap {
+            case Some(frame) => handle(routes, conn, state, frame).flatMap(loop)
+            case None        => ZIO.unit
+          }
     loop(ReaderState(None, HpackTable.empty, Map.empty))
   end reader
+
+  /** The next frame, or `None` when the peer goes idle or the read is interrupted. A socket deadline already unblocks
+    * the read, so that path does not also race a ZIO timeout.
+    */
+  private def nextFrame(src: ConnBuf, conn: Conn): IO[HttpError, Option[H2Frame]] =
+    val read    = readFrame(src, conn.h2.maxFrameSize.toInt)
+    val bounded =
+      if src.socketDeadline then read
+      else
+        Server.awaitWithin(conn.config.idleTimeout)(read).flatMap {
+          case None    => ZIO.succeed(None)
+          case Some(f) => ZIO.succeed(f)
+        }
+    bounded.catchSome {
+      case HttpError.Io(e) if IoKind.socketTimeout(e) || IoKind.closedByInterrupt(e) => ZIO.succeed(None)
+    }
+  end nextFrame
 
   private def handle[R](
       routes: Routes[R, Response],
@@ -207,7 +222,7 @@ private[heddle] object H2Connection:
       p: Pending,
   ): ZIO[R, HttpError, ReaderState] =
     ZIO
-      .fromEither(Hpack.decode(p.block, state.hpack, conn.h2.maxHeaderListSize.toLong))
+      .fromEither(Hpack.decode(p.block, state.hpack, conn.h2.maxHeaderListSize.toInt.toLong))
       .mapError(e => HttpError.Malformed(WireError.BadHeaderBlock(e)))
       .flatMap { (fields, hpack) =>
         val next = state.copy(hpack = hpack)
@@ -229,10 +244,10 @@ private[heddle] object H2Connection:
       else if id <= last then violation(H2Violation.StreamIdRegressed(id, last))
       else
         conn.lastStream.set(id) *> conn.fibers.get.flatMap { running =>
-          if running.size >= conn.h2.maxConcurrentStreams then
+          if running.size >= conn.h2.maxConcurrentStreams.toInt then
             conn.offer(H2Frame.RstStream(id, H2Flow.RefusedStream)).as(state)
           else
-            Queue.bounded[Option[Chunk[Byte]]](conn.h2.maxOutstandingFrames).flatMap { q =>
+            Queue.bounded[Option[Chunk[Byte]]](conn.h2.maxOutstandingFrames.toInt).flatMap { q =>
               requestOf(fields, body(q, endStream), conn.secure) match
                 case None =>
                   conn.offer(H2Frame.RstStream(id, 0x1)).as(state)

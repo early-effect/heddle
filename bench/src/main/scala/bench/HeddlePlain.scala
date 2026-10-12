@@ -1,6 +1,7 @@
 package bench
 
 import heddle.*
+import heddle.server.Port
 import zio.*
 
 object HeddlePlain extends ZIOAppDefault:
@@ -16,8 +17,9 @@ object HeddlePlain extends ZIOAppDefault:
   def run =
     for
       args <- getArgs
-      port = args.headOption.flatMap(_.toIntOption).getOrElse(8088)
-      _ <- ZIO.logInfo(s"heddle plaintext on :$port")
-      _ <- Server.serve(routes, Server.Config.default.copy(host = "127.0.0.1", port = port))
+      raw = args.headOption.flatMap(_.toIntOption).getOrElse(8088)
+      port <- ZIO.fromEither(Port.make(raw))
+      _    <- ZIO.logInfo(s"heddle plaintext on :${port.toInt}")
+      _    <- Server.serve(routes, Server.Config.default.copy(host = "127.0.0.1", port = port))
     yield ()
 end HeddlePlain

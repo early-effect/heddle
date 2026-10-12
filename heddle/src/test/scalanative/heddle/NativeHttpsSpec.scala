@@ -4,7 +4,7 @@ import heddle.error.HttpError
 import heddle.internal.duplex.AcceptError
 import heddle.internal.openssl.Ssl
 import heddle.internal.posix.Net
-import heddle.server.Tls
+import heddle.server.{Port, Tls}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import zio.*
@@ -87,7 +87,7 @@ object NativeHttpsSpec extends ZIOSpecDefault:
     ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
 
   private val local: Server.Config =
-    Server.Config.default.copy(host = "127.0.0.1", port = 0, http2 = false)
+    Server.Config.default.copy(host = "127.0.0.1", port = Port(0), http2 = false)
 
   private val trusted: Layer[ClientError, Client] =
     ZLayer.succeed(Client.Config.default) >>> heddle.client.ClientTls.trusting(TestTls.certPem)

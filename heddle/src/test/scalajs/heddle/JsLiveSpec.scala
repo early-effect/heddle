@@ -1,7 +1,7 @@
 package heddle
 
 import heddle.internal.node.{Buffers, Fs, NodeTls, TlsOptions, TlsSocket}
-import heddle.server.{Files, Tls}
+import heddle.server.{BodyBytes, Files, Port, Tls}
 import scala.scalajs.js
 import zio.*
 import zio.test.*
@@ -44,7 +44,9 @@ object JsLiveSpec extends ZIOSpecDefault:
             server.port.flatMap { port =>
               Client
                 .batched(Request.get(s"http://127.0.0.1:$port/big"))
-                .provideLayer(ZLayer.succeed(Client.Config.default.copy(maxBodyBytes = 1.K)) >>> Client.layer)
+                .provideLayer(
+                  ZLayer.succeed(Client.Config.default.copy(maxBodyBytes = BodyBytes(1024L))) >>> Client.layer
+                )
                 .either
                 .map(out =>
                   assertTrue(out match
@@ -91,7 +93,7 @@ object JsLiveSpec extends ZIOSpecDefault:
         },
     ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
 
-  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = 0)
+  private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 
   private def tlsGet(port: Int, path: String): Task[String] =
     ZIO

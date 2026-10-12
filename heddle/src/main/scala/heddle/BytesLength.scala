@@ -12,7 +12,7 @@ object BytesLength:
   extension (self: BytesLength)
     def toLong: Long = self
 
-    /** Saturates at the `Int` range. `Server.Config.validate` keeps every buffer size inside it. */
+    /** Saturates at the `Int` range. Caps that must allocate (`HeaderBytes`, `ChunkSize`) are their own types. */
     def toInt: Int                           = math.max(Int.MinValue.toLong, math.min(Int.MaxValue.toLong, self)).toInt
     def <(other: BytesLength): Boolean       = self < other
     def >(other: BytesLength): Boolean       = self > other

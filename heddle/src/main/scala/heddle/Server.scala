@@ -1,10 +1,20 @@
 package heddle
 
-import BytesLength.*
 import heddle.error.ServerError
 import heddle.http.Response
 import heddle.route.Routes
-import heddle.server.{Http2Config, OutOfRange, Setting, Tls}
+import heddle.server.{
+  Backlog,
+  BodyBytes,
+  ChunkSize,
+  Configured,
+  HeaderBytes,
+  Http2Config,
+  KeepAliveRequests,
+  MaxConnections,
+  Port,
+  Tls,
+}
 import zio.*
 
 final class Server private[heddle] (val port: UIO[Int], val shutdown: UIO[Unit])
@@ -12,79 +22,63 @@ final class Server private[heddle] (val port: UIO[Int], val shutdown: UIO[Unit])
 object Server:
   final case class Config(
       host: String = Config.defaultHost,
-      port: Int = Config.defaultPort,
-      maxHeaderBytes: BytesLength = Config.defaultMaxHeaderBytes,
-      maxBodyBytes: BytesLength = Config.defaultMaxBodyBytes,
-      chunkSize: BytesLength = Config.defaultChunkSize,
+      port: Port = Config.defaultPort,
+      maxHeaderBytes: HeaderBytes = Config.defaultMaxHeaderBytes,
+      maxBodyBytes: BodyBytes = Config.defaultMaxBodyBytes,
+      chunkSize: ChunkSize = Config.defaultChunkSize,
       gracefulShutdownTimeout: Duration = Config.defaultGracefulShutdownTimeout,
       idleTimeout: Duration = Config.defaultIdleTimeout,
       headerTimeout: Duration = Config.defaultHeaderTimeout,
-      maxConnections: Int = Config.defaultMaxConnections,
-      maxRequestsPerConnection: Int = Config.defaultMaxRequestsPerConnection,
-      soBacklog: Int = Config.defaultSoBacklog,
+      maxConnections: MaxConnections = Config.defaultMaxConnections,
+      maxRequestsPerConnection: Option[KeepAliveRequests] = Config.defaultMaxRequestsPerConnection,
+      soBacklog: Backlog = Config.defaultSoBacklog,
       reuseAddress: Boolean = Config.defaultReuseAddress,
       tcpNoDelay: Boolean = Config.defaultTcpNoDelay,
       soKeepAlive: Boolean = Config.defaultSoKeepAlive,
       http2: Boolean = Config.defaultHttp2,
       http2Config: Http2Config = Http2Config(),
   ):
-    def port(n: Int): Config = copy(port = n)
-
-    /** Every setting heddle cannot serve with, or this config. Buffers are allocated from these sizes, so they must fit
-      * an `Int`.
-      */
-    def validate: Either[NonEmptyChunk[OutOfRange], Config] =
-      val problems = List(
-        OutOfRange.check(Setting.Port, port.toLong, 0, 65535),
-        OutOfRange.check(Setting.MaxHeaderBytes, maxHeaderBytes.toLong, 1, Int.MaxValue),
-        OutOfRange.check(Setting.MaxBodyBytes, maxBodyBytes.toLong, 0, Long.MaxValue),
-        OutOfRange.check(Setting.ChunkSize, chunkSize.toLong, 1, Int.MaxValue),
-        OutOfRange.check(Setting.MaxConnections, maxConnections.toLong, 1, Int.MaxValue),
-        OutOfRange.check(Setting.MaxRequestsPerConnection, maxRequestsPerConnection.toLong, 1, Int.MaxValue),
-        OutOfRange.check(Setting.SoBacklog, soBacklog.toLong, 0, Int.MaxValue),
-      ).flatten ++ http2Config.outOfRange
-      NonEmptyChunk.fromIterableOption(problems).toLeft(this)
-    end validate
+    def port(n: Port): Config = copy(port = n)
   end Config
 
   object Config:
-    val defaultHost: String                      = "0.0.0.0"
-    val defaultPort: Int                         = 8080
-    val defaultMaxHeaderBytes: BytesLength       = 64.K
-    val defaultMaxBodyBytes: BytesLength         = 10.M
-    val defaultChunkSize: BytesLength            = 8.K
-    val defaultGracefulShutdownTimeout: Duration = 10.seconds
-    val defaultIdleTimeout: Duration             = 60.seconds
-    val defaultHeaderTimeout: Duration           = 30.seconds
-    val defaultMaxConnections: Int               = 1024
-    val defaultMaxRequestsPerConnection: Int     = 10_000
-    val defaultSoBacklog: Int                    = 100
-    val defaultReuseAddress: Boolean             = true
-    val defaultTcpNoDelay: Boolean               = true
-    val defaultSoKeepAlive: Boolean              = true
-    val defaultHttp2: Boolean                    = true
+    val defaultHost: String                                        = "0.0.0.0"
+    val defaultPort: Port                                          = Port(8080)
+    val defaultMaxHeaderBytes: HeaderBytes                         = HeaderBytes(16 * 1024)
+    val defaultMaxBodyBytes: BodyBytes                             = BodyBytes(10L * 1024 * 1024)
+    val defaultChunkSize: ChunkSize                                = ChunkSize(8 * 1024)
+    val defaultGracefulShutdownTimeout: Duration                   = 10.seconds
+    val defaultIdleTimeout: Duration                               = 60.seconds
+    val defaultHeaderTimeout: Duration                             = 30.seconds
+    val defaultMaxConnections: MaxConnections                      = MaxConnections(1024)
+    val defaultMaxRequestsPerConnection: Option[KeepAliveRequests] = None
+    val defaultSoBacklog: Backlog                                  = Backlog(100)
+    val defaultReuseAddress: Boolean                               = true
+    val defaultTcpNoDelay: Boolean                                 = true
+    val defaultSoKeepAlive: Boolean                                = true
+    val defaultHttp2: Boolean                                      = true
 
     val default: Config = Config()
 
     val descriptor: zio.Config[Config] =
       (
         zio.Config.string("host").withDefault(defaultHost) ++
-          zio.Config.int("port").withDefault(defaultPort) ++
-          zio.Config.long("maxHeaderBytes").map(BytesLength(_)).withDefault(defaultMaxHeaderBytes) ++
-          zio.Config.long("maxBodyBytes").map(BytesLength(_)).withDefault(defaultMaxBodyBytes) ++
-          zio.Config.long("chunkSize").map(BytesLength(_)).withDefault(defaultChunkSize) ++
+          Configured.int("port", defaultPort, _.toInt, Port.make) ++
+          Configured.int("maxHeaderBytes", defaultMaxHeaderBytes, _.toInt, HeaderBytes.make) ++
+          Configured.long("maxBodyBytes", defaultMaxBodyBytes, _.toLong, BodyBytes.make) ++
+          Configured.int("chunkSize", defaultChunkSize, _.toInt, ChunkSize.make) ++
           zio.Config.duration("gracefulShutdownTimeout").withDefault(defaultGracefulShutdownTimeout) ++
           zio.Config.duration("idleTimeout").withDefault(defaultIdleTimeout) ++
           zio.Config.duration("headerTimeout").withDefault(defaultHeaderTimeout) ++
-          zio.Config.int("maxConnections").withDefault(defaultMaxConnections) ++
-          zio.Config.int("maxRequestsPerConnection").withDefault(defaultMaxRequestsPerConnection) ++
-          zio.Config.int("soBacklog").withDefault(defaultSoBacklog) ++
+          Configured.int("maxConnections", defaultMaxConnections, _.toInt, MaxConnections.make) ++
+          Configured.optionalInt("maxRequestsPerConnection", KeepAliveRequests.make) ++
+          Configured.int("soBacklog", defaultSoBacklog, _.toInt, Backlog.make) ++
           zio.Config.boolean("reuseAddress").withDefault(defaultReuseAddress) ++
           zio.Config.boolean("tcpNoDelay").withDefault(defaultTcpNoDelay) ++
           zio.Config.boolean("soKeepAlive").withDefault(defaultSoKeepAlive) ++
           zio.Config.boolean("http2").withDefault(defaultHttp2) ++
           Http2Config.descriptor
-      ).nested("heddle", "server").mapOrFail {
+      ).nested("heddle", "server").map {
         (
             host,
             port,
@@ -120,8 +114,7 @@ object Server:
             soKeepAlive = soKeepAlive,
             http2 = http2,
             http2Config = http2Config,
-          ).validate.left
-            .map(problems => zio.Config.Error.InvalidData(message = problems.map(_.message).mkString("; ")))
+          )
       }
 
     val layer: ZLayer[Any, zio.Config.Error, Config] =
@@ -160,12 +153,10 @@ object Server:
     ZIO.serviceWithZIO[Config](config => install(routes, config))
 
   def install[R](routes: Routes[R, Response], config: Config): ZIO[R & Scope, ServerError, Server] =
-    ZIO.fromEither(config.validate).mapError(ServerError.InvalidConfig(_)) *>
-      ServerPlatform.install(routes, config, None)
+    ServerPlatform.install(routes, config, None)
 
   def install[R](routes: Routes[R, Response], config: Config, tls: Tls): ZIO[R & Scope, ServerError, Server] =
-    ZIO.fromEither(config.validate).mapError(ServerError.InvalidConfig(_)) *>
-      ServerPlatform.install(routes, config, Some(tls))
+    ServerPlatform.install(routes, config, Some(tls))
 
   def run[R](routes: Routes[R, Response])(req: heddle.http.Request): ZIO[R, Nothing, Response] =
     routes(req).merge

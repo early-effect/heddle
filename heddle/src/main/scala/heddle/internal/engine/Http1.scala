@@ -30,13 +30,17 @@ private[heddle] object Http1:
       config: Server.Config,
       life: Lifecycle,
   ): ZIO[R, HttpError, Unit] =
-    val Wire(src, send, secure)               = wire
-    val takingWork                            = life.takingWork
-    val busy                                  = life.busy
-    def loop(n: Int): ZIO[R, HttpError, Unit] =
+    val Wire(src, send, secure) = wire
+    val takingWork              = life.takingWork
+    val busy                    = life.busy
+    def open(
+        first: Boolean,
+        underCap: => Boolean,
+        continue: => ZIO[R, HttpError, Unit],
+    ): ZIO[R, HttpError, Unit] =
       if !takingWork.get() then ZIO.unit
       else
-        nextRequest(src, config, secure, n).foldZIO(
+        nextRequest(src, config, secure, first).foldZIO(
           err =>
             err.toResponse match
               case None      => ZIO.fail(err)
@@ -53,8 +57,7 @@ private[heddle] object Http1:
                       leftover.orElse(ZIO.unit) *>
                       run(src, send).mapError(HttpError.Io(_))
                   case None =>
-                    val keep =
-                      persist(req) && !connectionClose(res) && (n + 1) < config.maxRequestsPerConnection
+                    val keep = persist(req) && !connectionClose(res) && underCap
                     writeResponse(send, res, keep, req.version).flatMap { _ =>
                       leftover.foldZIO(
                         _ =>
@@ -63,22 +66,32 @@ private[heddle] object Http1:
                         ,
                         _ =>
                           busy.set(false)
-                          if keep && takingWork.get() then loop(n + 1) else ZIO.unit,
+                          if keep && takingWork.get() then continue else ZIO.unit,
                       )
                     }
               }
           },
         )
-    loop(0)
+
+    // Unlimited does not count. The limited path stops before `served` reaches `max`, so `served + 1` cannot overflow.
+    def unlimited(first: Boolean): ZIO[R, HttpError, Unit] =
+      open(first, true, unlimited(false))
+
+    def limited(served: Int, max: Int): ZIO[R, HttpError, Unit] =
+      open(served == 0, (served + 1) < max, limited(served + 1, max))
+
+    config.maxRequestsPerConnection match
+      case None        => unlimited(true)
+      case Some(limit) => limited(0, limit.toInt)
   end serveConnection
 
   private def nextRequest(
       src: ConnBuf,
       config: Server.Config,
       secure: Boolean,
-      n: Int,
+      first: Boolean,
   ): IO[HttpError, Option[(Request, IO[HttpError, Unit])]] =
-    if n == 0 then readRequest(src, config, secure)
+    if first then readRequest(src, config, secure)
     else
       waitIdle(src, config.idleTimeout).flatMap {
         case false => ZIO.succeed(None)
@@ -89,16 +102,15 @@ private[heddle] object Http1:
     if idle == Duration.Infinity then src.setReadTimeout(Duration.Infinity) *> src.fillUntil(1).map(_ > 0)
     else if idle.toNanos <= 0L then ZIO.succeed(false)
     else
-      src.setReadTimeout(idle) *>
-        src
-          .fillUntil(1)
-          .timeout(idle)
-          .map(_.exists(_ > 0))
-          .catchSome {
-            case HttpError.Io(e) if isClosedByInterrupt(e) => ZIO.succeed(false)
-            case HttpError.Io(e) if isSocketTimeout(e)     => ZIO.succeed(false)
-            case HttpError.Timeout                         => ZIO.succeed(false)
-          }
+      val arrived = src.setReadTimeout(idle) *> src.fillUntil(1).map(_ > 0)
+      val bounded =
+        if src.socketDeadline then arrived
+        else arrived.timeout(idle).map(_.getOrElse(false))
+      bounded.catchSome {
+        case HttpError.Io(e) if IoKind.closedByInterrupt(e) => ZIO.succeed(false)
+        case HttpError.Io(e) if IoKind.socketTimeout(e)     => ZIO.succeed(false)
+        case HttpError.Timeout                              => ZIO.succeed(false)
+      }
 
   private def dispatch[R](routes: Routes[R, Response], request: Request): URIO[R, Response] =
     routes(request).catchAllCause { cause =>
@@ -134,28 +146,45 @@ private[heddle] object Http1:
       config: Server.Config,
       secure: Boolean,
   ): IO[HttpError, Option[(Request, IO[HttpError, Unit])]] =
-    src.setReadTimeout(config.headerTimeout) *>
-      Server
-        .awaitWithin(config.headerTimeout)(src.takeHeaders(config.maxHeaderBytes.toInt))
-        .catchSome {
-          case HttpError.Io(e) if isClosedByInterrupt(e) => ZIO.succeed(None)
-          case HttpError.Io(e) if isSocketTimeout(e)     => ZIO.fail(HttpError.Timeout)
-        }
-        .flatMap {
-          case None      => ZIO.fail(HttpError.Timeout)
-          case Some(raw) =>
-            raw match
-              case None    => ZIO.succeed(None)
-              case Some(h) =>
-                parseHead(h) match
-                  case Left(err)                              => ZIO.fail(err)
-                  case Right((method, url, version, headers)) =>
-                    requestBody(src, headers, config).map { (body, leftover) =>
-                      Some((Request(method, url, headers, body, version, secure), leftover))
-                    }
-        }
+    val headers =
+      if src.socketDeadline then src.takeHeaders(config.maxHeaderBytes.toInt, config.headerTimeout)
+      else src.takeHeaders(config.maxHeaderBytes.toInt)
+    val bounded =
+      if src.socketDeadline then headers
+      else
+        Server
+          .awaitWithin(config.headerTimeout)(headers)
+          .flatMap {
+            case None    => ZIO.fail(HttpError.Timeout)
+            case Some(h) => ZIO.succeed(h)
+          }
+    bounded
+      .catchSome {
+        case HttpError.Io(e) if IoKind.closedByInterrupt(e) => ZIO.fail(HttpError.Timeout)
+        case HttpError.Io(e) if IoKind.socketTimeout(e)     => ZIO.fail(HttpError.Timeout)
+      }
+      .flatMap {
+        case None    => ZIO.succeed(None)
+        case Some(h) =>
+          parseHead(h) match
+            case Left(err)                              => ZIO.fail(err)
+            case Right((method, url, version, headers)) =>
+              requestBody(src, headers, config).map { (body, leftover) =>
+                Some((Request(method, url, headers, body, version, secure), leftover))
+              }
+      }
+  end readRequest
 
   private def requestBody(
+      src: ConnBuf,
+      headers: Headers,
+      config: Server.Config,
+  ): IO[HttpError, (Body, IO[HttpError, Unit])] =
+    if headers.getAll(HeaderName.ContentLength).length > 1 then
+      ZIO.fail(HttpError.Malformed(WireError.RepeatedContentLength))
+    else framedBody(src, headers, config)
+
+  private def framedBody(
       src: ConnBuf,
       headers: Headers,
       config: Server.Config,
@@ -167,6 +196,8 @@ private[heddle] object Http1:
         ZIO.fail(HttpError.Malformed(WireError.UnsupportedTransferCoding(raw)))
       case Some(_) => chunkedBody(src, headers, config)
       case None    => lengthBody(src, headers, config)
+    end match
+  end framedBody
 
   private def lengthBody(
       src: ConnBuf,
@@ -405,9 +436,4 @@ private[heddle] object Http1:
     end if
   end parseHead
 
-  private def isClosedByInterrupt(e: Throwable): Boolean =
-    e.getClass.getName.endsWith("ClosedByInterruptException")
-
-  private def isSocketTimeout(e: Throwable): Boolean =
-    e.getClass.getName.endsWith("SocketTimeoutException")
 end Http1

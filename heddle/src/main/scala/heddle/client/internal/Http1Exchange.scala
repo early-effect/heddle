@@ -7,14 +7,17 @@ import heddle.http.header.{Header, HeaderName, Headers}
 import heddle.internal.Ascii
 import heddle.internal.duplex.ByteConn
 import heddle.internal.engine.ConnBuf
+import heddle.server.HeaderBytes
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import zio.*
 import zio.stream.ZStream
 
-/** One open HTTP/1.1 connection. The read buffer lives as long as the connection, so bytes read ahead survive reuse. */
-private[heddle] final class Http1Conn(val conn: ByteConn):
-  val src: ConnBuf = ConnBuf.fromConn(ByteBuffer.allocate(64 * 1024), conn)
+/** One open HTTP/1.1 connection. The read buffer is `maxHeaderBytes` and lives as long as the connection, so bytes read
+  * ahead survive reuse. A header block has to fit in that buffer: it cannot grow.
+  */
+private[heddle] final class Http1Conn(val conn: ByteConn, maxHeaderBytes: HeaderBytes):
+  val src: ConnBuf = ConnBuf.fromConn(ByteBuffer.allocate(maxHeaderBytes.toInt), conn)
 
 /** Whether a connection may carry another exchange once this one is fully read. */
 private[heddle] enum Reuse:
@@ -154,11 +157,11 @@ private[heddle] object Http1Exchange:
   end readBody
 
   /** The body as it arrives. The connection stays open until the stream ends or its scope closes. */
-  def streamBody(c: Http1Conn, framing: Framing, contentType: Option[heddle.http.MediaType]): Body =
+  def streamBody(c: Http1Conn, framing: Framing, contentType: Option[heddle.http.MediaType], limits: Limits): Body =
     val bytes: ZStream[Any, Throwable, Byte] = framing match
       case Framing.NoBody     => ZStream.empty
       case Framing.Length(n)  => ZStream.unwrap(Ref.make(n).map(left => c.src.takeBytes(left, 8192)))
-      case Framing.Chunked    => c.src.chunkedBytes()
+      case Framing.Chunked    => c.src.chunkedBytes(limits.maxBody, limits.maxHead)
       case Framing.UntilClose =>
         ZStream.repeatZIOChunkOption {
           c.src.takeUpTo(8192).mapError(e => Some(c.src.toThrowable(e))).flatMap { piece =>

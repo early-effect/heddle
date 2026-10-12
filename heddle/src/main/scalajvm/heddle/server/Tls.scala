@@ -89,11 +89,11 @@ object Tls:
         .mapError(TlsError.Unusable(_))
     yield tls
 
-  /** A blocking TLS write, on the blocking pool. */
+  /** A TLS write on this virtual thread. A platform worker still shifts to the blocking executor. */
   private[heddle] def writer(out: OutputStream): heddle.internal.duplex.Sink =
     chunk =>
-      ZIO
-        .attemptBlocking {
+      heddle.internal.engine.Carrier
+        .inline {
           if chunk.nonEmpty then
             out.write(chunk.toArray)
             out.flush()

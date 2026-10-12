@@ -42,14 +42,16 @@ private[heddle] object Http1Client:
 
   /** The response head, and a body that reads from a dedicated connection until `Scope` closes. */
   def streaming(cfg: Client.Config, connector: Connector, req: Request): ZIO[Scope, ClientError, Response] =
+    val limits = Limits.of(cfg)
     for
       target <- ZIO.fromEither(Target.of(req))
       c      <- ZIO.acquireRelease(connector.open(target))(_.conn.close)
       _    <- Http1Exchange.send(c, target, req.method, ClientSupport.prepare(cfg, req.headers), req.body, connector.io)
       _    <- c.src.setReadTimeout(cfg.idleTimeout)
-      head <- Http1Exchange.readHead(c, target, Limits.of(cfg), connector.io)
+      head <- Http1Exchange.readHead(c, target, limits, connector.io)
       framing <- ZIO.fromEither(Http1Exchange.framing(req.method, head)).mapError(Http1Exchange.malformed(target))
-    yield Http1Exchange.response(head, Http1Exchange.streamBody(c, framing, head.headers.contentType))
+    yield Http1Exchange.response(head, Http1Exchange.streamBody(c, framing, head.headers.contentType, limits))
+  end streaming
 
   def strict(
       cfg: Client.Config,

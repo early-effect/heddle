@@ -1,8 +1,7 @@
 package heddle.client
 
-import heddle.BytesLength
-import heddle.BytesLength.*
 import heddle.endpoint.Endpoint
+import heddle.server.{BodyBytes, Configured, HeaderBytes}
 import heddle.http.{Body, Method, Request, Response, Url}
 import heddle.http.header.Headers
 import heddle.route.Routes
@@ -26,38 +25,38 @@ object Client:
     ZIO.serviceWithZIO[Client](_.streaming(req))
 
   final case class Config(
-      maxConnectionsPerHost: Int = Config.defaultMaxConnectionsPerHost,
-      maxIdlePerHost: Int = Config.defaultMaxIdlePerHost,
+      maxConnectionsPerHost: ConnectionsPerHost = Config.defaultMaxConnectionsPerHost,
+      maxIdlePerHost: IdlePerHost = Config.defaultMaxIdlePerHost,
       connectTimeout: Duration = Config.defaultConnectTimeout,
       idleTimeout: Duration = Config.defaultIdleTimeout,
       poolIdleTimeout: Duration = Config.defaultPoolIdleTimeout,
       addUserAgent: Boolean = Config.defaultAddUserAgent,
-      maxHeaderBytes: BytesLength = Config.defaultMaxHeaderBytes,
-      maxBodyBytes: BytesLength = Config.defaultMaxBodyBytes,
+      maxHeaderBytes: HeaderBytes = Config.defaultMaxHeaderBytes,
+      maxBodyBytes: BodyBytes = Config.defaultMaxBodyBytes,
   )
 
   object Config:
-    val defaultMaxConnectionsPerHost: Int  = 10
-    val defaultMaxIdlePerHost: Int         = 10
-    val defaultConnectTimeout: Duration    = 10.seconds
-    val defaultIdleTimeout: Duration       = 60.seconds
-    val defaultPoolIdleTimeout: Duration   = 60.seconds
-    val defaultAddUserAgent: Boolean       = true
-    val defaultMaxHeaderBytes: BytesLength = 64.K
-    val defaultMaxBodyBytes: BytesLength   = 10.M
+    val defaultMaxConnectionsPerHost: ConnectionsPerHost = ConnectionsPerHost(10)
+    val defaultMaxIdlePerHost: IdlePerHost               = IdlePerHost(10)
+    val defaultConnectTimeout: Duration                  = 10.seconds
+    val defaultIdleTimeout: Duration                     = 60.seconds
+    val defaultPoolIdleTimeout: Duration                 = 60.seconds
+    val defaultAddUserAgent: Boolean                     = true
+    val defaultMaxHeaderBytes: HeaderBytes               = HeaderBytes(16 * 1024)
+    val defaultMaxBodyBytes: BodyBytes                   = BodyBytes(10L * 1024 * 1024)
 
     val default: Config = Config()
 
     val descriptor: zio.Config[Config] =
       (
-        zio.Config.int("maxConnectionsPerHost").withDefault(defaultMaxConnectionsPerHost) ++
-          zio.Config.int("maxIdlePerHost").withDefault(defaultMaxIdlePerHost) ++
+        Configured.int("maxConnectionsPerHost", defaultMaxConnectionsPerHost, _.toInt, ConnectionsPerHost.make) ++
+          Configured.int("maxIdlePerHost", defaultMaxIdlePerHost, _.toInt, IdlePerHost.make) ++
           zio.Config.duration("connectTimeout").withDefault(defaultConnectTimeout) ++
           zio.Config.duration("idleTimeout").withDefault(defaultIdleTimeout) ++
           zio.Config.duration("poolIdleTimeout").withDefault(defaultPoolIdleTimeout) ++
           zio.Config.boolean("addUserAgent").withDefault(defaultAddUserAgent) ++
-          zio.Config.long("maxHeaderBytes").map(BytesLength(_)).withDefault(defaultMaxHeaderBytes) ++
-          zio.Config.long("maxBodyBytes").map(BytesLength(_)).withDefault(defaultMaxBodyBytes)
+          Configured.int("maxHeaderBytes", defaultMaxHeaderBytes, _.toInt, HeaderBytes.make) ++
+          Configured.long("maxBodyBytes", defaultMaxBodyBytes, _.toLong, BodyBytes.make)
       ).nested("heddle", "client").map {
         (
             maxConnectionsPerHost,

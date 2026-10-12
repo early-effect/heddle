@@ -43,7 +43,7 @@ private[heddle] object ClientPlatform:
           case e: SSLException           => ClientError.Tls(target.authority, e)
           case e                         => ClientError.Connect(target.authority, e)
         }
-        .map(Http1Conn(_))
+        .map(Http1Conn(_, cfg.maxHeaderBytes))
 
     /** Closes the channel on any failure or interruption, so a refused or failed handshake never leaks a socket. */
     private def connect(target: Target): Task[ByteConn] =

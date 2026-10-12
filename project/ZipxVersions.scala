@@ -10,6 +10,7 @@ object MyVersions extends ZipxVersions:
   val zioTest    = zio.mod("zio-test").test
   val zioTestSbt = zio.mod("zio-test-sbt").test
   val zioJson    = Lib("dev.zio", "zio-json", "1.1.0")
+  val neotype    = Lib("io.github.kitlangton", "neotype", "0.7.2")
   val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 

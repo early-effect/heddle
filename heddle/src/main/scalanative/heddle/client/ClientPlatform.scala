@@ -48,7 +48,7 @@ private[heddle] object ClientPlatform:
             .mapError(connectFailed(a))
           fd   <- first(a, addrs.toList)
           conn <- if target.tls then secure(target, fd) else ZIO.succeed(NativeConn.of(fd))
-        yield Http1Conn(conn)
+        yield Http1Conn(conn, cfg.maxHeaderBytes)
       if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then connected
       else connected.timeoutFail(ClientError.ConnectTimeout(a))(cfg.connectTimeout)
     end open

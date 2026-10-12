@@ -1,13 +1,14 @@
 package heddle.oauth.provider
 
 import heddle.Server
+import heddle.server.Port
 import heddle.crypto.Rsa
 import heddle.oauth.jose.SigningKey
 import zio.*
 
 /** A local OpenID provider with one user (`ada` / `ada`) and two clients, for trying the flows by hand. */
 object ProviderApp extends ZIOAppDefault:
-  private val config = Server.Config.default.copy(host = "127.0.0.1", port = 8080)
+  private val config = Server.Config.default.copy(host = "127.0.0.1", port = Port(8080))
 
   def run =
     val serve =

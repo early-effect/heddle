@@ -114,6 +114,7 @@ lazy val heddle = (projectMatrix in file("heddle"))
   .settings(commonSettings)
   .settings(MyVersions.coreLib)
   .settings(MyVersions.coreTest)
+  .settings(MyVersions.library(MyVersions.neotype))
   .settings(
     name                 := "heddle",
     description          := "HTTP as an effect. Loom under the floor.",
