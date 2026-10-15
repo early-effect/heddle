@@ -90,6 +90,16 @@ object RouteFallthroughSpec extends ZIOSpecDefault:
           assertTrue(res.status == Status.Ok, res.body.text.contains("str:abc"))
         }
       ,
+      test("choose keeps a miss, so a later route still answers"):
+        val chosen = Routes.choose { _ =>
+          ZIO.succeed(Routes(Method.GET / "a" -> Handler.text("A")))
+        }
+        val routes = chosen ++ Routes(Method.GET / "b" -> Handler.text("B"))
+        for
+          a <- routes(Request.get("/a"))
+          b <- routes(Request.get("/b"))
+        yield assertTrue(a.body.text.contains("A"), b.body.text.contains("B"))
+      ,
       test("++ reaches the string route when the long codec misses, and /p/1 runs only the long route"):
         for
           stringHits <- Ref.make(0)

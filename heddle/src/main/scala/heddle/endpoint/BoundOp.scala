@@ -11,6 +11,8 @@ final class BoundOp[-R, In, Err, Out](
 ) extends Routes[R, Response]:
   def toChunk = inner.toChunk
 
+  def apply(request: Request): ZIO[R, Response, Response] = inner(request)
+
   /** The inner tree's miss stays a miss. Rendering it here would make `Api.routes` fall through on a typed 404. */
   override private[heddle] def decide(request: Request): ZIO[R, Response, Outcome] =
     inner.decide(request)

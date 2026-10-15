@@ -7,11 +7,15 @@ import zio.*
 abstract class Routes[-R, +E]:
   def toChunk: Chunk[Route[R, E]]
 
-  /** Routing outcome. A handler response, including 404 and 405, is `Answered`. Only a path or method miss is not. */
-  private[heddle] def decide(request: Request): ZIO[R, E, Outcome]
+  def apply(request: Request): ZIO[R, E, Response]
 
-  def apply(request: Request): ZIO[R, E, Response] =
-    decide(request).flatMap(Outcome.render)
+  /** Routing outcome. A handler response, including 404 and 405, is `Answered`. Only a path or method miss is not.
+    *
+    * The default seals `apply`: a subclass that only answers with a response does not fall through on 404. A route tree
+    * overrides this.
+    */
+  private[heddle] def decide(request: Request): ZIO[R, E, Outcome] =
+    apply(request).map(Outcome.Answered(_))
 
   def runZIO(request: Request): ZIO[R, E, Response] = apply(request)
 
@@ -43,6 +47,10 @@ object Routes:
 
   def fromHandler[R, E](handler: Handler[R, E]): Routes[R, E] =
     decided(Chunk.empty, req => handler(req).map(Outcome.Answered(_)))
+
+  /** The routes `f` picks answer the request. A miss from them stays a miss, so a later `++` still runs. */
+  def choose[R, E](f: Request => ZIO[R, E, Routes[R, E]]): Routes[R, E] =
+    decided(Chunk.empty, req => f(req).flatMap(_.decide(req)))
 
   private[heddle] def decided[R, E](
       routes: Chunk[Route[R, E]],
@@ -77,7 +85,10 @@ object Routes:
       val toChunk: Chunk[Route[R, E]],
       run: Request => ZIO[R, E, Outcome],
   ) extends Routes[R, E]:
-    private[heddle] def decide(request: Request): ZIO[R, E, Outcome] = run(request)
+    def apply(request: Request): ZIO[R, E, Response] =
+      decide(request).flatMap(Outcome.render)
+
+    override private[heddle] def decide(request: Request): ZIO[R, E, Outcome] = run(request)
 
   extension [R, E](self: Routes[R, E])
     /** Runs `extract` first and hands its `P` to the routes, which then need only `R0`. A failed extract is the

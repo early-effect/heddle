@@ -97,9 +97,9 @@ object ReferenceHostSpec extends ZIOSpecDefault:
       hostileMcp <- ZIO.fromEither(Mcp.from(hostileApi).map(_.at("mcp/hostile")))
       hostileApp <- ZIO.fromEither(hostileMcp.withApp(Hostile.shed, Hostile.document))
       // The counter's bytes, as the test chooses them: the pinned view, or one byte-different.
-      counterRoutes = Routes.fromHandler(
-        Handler.fromFunctionZIO(req => changed.get.flatMap(c => (if c then altered else pinned).routes(req)))
-      )
+      counterRoutes = Routes.choose { _ =>
+        changed.get.map(c => (if c then altered else pinned).routes)
+      }
       pageRoutes = Routes(
         Method.GET / "host" -> handler { req =>
           bound.await.map { (h, relay) =>
