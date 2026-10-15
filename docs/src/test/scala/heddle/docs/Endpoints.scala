@@ -66,11 +66,11 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
         val routes = ep.implement((n, trace) => ZIO.succeed(Text(s"$n:${trace.getOrElse("-")}")))
         val sent   = ep.toRequest((4, None), Url.root)
         for
-          good    <- routes(Request.get("/n").withHeader("X-Count", "4").withHeader("X-Trace", "ada"))
+          good     <- routes(Request.get("/n").withHeader("X-Count", "4").withHeader("X-Trace", "ada"))
           goodBody <- good.body.utf8
-          bad     <- routes(Request.get("/n").withHeader("X-Count", "x"))
-          badBody <- bad.body.utf8
-          bare    <- routes(Request.get("/n").withHeader("X-Count", "4"))
+          bad      <- routes(Request.get("/n").withHeader("X-Count", "x"))
+          badBody  <- bad.body.utf8
+          bare     <- routes(Request.get("/n").withHeader("X-Count", "4"))
           bareBody <- bare.body.utf8
         yield (sent.header("X-Count"), sent.header("X-Trace"), good.status, goodBody, bad.status, badBody, bareBody)
       }.assert { case (count, trace, good, goodBody, bad, badBody, bareBody) =>
@@ -90,13 +90,13 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
         val people = who.implement(host => ZIO.succeed(Text(host.host))) ++
           token.implement(bearer => ZIO.succeed(Text(bearer.token)))
         for
-          host    <- people(Request.get("/who").withHeader("Host", "ada.example"))
-          hostBody <- host.body.utf8
-          again   <- people(Request.get("/who").addHeader("Host", "a.example").addHeader("Host", "b.example"))
-          bearer  <- people(Request.get("/me").withHeader("Authorization", "Bearer tok"))
+          host       <- people(Request.get("/who").withHeader("Host", "ada.example"))
+          hostBody   <- host.body.utf8
+          again      <- people(Request.get("/who").addHeader("Host", "a.example").addHeader("Host", "b.example"))
+          bearer     <- people(Request.get("/me").withHeader("Authorization", "Bearer tok"))
           bearerBody <- bearer.body.utf8
-          basic   <- people(Request.get("/me").withHeader("Authorization", "Basic xxx"))
-          basicBody <- basic.body.utf8
+          basic      <- people(Request.get("/me").withHeader("Authorization", "Basic xxx"))
+          basicBody  <- basic.body.utf8
         yield (
           who.doc.headers.headOption.map(h => (h.name, h.required, h.schema)),
           host.status,
@@ -107,6 +107,7 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
           basic.status,
           basicBody,
         )
+        end for
       }.assert { case (documented, host, hostBody, again, bearer, bearerBody, basic, basicBody) =>
         assertTrue(
           documented.contains(("Host", true, SchemaDoc.Str(None))),
@@ -137,6 +138,7 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
           ep.doc.responses.exists(r => r.status == Status.BadRequest && r.headers.nonEmpty),
           OpArgs.promotable(ep.doc),
         )
+        end for
       }.assert { case (etag, back, gone, called, onSuccess, onError, promotable) =>
         assertTrue(
           etag.contains(EntityTag("abc").render),
