@@ -52,7 +52,12 @@ private[heddle] object OpenApiJson:
       queries = ep.queries.map(p => p.copy(schema = register(p.schema, components))),
       headers = ep.headers.map(p => p.copy(schema = register(p.schema, components))),
       requestBody = ep.requestBody.map(b => b.copy(schema = register(b.schema, components))),
-      responses = ep.responses.map(r => r.copy(schema = r.schema.map(register(_, components)))),
+      responses = ep.responses.map { r =>
+        r.copy(
+          schema = r.schema.map(register(_, components)),
+          headers = r.headers.map(h => h.copy(schema = register(h.schema, components))),
+        )
+      },
     )
 
   private def register(doc: SchemaDoc, components: mutable.LinkedHashMap[String, SchemaDoc]): SchemaDoc =
@@ -133,7 +138,20 @@ private[heddle] object OpenApiJson:
           )
         )
       case _ => Nil
-    Json.Obj(("description" -> Json.Str(r.description)) :: content*)
+    val headers =
+      if r.headers.isEmpty then Nil
+      else
+        List(
+          "headers" -> Json.Obj(
+            r.headers.map { header =>
+              header.name -> Json.Obj(
+                "required" -> Json.Bool(header.required),
+                "schema"   -> SchemaJson.render(header.schema, mutable.LinkedHashMap.empty, embedNamed = true),
+              )
+            }*
+          )
+        )
+    Json.Obj(("description" -> Json.Str(r.description)) :: (content ++ headers)*)
   end responseJson
 
   private def securitySchemeJson(scheme: SecurityScheme): Json =

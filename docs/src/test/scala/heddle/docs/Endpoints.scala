@@ -5,6 +5,7 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import specular.*
 import specular.ziotest.DocSpecSuite
+import zio.*
 import zio.json.*
 import zio.test.*
 
@@ -20,8 +21,9 @@ then [Docs and HTTP fall out](docs-and-http-fall-out.html).
     section("The DSL")(
       md"""
 `.in[A]`, `.out[A]`, and `.outError[E]` need a `BodyCodec`. A type that `derives Schema, JsonCodec`
-gets JSON. A `given BodyCodec[A]` replaces that default. `.query`, `.header`, `.auth`, `.summary`,
-`.tag` are documentation that also drives decoding.
+gets JSON. A `given BodyCodec[A]` replaces that default. `.query` and `.header` decode inputs.
+`.outHeader`, after `.out`, adds a response header to `Out`. The next section is that header.
+`.auth`, `.summary`, and `.tag` are documentation that also drives decoding.
 """,
       exampleZIO {
         BoxOffice.seed.flatMap { store =>
@@ -29,6 +31,124 @@ gets JSON. A `given BodyCodec[A]` replaces that default. `.query`, `.header`, `.
         }
       }.assert { case (status, body) =>
         assertTrue(status == Status.Ok, body.contains("Evening bill"))
+      },
+    ),
+    section("Headers")(
+      md"""
+A header is a value whose name you pass, or a type that already owns its name.
+
+`HeaderCodec` is the value, and the spellings match a query. `.header[Int]("X-Count")` is missing
+as `ParamError.Missing` and `x` as `Malformed`. The same codec has `String`, `Long`, `Boolean`,
+`Instant` for `Date`, `Expires`, `Last-Modified`, and `If-Modified-Since`, `Url` for `Location`
+(the failure is `ParamError.Url`, the `UrlError` kept whole), and `Chunk[EntityTag]` for
+`If-Match` and `If-None-Match`. `.header[Option[Int]]("X-Count")` is absent as `None`. A present
+value that does not parse stays an error, and `toRequest` omits `None`. `Content-Length` is
+`.header[Long]`, not its own type.
+
+`TypedHeader` owns the name, so the call does not repeat it. `.header[Host]` reads `Host`.
+`.header[BasicCredentials]` and `.header[BearerToken]` both read `Authorization` and refuse the
+other scheme. `EntityTag` is `ETag`, `RangeSpec` is `Range`. `Cookie`, `Set-Cookie`,
+`Content-Encoding`, `Accept-Encoding`, and `Transfer-Encoding` read every line. `Set-Cookie` is
+written one line per cookie, never joined. A repeated single-value header, a second `Host`, is
+`Malformed`.
+
+`.outHeader` is those two forms on the way out, and it comes after `.out`. The handler returns
+the body and the header together. `encodeOut` writes the header, `fromResponse` and `Client.call`
+read it back, and a missing one is `CallFailure.Undecodable` with `OutputError.Header`. A later
+`.out` replaces that success, header included. OpenAPI documents a request header on the operation
+and a response header on the success status only.
+
+A header is not a tool argument, and a response header is not a tool result. `OpArgs.promotable`
+is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
+""",
+      exampleZIO {
+        val ep     = Endpoint.get("n").header[Int]("X-Count").header[Option[String]]("X-Trace").out[Text]
+        val routes = ep.implement((n, trace) => ZIO.succeed(Text(s"$n:${trace.getOrElse("-")}")))
+        val sent   = ep.toRequest((4, None), Url.root)
+        for
+          good     <- routes(Request.get("/n").withHeader("X-Count", "4").withHeader("X-Trace", "ada"))
+          goodBody <- good.body.utf8
+          bad      <- routes(Request.get("/n").withHeader("X-Count", "x"))
+          badBody  <- bad.body.utf8
+          bare     <- routes(Request.get("/n").withHeader("X-Count", "4"))
+          bareBody <- bare.body.utf8
+        yield (sent.header("X-Count"), sent.header("X-Trace"), good.status, goodBody, bad.status, badBody, bareBody)
+      }.assert { case (count, trace, good, goodBody, bad, badBody, bareBody) =>
+        assertTrue(
+          count.contains("4"),
+          trace.isEmpty,
+          good == Status.Ok,
+          goodBody == "4:ada",
+          bad == Status.BadRequest,
+          badBody == "header X-Count: expected an int, got 'x'",
+          bareBody == "4:-",
+        )
+      },
+      exampleZIO {
+        val who    = Endpoint.get("who").header[Host].out[Text]
+        val token  = Endpoint.get("me").header[BearerToken].out[Text]
+        val people = who.implement(host => ZIO.succeed(Text(host.host))) ++
+          token.implement(bearer => ZIO.succeed(Text(bearer.token)))
+        for
+          host       <- people(Request.get("/who").withHeader("Host", "ada.example"))
+          hostBody   <- host.body.utf8
+          again      <- people(Request.get("/who").addHeader("Host", "a.example").addHeader("Host", "b.example"))
+          bearer     <- people(Request.get("/me").withHeader("Authorization", "Bearer tok"))
+          bearerBody <- bearer.body.utf8
+          basic      <- people(Request.get("/me").withHeader("Authorization", "Basic xxx"))
+          basicBody  <- basic.body.utf8
+        yield (
+          who.doc.headers.headOption.map(h => (h.name, h.required, h.schema)),
+          host.status,
+          hostBody,
+          again.status,
+          bearer.status,
+          bearerBody,
+          basic.status,
+          basicBody,
+        )
+        end for
+      }.assert { case (documented, host, hostBody, again, bearer, bearerBody, basic, basicBody) =>
+        assertTrue(
+          documented.contains(("Host", true, SchemaDoc.Str(None))),
+          host == Status.Ok,
+          hostBody == "ada.example",
+          again == Status.BadRequest,
+          bearer == Status.Ok,
+          bearerBody == "tok",
+          basic == Status.BadRequest,
+          basicBody.contains("a bearer authorization"),
+        )
+      },
+      exampleZIO {
+        val ep     = Endpoint.get("t").out[Text].outError[String](Status.BadRequest).outHeader[EntityTag]
+        val tag    = EntityTag("abc")
+        val routes = ep.implement(_ => ZIO.succeed((Text("hi"), tag)))
+        for
+          res    <- routes(Request.get("/t"))
+          back   <- ep.fromResponse(res)
+          gone   <- ep.fromResponse(res.removeHeader(HeaderName.ETag)).either
+          called <- Client.call(ep)(()).provideLayer(Client.inMemory(routes))
+        yield (
+          res.header(HeaderName.ETag),
+          back,
+          gone,
+          called,
+          ep.doc.responses.exists(r => r.status == Status.Ok && r.headers.exists(_.name == "ETag")),
+          ep.doc.responses.exists(r => r.status == Status.BadRequest && r.headers.nonEmpty),
+          OpArgs.promotable(ep.doc),
+        )
+        end for
+      }.assert { case (etag, back, gone, called, onSuccess, onError, promotable) =>
+        assertTrue(
+          etag.contains(EntityTag("abc").render),
+          back == (Text("hi"), EntityTag("abc")),
+          gone == Left(CallFailure.Undecodable(Status.Ok, OutputError.Header("ETag", ParamError.Missing))),
+          called == (Text("hi"), EntityTag("abc")),
+          onSuccess,
+          !onError,
+          !promotable,
+        )
       },
     ),
     section("OpenAPI is a projection")(
@@ -124,7 +244,8 @@ Endpoint
   .as[Lookup]
 ```
 
-The output side is the same. `.out[O]` reads and writes `O` with its `BodyCodec`. A domain type is
+The output side is the same. `.out[O]` reads and writes `O` with its `BodyCodec`. `.outHeader`,
+after `.out`, appends a response header to that `Out`. A domain type is
 JSON. `Text`, `Html`, `Javascript`, `Css`, `Svg`, `Octet`, `Form`, and `EventStream` are the other
 bodies, and a `given BodyCodec[A]` is any body you want. `.outEmpty` reads nothing. MCP arguments
 are a third view:

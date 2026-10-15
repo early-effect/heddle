@@ -39,6 +39,18 @@ object BasicCredentials:
     heddle.crypto.Base64.encode(
       zio.Chunk.fromArray(s"$username:$password".getBytes(java.nio.charset.StandardCharsets.UTF_8))
     )
+
+  /** `Authorization` whose scheme is `Basic` and whose credentials decode. */
+  given TypedHeader[BasicCredentials] =
+    TypedHeader.single(HeaderName.Authorization)(
+      raw =>
+        val auth = Authorization.parse(raw)
+        auth.scheme match
+          case AuthScheme.Basic => parse(auth.credentials).toRight(ParamError.Malformed(raw, "basic credentials"))
+          case _                => Left(ParamError.Malformed(raw, "a basic authorization"))
+      ,
+      creds => s"Basic ${render(creds.username, creds.password)}",
+    )
 end BasicCredentials
 
 final case class Authorization(scheme: AuthScheme, credentials: String)
@@ -56,12 +68,29 @@ object Authorization:
     if space < 0 then Authorization(AuthScheme.parse(s), "")
     else Authorization(AuthScheme.parse(s.substring(0, space)), s.substring(space + 1))
 
-  given TypedHeader[Authorization] with
-    def name: HeaderName                                       = HeaderName.Authorization
-    def decode(raw: String): Either[ParamError, Authorization] = Right(parse(raw))
-    def encode(a: Authorization): String                       =
-      if a.credentials.isEmpty then a.scheme.render else s"${a.scheme.render} ${a.credentials}"
+  given TypedHeader[Authorization] =
+    TypedHeader.single(HeaderName.Authorization)(
+      raw => Right(parse(raw)),
+      auth => if auth.credentials.isEmpty then auth.scheme.render else s"${auth.scheme.render} ${auth.credentials}",
+    )
 end Authorization
+
+/** A bearer token. The scheme must be `Bearer` and the token must be non-empty. */
+final case class BearerToken(token: String)
+
+object BearerToken:
+  given TypedHeader[BearerToken] =
+    TypedHeader.single(HeaderName.Authorization)(
+      raw =>
+        val auth = Authorization.parse(raw)
+        auth.scheme match
+          case AuthScheme.Bearer if auth.credentials.nonEmpty => Right(BearerToken(auth.credentials))
+          case AuthScheme.Bearer                              => Left(ParamError.Malformed(raw, "a bearer token"))
+          case _ => Left(ParamError.Malformed(raw, "a bearer authorization"))
+      ,
+      token => s"Bearer ${token.token}",
+    )
+end BearerToken
 
 final case class WwwAuthenticate(scheme: AuthScheme, params: List[(String, String)])
 
@@ -105,12 +134,13 @@ object WwwAuthenticate:
     out.result()
   end params
 
-  given TypedHeader[WwwAuthenticate] with
-    def name: HeaderName                                         = HeaderName.WwwAuthenticate
-    def decode(raw: String): Either[ParamError, WwwAuthenticate] = Right(parse(raw))
-    def encode(a: WwwAuthenticate): String                       =
-      if a.params.isEmpty then a.scheme.render
-      else
-        val ps = a.params.map((k, v) => s"$k=\"$v\"").mkString(", ")
-        s"${a.scheme.render} $ps"
+  given TypedHeader[WwwAuthenticate] =
+    TypedHeader.single(HeaderName.WwwAuthenticate)(
+      raw => Right(parse(raw)),
+      header =>
+        if header.params.isEmpty then header.scheme.render
+        else
+          val ps = header.params.map((k, v) => s"""$k="$v"""").mkString(", ")
+          s"${header.scheme.render} $ps",
+    )
 end WwwAuthenticate

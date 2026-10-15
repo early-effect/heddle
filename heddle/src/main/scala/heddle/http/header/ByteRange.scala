@@ -1,5 +1,6 @@
 package heddle.http.header
 
+import heddle.error.ParamError
 import zio.Chunk
 
 enum ByteRange:
@@ -43,6 +44,12 @@ object RangeSpec:
       }
       .mkString(", ")
     s"${spec.unit}=$body"
+
+  given TypedHeader[RangeSpec] =
+    TypedHeader.single(HeaderName.Range)(
+      raw => parse(raw).toRight(ParamError.Malformed(raw, "a range")),
+      render,
+    )
 end RangeSpec
 
 final case class ContentRange(unit: String, start: Option[Long], end: Option[Long], complete: Option[Long]):
@@ -79,5 +86,11 @@ object EntityTag:
   def parseList(raw: String): Chunk[EntityTag] =
     Chunk.fromIterable(
       raw.split(',').toList.map(_.trim).filter(_.nonEmpty).flatMap(parse)
+    )
+
+  given TypedHeader[EntityTag] =
+    TypedHeader.single(HeaderName.ETag)(
+      raw => parse(raw).toRight(ParamError.Malformed(raw, "an entity-tag")),
+      _.render,
     )
 end EntityTag

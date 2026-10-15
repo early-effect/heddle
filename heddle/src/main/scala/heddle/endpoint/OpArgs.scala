@@ -8,9 +8,10 @@ import zio.json.ast.Json
 
 object OpArgs:
   def promotable(doc: EndpointDoc): Boolean =
-    val bodyOk = doc.requestBody.forall(_.contentType.isJson)
-    val outOk  = doc.responses.exists(r => r.status.isSuccess && r.schema.isDefined && r.contentType.exists(_.isJson))
-    bodyOk && outOk
+    val bodyOk   = doc.requestBody.forall(_.contentType.isJson)
+    val outOk    = doc.responses.exists(r => r.status.isSuccess && r.schema.isDefined && r.contentType.exists(_.isJson))
+    val headerOk = doc.successHeader.isEmpty
+    bodyOk && outOk && headerOk
 
   def inputSchema(doc: EndpointDoc): Either[OpArgsError, SchemaDoc] =
     val pathFields  = doc.pathParams.map(p => SchemaField(p.name, p.schema, optional = !p.required))

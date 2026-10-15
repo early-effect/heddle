@@ -17,6 +17,7 @@ final case class StatusDoc(
     schema: Option[SchemaDoc],
     contentType: Option[MediaType],
     description: String,
+    headers: List[ParamDoc] = Nil,
 )
 
 final case class EndpointDoc(
@@ -37,6 +38,14 @@ final case class EndpointDoc(
     nestBody: Boolean = false,
     hints: List[Hint] = Nil,
 ):
+  /** The first response header on a success status, when `.outHeader` declared one. */
+  def successHeader: Option[String] =
+    responses
+      .collectFirst {
+        case status if status.status.isSuccess && status.headers.nonEmpty => status.headers
+      }
+      .flatMap(_.headOption.map(_.name))
+
   def toolName: String =
     mcpName.filter(_.nonEmpty).orElse(operationId).getOrElse(derivedToolName)
 

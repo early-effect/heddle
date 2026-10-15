@@ -154,8 +154,8 @@ the message.
 | Parser | Error |
 | --- | --- |
 | `Url.decode` | `UrlError`: `Empty`, `BadCharacter(char, at)`, `UnknownScheme`, `BadAuthority` |
-| `QueryCodec`, `HeaderCodec`, `TypedHeader` | `ParamError`: `Missing`, `Malformed(raw, expected)` |
-| `Endpoint#fromResponse` | `CallFailure.Undecodable(status, BodyError)` |
+| `QueryCodec`, `HeaderCodec`, `TypedHeader` | `ParamError`: `Missing`, `Malformed(raw, expected)`, `Url(UrlError)` |
+| `Endpoint#fromResponse` | `CallFailure.Undecodable(status, OutputError)`: `Body(BodyError)`, `Header(name, ParamError)` |
 | `OpArgs.arguments`, `OpArgs.request` | `OpArgsError`: which parameter, where, and what was wrong |
 | `Multipart.parse`, `Body#asMultipart` | `MultipartError`: `Undeclared`, `NoBoundary`, `Truncated` |
 | `SseField.from` | `SseFieldError.LineBreak(at)` |
@@ -173,12 +173,16 @@ the compiler prints the message the runtime `from` would have returned.
           Url.decode("http://exam ple.com/"),
           Url.decode("gopher://example.com/"),
           QueryCodec[Int].decode(Chunk("seven")),
+          HeaderCodec[Url].decode(Chunk("http://exam ple.com/")),
+          HeaderCodec[Int].decode(Chunk("seven")),
         )
-      }.assert { case (space, scheme, count) =>
+      }.assert { case (space, scheme, count, location, header) =>
         assertTrue(
           space == Left(UrlError.BadCharacter(' ', 11)),
           scheme == Left(UrlError.UnknownScheme("gopher")),
           count == Left(ParamError.Malformed("seven", "an int")),
+          location == Left(ParamError.Url(UrlError.BadCharacter(' ', 11))),
+          header == Left(ParamError.Malformed("seven", "an int")),
         )
       },
       md"""

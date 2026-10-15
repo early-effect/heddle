@@ -182,7 +182,54 @@ object EndpointSpec extends ZIOSpecDefault:
         Client
           .call(ep)("ping")
           .provideLayer(Client.inMemory(routes))
-          .map(out => assertTrue(out == "ping")),
+          .map(out => assertTrue(out == "ping"))
+      ,
+      test("an int header is a 400 when malformed and is written back"):
+        val ep     = Endpoint.get("n").header[Int]("X-Count").out[Text]
+        val routes = ep.implement(n => ZIO.succeed(Text(n.toString)))
+        val built  = ep.toRequest(3, Url.root)
+        routes(Request.get("/n").withHeader("X-Count", "x")).map { res =>
+          assertTrue(
+            res.status == Status.BadRequest,
+            res.body.text.exists(_.contains("an int")),
+            built.header("X-Count").contains("3"),
+          )
+        }
+      ,
+      test("a repeated Host is refused and documented as a required string"):
+        val ep         = Endpoint.get("h").header[Host].out[Text]
+        val routes     = ep.implement(host => ZIO.succeed(Text(host.host)))
+        val documented = ep.doc.headers.exists { header =>
+          header.name == "Host" && header.required && header.schema == SchemaDoc.Str(None)
+        }
+        routes(Request.get("/h").addHeader("Host", "a.example").addHeader("Host", "b.example")).map { res =>
+          assertTrue(documented, res.status == Status.BadRequest)
+        }
+      ,
+      test("outHeader round-trips through the response and the client"):
+        val ep  = Endpoint.get("t").out[Text].outHeader[EntityTag]
+        val tag = EntityTag("abc")
+        val res = ep.encodeOut((Text("hi"), tag))
+        for
+          back   <- ep.fromResponse(res)
+          gone   <- ep.fromResponse(res.removeHeader(HeaderName.ETag)).either
+          called <-
+            Client.call(ep)(()).provideLayer(Client.inMemory(ep.implement(_ => ZIO.succeed((Text("hi"), tag)))))
+        yield assertTrue(
+          res.header(HeaderName.ETag).contains(tag.render),
+          back == (Text("hi"), tag),
+          gone == Left(CallFailure.Undecodable(Status.Ok, OutputError.Header("ETag", ParamError.Missing))),
+          called == (Text("hi"), tag),
+        )
+        end for
+      ,
+      test("out after outHeader drops the response header"):
+        val ep  = Endpoint.get("t").out[Text].outHeader[EntityTag].out[Text]
+        val res = ep.encodeOut(Text("hi"))
+        assertTrue(
+          ep.doc.responses.filter(_.status == Status.Ok).forall(_.headers.isEmpty),
+          res.header(HeaderName.ETag).isEmpty,
+        ),
     ) @@ TestAspect.timeout(5.seconds)
 
   private val orderApi =
@@ -243,7 +290,7 @@ object EndpointSpec extends ZIOSpecDefault:
         val res = Response(Status.Conflict).withBody(Body.json("""{"NotFound":{"id":1}}"""))
         ErrorFixtures.order.fromResponse(res).flip.map { failure =>
           assertTrue(failure match
-            case CallFailure.Undecodable(Status.Conflict, BodyError.WrongStatus(declared, _)) =>
+            case CallFailure.Undecodable(Status.Conflict, OutputError.Body(BodyError.WrongStatus(declared, _))) =>
               declared == Status.NotFound
             case _ => false)
         }

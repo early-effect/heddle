@@ -33,10 +33,12 @@ Interpreters fold that AST:
     illustrationIO(Hub.Lives.opAnatomy).live.withMountKey(InteractiveRegistry.AstAnatomy),
     section("OpArgs is why MCP (and CLI) can share HTTP")(
       md"""
-`OpArgs.promotable` is the tool rule: JSON in and JSON out. An endpoint may use any `BodyCodec`.
-Path params and query strings flatten into the same JSON object a tool call (or a future CLI)
-already knows how to pass. HTML, text, form, bytes, and event streams stay on HTTP. Do not smash
-them into tools.
+`OpArgs.promotable` is the tool rule: JSON in, JSON out, and no response header. An endpoint may
+use any `BodyCodec`. Path params and query strings flatten into the same JSON object a tool call
+(or a future CLI) already knows how to pass. A request header does not: it stays on the HTTP
+request. A response header is part of that HTTP output, so an endpoint that declares one stays off
+the tool list even when its body is JSON. HTML, text, form, bytes, and event streams stay on HTTP
+too. Do not smash them into tools.
 """,
       exampleValue {
         OpArgs.promotable(BoxOffice.getShow.doc)
@@ -44,6 +46,12 @@ them into tools.
       exampleValue {
         OpArgs.inputSchema(BoxOffice.getShow.doc).map(_.jsonSchema.toString).exists(_.contains("id"))
       }.assert(ok => assertTrue(ok)),
+      exampleValue {
+        val tagged = Endpoint.get("item").out[String].outHeader[EntityTag]
+        (OpArgs.promotable(tagged.doc), tagged.doc.successHeader)
+      }.assert { case (ok, header) =>
+        assertTrue(!ok, header.contains("ETag"))
+      },
     ),
     section("Click through EndpointDoc")(
       md"""

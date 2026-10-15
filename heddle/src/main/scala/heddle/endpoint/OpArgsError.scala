@@ -18,4 +18,6 @@ enum OpArgsError(val message: String) extends HeddleError:
   case BodyNotJson(detail: String)                  extends OpArgsError(s"the body is not JSON: $detail")
   case PathMismatch(path: String, template: String) extends OpArgsError(s"$path does not match $template")
   case RepeatedQuery(name: String) extends OpArgsError(s"query parameter '$name' repeats; an argument holds one value")
+  case ResponseHeader(name: String)
+      extends OpArgsError(s"response header '$name' is part of the HTTP output, not the tool result")
 end OpArgsError

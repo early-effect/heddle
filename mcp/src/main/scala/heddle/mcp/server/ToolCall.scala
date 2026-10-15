@@ -25,24 +25,27 @@ object ToolCall:
     val doc         = op.endpoint.doc
     val jsonSuccess =
       doc.responses.exists(r => r.status.isSuccess && r.schema.isDefined && r.contentType.exists(_.isJson))
-    if !jsonSuccess then Left(McpBuildError.NotPromotable(doc.toolName, OpArgsError.NonJsonSuccess))
-    else
-      for
-        name   <- ToolName.from(doc.toolName).left.map(McpBuildError.InvalidToolName(doc.toolName, _))
-        schema <- OpArgs.inputSchema(doc).left.map(McpBuildError.NotPromotable(doc.toolName, _))
-        input  <- objectSchema(SchemaJson.render(schema), doc.toolName)
-      yield
-        val out = ToolShapes.output(doc)
-        val err = ToolShapes.error(doc)
-        val t   = Tool(
-          name = name,
-          description = doc.description.orElse(doc.summary),
-          inputSchema = input,
-          outputSchema = out.map(_.outputSchema),
-          annotations = annotations(doc.hints),
-        )
-        ToolCall(t)((args, headers) => runBound(op, args, headers, out, err))
-    end if
+    doc.successHeader match
+      case Some(name)           => Left(McpBuildError.NotPromotable(doc.toolName, OpArgsError.ResponseHeader(name)))
+      case None if !jsonSuccess =>
+        Left(McpBuildError.NotPromotable(doc.toolName, OpArgsError.NonJsonSuccess))
+      case None =>
+        for
+          name   <- ToolName.from(doc.toolName).left.map(McpBuildError.InvalidToolName(doc.toolName, _))
+          schema <- OpArgs.inputSchema(doc).left.map(McpBuildError.NotPromotable(doc.toolName, _))
+          input  <- objectSchema(SchemaJson.render(schema), doc.toolName)
+        yield
+          val out = ToolShapes.output(doc)
+          val err = ToolShapes.error(doc)
+          val t   = Tool(
+            name = name,
+            description = doc.description.orElse(doc.summary),
+            inputSchema = input,
+            outputSchema = out.map(_.outputSchema),
+            annotations = annotations(doc.hints),
+          )
+          ToolCall(t)((args, headers) => runBound(op, args, headers, out, err))
+    end match
   end bound
 
   def runBound[R, In, Err, Out](
@@ -96,8 +99,8 @@ object ToolCall:
 
   private def encode[R, In, Err, Out](op: BoundOp[R, In, Err, Out], out: Out): Either[HeddleError, Json] =
     op.endpoint.outputBody.filter(_.mediaType.isJson) match
-      case Some(codec) =>
-        codec.encode(out) match
+      case Some(body) =>
+        body.encode(out) match
           case Payload.Strict(bytes) =>
             BodyCodec.utf8(bytes).fromJson[Json].left.map(BodyError.Json(_))
           case Payload.Streamed(_, _) =>

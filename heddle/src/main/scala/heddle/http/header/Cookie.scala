@@ -1,6 +1,8 @@
 package heddle.http.header
 
 import java.time.Instant
+import heddle.endpoint.SchemaDoc
+import heddle.error.ParamError
 import zio.Chunk
 
 final case class CookiePair(name: String, value: String)
@@ -21,6 +23,13 @@ object CookiePair:
               else (crumb.substring(0, eq).trim, unquote(crumb.substring(eq + 1).trim))
             if n.isEmpty then None else Some(CookiePair(n, v))
         }
+    )
+
+  /** Every `Cookie` line. The header must be present. */
+  given cookieHeader: TypedHeader[Chunk[CookiePair]] =
+    TypedHeader.several(HeaderName.Cookie, SchemaDoc.Array(SchemaDoc.Str(None)))(
+      values => if values.isEmpty then Left(ParamError.Missing) else Right(values.flatMap(parseHeader)),
+      pairs => pairs.map(pair => s"${pair.name}=${pair.value}"),
     )
 
   private[header] def unquote(value: String): String =
@@ -103,6 +112,23 @@ object SetCookie:
     cookie.sameSite.foreach(s => b.append("; SameSite=").append(s.render))
     b.toString
   end render
+
+  /** One `Set-Cookie` line each. A line `parse` rejects fails the codec. The bag method still drops it. */
+  given setCookieHeader: TypedHeader[Chunk[SetCookie]] =
+    TypedHeader.several(HeaderName.SetCookie, SchemaDoc.Array(SchemaDoc.Str(None)))(
+      values =>
+        if values.isEmpty then Left(ParamError.Missing)
+        else
+          values.foldLeft[Either[ParamError, Chunk[SetCookie]]](Right(Chunk.empty)) { (acc, raw) =>
+            acc.flatMap { got =>
+              parse(raw) match
+                case Some(cookie) => Right(got :+ cookie)
+                case None         => Left(ParamError.Malformed(raw, "a set-cookie"))
+            }
+          }
+      ,
+      cookies => cookies.map(render),
+    )
 
   private def quotePair(name: String, value: String): String =
     if needsQuote(value) then s"""$name="${value.replace("\"", "")}""""
