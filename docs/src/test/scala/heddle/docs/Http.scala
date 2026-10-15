@@ -69,7 +69,8 @@ read the request stays on `->` and does not mention it.
     ),
     section("Middleware")(
       md"""
-`@@` wraps **this** `Routes` value. `++` is try left, then right on 404/405.
+`@@` wraps **this** `Routes` value. `++` tries the right side when the left has no matching route.
+A response the left produced stands, including a 404 or a 405.
 Gzip, decompress, CORS, auth, and `Middleware.timeout` attach to whoever you wrap.
 Global gzip is `all @@ Middleware.compress()`, which is still wrapping routes, not a
 server flag. Partial gzip is `(api ++ files) @@ Middleware.compress() ++ sse`.

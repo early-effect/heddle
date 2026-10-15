@@ -148,7 +148,8 @@ handler is slow. DATA past the stream window is reset. `maxConcurrentStreams`
     section("Gzip is a Routes wrap")(
       md"""
 Compression is not a server flag. `@@` wraps **this** `Routes` value. `++` tries
-the left, then the right on 404/405.
+the left, then the right when the left has no matching route. A response the left
+produced stands, including a 404 or a 405.
 
 Global gzip is still one line, at composition time:
 

@@ -1,7 +1,7 @@
 package heddle.endpoint
 
 import heddle.http.{Request, Response}
-import heddle.route.Routes
+import heddle.route.{Outcome, Routes}
 import zio.{IO, ZIO}
 
 final class BoundOp[-R, In, Err, Out](
@@ -9,8 +9,12 @@ final class BoundOp[-R, In, Err, Out](
     val run: In => ZIO[R, Err, Out],
     inner: Routes[R, Response],
 ) extends Routes[R, Response]:
-  def toChunk                                   = inner.toChunk
-  def apply(request: Request)                   = inner(request)
+  def toChunk = inner.toChunk
+
+  /** The inner tree's miss stays a miss. Rendering it here would make `Api.routes` fall through on a typed 404. */
+  override private[heddle] def decide(request: Request): ZIO[R, Response, Outcome] =
+    inner.decide(request)
+
   def input(request: Request): IO[Response, In] =
     endpoint.path.matches(request.path) match
       case None    => ZIO.fail(Response.notFound())
