@@ -32,6 +32,7 @@ export heddle.http.header.{
   AuthScheme,
   WwwAuthenticate,
   BasicCredentials,
+  BearerToken,
   CookiePair,
   SetCookie,
   CookieFlag,
@@ -46,6 +47,14 @@ export heddle.http.header.TypedHeader.given
 export heddle.http.header.Authorization.given
 export heddle.http.header.WwwAuthenticate.given
 export heddle.http.header.Host.given
+export heddle.http.header.BasicCredentials.given
+export heddle.http.header.BearerToken.given
+export heddle.http.header.CookiePair.given
+export heddle.http.header.SetCookie.given
+export heddle.http.header.EntityTag.given
+export heddle.http.header.RangeSpec.given
+export heddle.http.ContentEncoding.given
+export heddle.http.TransferCoding.given
 export heddle.route.{
   Handler,
   handler,
@@ -90,6 +99,7 @@ export heddle.endpoint.{
   OpArgs,
   OpArgsError,
   BodyError,
+  OutputError,
   BodyCodec,
   Payload,
   Text,

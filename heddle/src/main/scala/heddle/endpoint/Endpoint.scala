@@ -3,11 +3,10 @@ package heddle.endpoint
 import scala.deriving.Mirror
 import heddle.client.CallFailure
 import heddle.error.ParamError
-import heddle.http.{Body, Method, Path, QueryParams, Request, Response, Status, Url}
-import heddle.http.header.Headers
-import heddle.http.header.TypedHeader
+import heddle.http.{Body, MediaType, Method, Path, QueryParams, Request, Response, Status, Url}
+import heddle.http.header.{HeaderName, Headers, TypedHeader}
 import heddle.route.{Combiner, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
-import zio.{IO, ZIO}
+import zio.{Chunk, IO, ZIO}
 
 sealed abstract class Endpoint[In, Err, Out]:
   type PathIn
@@ -16,12 +15,12 @@ sealed abstract class Endpoint[In, Err, Out]:
   def decodeIn: (PathIn, Request) => IO[Response, In]
   def encodeOut: Out => Response
 
-  /** Reads a success body back into `Out`. Set by the builder that chose the output, so no content type is guessed. */
-  def decodeOut: Response => IO[BodyError, Out]
+  /** Reads a success response back into `Out`: the body, then any headers `.outHeader` declared. */
+  def decodeOut: Response => IO[OutputError, Out]
   def errors: ErrorCodec[Err]
 
-  /** The success body, when this endpoint has one. Empty and the initial placeholder have none. */
-  private[heddle] def outputBody: Option[BodyCodec[Out]]
+  /** The success body, when this endpoint has one. `.outHeader` keeps `encode` and clears `decode`. */
+  private[heddle] def outputBody: Option[Endpoint.BodyOf[Out]]
   def doc: EndpointDoc
 
   /** The inverse of `decodeIn`: the path value and the query, headers, and body that decode back to `in`. */
@@ -38,22 +37,28 @@ sealed abstract class Endpoint[In, Err, Out]:
 
   def header[H](name: String)(using codec: HeaderCodec[H], c: Combiner[In, H]): Endpoint[c.Out, Err, Out] =
     adding(c)(
-      req => ZIO.fromEither(codec.decode(req.header(name))).mapError(Endpoint.refused(s"header $name")),
+      req => ZIO.fromEither(codec.decode(req.headers.getAll(name))).mapError(Endpoint.refused(s"header $name")),
       doc.copy(headers = doc.headers :+ ParamDoc(name, ParamLocation.Header, codec.required, codec.schema)),
-      (h, acc) => codec.encode(h).fold(acc)(v => acc.copy(headers = acc.headers.add(name, v))),
+      (h, acc) => acc.copy(headers = Endpoint.writeLines(HeaderName(name), codec.encode(h), acc.headers)),
     )
 
   def header[A](using t: TypedHeader[A], c: Combiner[In, A]): Endpoint[c.Out, Err, Out] =
     adding(c)(
       req =>
         ZIO
-          .fromEither(req.header(t.name).toRight(ParamError.Missing).flatMap(t.decode))
+          .fromEither(t.decode(req.headers.getAll(t.name)))
           .mapError(Endpoint.refused(s"header ${t.name.render}")),
-      doc.copy(headers =
-        doc.headers :+ ParamDoc(t.name.render, ParamLocation.Header, required = true, SchemaDoc.Str(None))
-      ),
-      (a, acc) => acc.copy(headers = acc.headers.add(t.name, t.encode(a))),
+      doc.copy(headers = doc.headers :+ ParamDoc(t.name.render, ParamLocation.Header, required = true, t.schema)),
+      (a, acc) => acc.copy(headers = Endpoint.writeLines(t.name, t.encode(a), acc.headers)),
     )
+
+  /** Appends a response header to `Out`. Call it after `.out`: a later `.out` or `.outEmpty` replaces the success. */
+  def outHeader[H](name: String)(using codec: HeaderCodec[H], c: Combiner[Out, H]): Endpoint[In, Err, c.Out] =
+    attaching(c)(HeaderName(name), codec.schema, codec.required, codec.decode, codec.encode)
+
+  /** Appends the header `A` owns to `Out`. Call it after `.out`. */
+  def outHeader[A](using t: TypedHeader[A], c: Combiner[Out, A]): Endpoint[In, Err, c.Out] =
+    attaching(c)(t.name, t.schema, true, t.decode, t.encode)
 
   def in[B](using codec: BodyCodec[B], c: Combiner[In, B]): Endpoint[c.Out, Err, Out] =
     adding(c)(
@@ -68,7 +73,7 @@ sealed abstract class Endpoint[In, Err, Out]:
   def out[O](status: Status)(using codec: BodyCodec[O]): Endpoint[In, Err, O] =
     replace(
       encodeOut = o => BodyCodec.response(status, codec, o),
-      decodeOut = res => codec.decode(res.body),
+      decodeOut = res => codec.decode(res.body).mapError(OutputError.Body(_)),
       errors = errors,
       doc = doc.copy(responses =
         Endpoint.replaceSuccess(
@@ -76,7 +81,7 @@ sealed abstract class Endpoint[In, Err, Out]:
           StatusDoc(status, Some(codec.schema), Some(codec.mediaType), status.text),
         )
       ),
-      outputBody = Some(codec),
+      outputBody = Some(Endpoint.BodyOf(codec.mediaType, codec.schema, codec.encode, Some(codec.decode))),
     )
 
   def outEmpty: Endpoint[In, Err, Unit] =
@@ -171,10 +176,13 @@ sealed abstract class Endpoint[In, Err, Out]:
     else ZIO.fail(CallFailure.Unexpected(res.status))
 
   private def decodeFailure(res: Response): IO[CallFailure[Err], Out] =
-    errors.decode(res.status, res.body).mapError(CallFailure.Undecodable(res.status, _)).flatMap {
-      case None    => ZIO.fail(CallFailure.Unexpected(res.status))
-      case Some(e) => ZIO.fail(CallFailure.Domain(e))
-    }
+    errors
+      .decode(res.status, res.body)
+      .mapError(err => CallFailure.Undecodable(res.status, OutputError.Body(err)))
+      .flatMap {
+        case None    => ZIO.fail(CallFailure.Unexpected(res.status))
+        case Some(e) => ZIO.fail(CallFailure.Domain(e))
+      }
 
   /** Adds one input: `read` decodes it from the request, `c` joins it to what came before, and `put` writes it back. */
   private def adding[P](c: Combiner[In, P])(
@@ -198,12 +206,57 @@ sealed abstract class Endpoint[In, Err, Out]:
       nextDoc,
     )
 
+  /** Adds one response header. The handler's lines replace a body-codec header of the same name. */
+  private def attaching[P](c: Combiner[Out, P])(
+      name: HeaderName,
+      schema: SchemaDoc,
+      required: Boolean,
+      read: Chunk[String] => Either[ParamError, P],
+      write: P => Chunk[String],
+  ): Endpoint[In, Err, c.Out] =
+    val param     = ParamDoc(name.render, ParamLocation.Header, required, schema)
+    val responses = doc.responses.map { status =>
+      if errors.statuses.contains(status.status) then status
+      else status.copy(headers = status.headers :+ param)
+    }
+    val body = outputBody.map { previous =>
+      Endpoint.BodyOf[c.Out](
+        previous.mediaType,
+        previous.schema,
+        combined => previous.encode(c.separate(combined)._1),
+        None,
+      )
+    }
+    Endpoint.Impl(
+      method,
+      path,
+      decodeIn,
+      encodeIn,
+      combined =>
+        val (out, piece) = c.separate(combined)
+        Endpoint.writeResponse(encodeOut(out), name, write(piece))
+      ,
+      res =>
+        decodeOut(res).flatMap { out =>
+          ZIO
+            .fromEither(read(res.headers.getAll(name)))
+            .mapBoth(
+              err => OutputError.Header(name.render, err),
+              piece => c.combine(out, piece),
+            )
+        },
+      errors,
+      body,
+      doc.copy(responses = responses),
+    )
+  end attaching
+
   private def replace[E1, O1](
       encodeOut: O1 => Response,
-      decodeOut: Response => IO[BodyError, O1],
+      decodeOut: Response => IO[OutputError, O1],
       errors: ErrorCodec[E1],
       doc: EndpointDoc,
-      outputBody: Option[BodyCodec[O1]],
+      outputBody: Option[Endpoint.BodyOf[O1]],
   ): Endpoint[In, E1, O1] =
     Endpoint.Impl(method, path, decodeIn, encodeIn, encodeOut, decodeOut, errors, outputBody, doc)
 
@@ -278,6 +331,20 @@ object Endpoint:
     inline def apply(inline cases: ErrorCase[? <: E]*)(using s: Schema[E], b: BodyCodec[E]): Endpoint[In, E, Out] =
       endpoint.withErrors(ErrorCaseMacros.codec[E](cases*)(using s, b))
 
+  /** The success body inside `Out`. `decode` is empty once `.outHeader` has appended a header. */
+  private[heddle] final case class BodyOf[Out](
+      mediaType: MediaType,
+      schema: SchemaDoc,
+      encode: Out => Payload,
+      decode: Option[Body => IO[BodyError, Out]],
+  )
+
+  private[endpoint] def writeLines(name: HeaderName, lines: Chunk[String], headers: Headers): Headers =
+    if lines.isEmpty then headers else lines.foldLeft(headers.remove(name))(_.add(name, _))
+
+  private[endpoint] def writeResponse(res: Response, name: HeaderName, lines: Chunk[String]): Response =
+    if lines.isEmpty then res else lines.foldLeft(res.removeHeader(name))(_.addHeader(name, _))
+
   final case class Acc(query: QueryParams, headers: Headers, body: Body)
 
   object Acc:
@@ -289,9 +356,9 @@ object Endpoint:
       val decodeIn: (P, Request) => IO[Response, In],
       val encodeIn: In => (P, Acc),
       val encodeOut: Out => Response,
-      val decodeOut: Response => IO[BodyError, Out],
+      val decodeOut: Response => IO[OutputError, Out],
       val errors: ErrorCodec[Err],
-      val outputBody: Option[BodyCodec[Out]],
+      val outputBody: Option[BodyOf[Out]],
       val doc: EndpointDoc,
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P

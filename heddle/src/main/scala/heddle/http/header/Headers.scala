@@ -43,13 +43,15 @@ final case class Headers(toChunk: Chunk[Header]):
   def isEmpty: Boolean = toChunk.isEmpty
 
   def get[A](using t: TypedHeader[A]): Option[A] =
-    get(t.name).flatMap(v => t.decode(v).toOption)
+    t.decode(getAll(t.name)).toOption
 
   def getAll[A](using t: TypedHeader[A]): Chunk[A] =
-    getAll(t.name).flatMap(v => Chunk.fromIterable(t.decode(v).toOption))
+    t.decode(getAll(t.name)) match
+      case Right(value) => Chunk.single(value)
+      case Left(_)      => Chunk.empty
 
   def set[A](a: A)(using t: TypedHeader[A]): Headers =
-    withHeader(t.name, t.encode(a))
+    t.encode(a).foldLeft(remove(t.name))(_.add(t.name, _))
 
   def contentType: Option[MediaType] = get[MediaType]
 

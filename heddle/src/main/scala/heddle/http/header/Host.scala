@@ -28,10 +28,10 @@ object Host:
     end if
   end parse
 
-  given TypedHeader[Host] with
-    def name: HeaderName                              = HeaderName.Host
-    def decode(raw: String): Either[ParamError, Host] =
-      parse(raw).toRight(ParamError.Malformed(raw, "host[:port]"))
-    def encode(a: Host): String =
-      a.port.fold(a.host)(p => if a.host.contains(':') then s"[${a.host}]:$p" else s"${a.host}:$p")
+  given TypedHeader[Host] =
+    TypedHeader.single(HeaderName.Host)(
+      raw => parse(raw).toRight(ParamError.Malformed(raw, "host[:port]")),
+      host =>
+        host.port.fold(host.host)(p => if host.host.contains(':') then s"[${host.host}]:$p" else s"${host.host}:$p"),
+    )
 end Host

@@ -71,6 +71,17 @@ object OpArgsSpec extends ZIOSpecDefault:
         val json = Endpoint.get("items").out[Item]
         val page = Endpoint.get("page").out[Html]
         val sse  = Endpoint.get("stream").out[EventStream]
-        assertTrue(OpArgs.promotable(json.doc), !OpArgs.promotable(page.doc), !OpArgs.promotable(sse.doc)),
+        assertTrue(OpArgs.promotable(json.doc), !OpArgs.promotable(page.doc), !OpArgs.promotable(sse.doc))
+      ,
+      test("a request header is not a tool argument"):
+        val ep  = Endpoint.get("who").header[String]("X-User").out[String]
+        val req = Request.get("/who").withHeader("X-User", "ada")
+        OpArgs.arguments(ep.doc, req) match
+          case Left(err)  => assertNever(err.message)
+          case Right(obj) => assertTrue(obj.get("X-User").isEmpty)
+      ,
+      test("a response header is not promotable"):
+        val ep = Endpoint.get("t").out[String].outHeader[EntityTag]
+        assertTrue(!OpArgs.promotable(ep.doc), ep.doc.successHeader.contains("ETag")),
     ) @@ TestAspect.timeout(5.seconds)
 end OpArgsSpec

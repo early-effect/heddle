@@ -1,6 +1,7 @@
 package heddle.mcp.client
 
 import java.nio.charset.StandardCharsets
+import heddle.endpoint.OutputError
 import heddle.http.{Body, Response, Status}
 import heddle.mcp.ToolShapes
 import heddle.mcp.protocol.{CallToolResult, ContentBlock}
@@ -13,7 +14,9 @@ object ToolResults:
       ep: heddle.endpoint.Endpoint[In, Err, Out],
       result: CallToolResult,
   ): IO[McpCallFailure[Err], Out] =
-    if result.failed then failure(ep, result) else success(ep, result)
+    ep.doc.successHeader match
+      case Some(name) => ZIO.fail(McpCallFailure.NoArguments(heddle.endpoint.OpArgsError.ResponseHeader(name)))
+      case None       => if result.failed then failure(ep, result) else success(ep, result)
 
   private def failure[Err](
       ep: heddle.endpoint.Endpoint[?, Err, ?],
@@ -39,19 +42,28 @@ object ToolResults:
   ): IO[McpCallFailure[Err], Out] =
     ep.outputBody.filter(_.mediaType.isJson) match
       case None =>
-        ep.decodeOut(Response.empty(Status.NoContent)).mapError(McpCallFailure.Undecodable(_))
-      case Some(codec) =>
-        ToolShapes.output(ep.doc) match
-          case None        => ZIO.fail(McpCallFailure.NoStructuredContent)
-          case Some(shape) =>
-            ZIO
-              .fromOption(result.structuredContent)
-              .orElseFail(McpCallFailure.NoStructuredContent)
-              .flatMap { sc =>
-                val raw  = shape.unwrap(sc).toJson
-                val body = Body.fromBytes(Chunk.fromArray(raw.getBytes(StandardCharsets.UTF_8)), Some(codec.mediaType))
-                codec.decode(body).mapError(McpCallFailure.Undecodable(_))
-              }
+        ep.decodeOut(Response.empty(Status.NoContent)).mapError {
+          case OutputError.Body(reason)    => McpCallFailure.Undecodable(reason)
+          case OutputError.Header(name, _) =>
+            McpCallFailure.NoArguments(heddle.endpoint.OpArgsError.ResponseHeader(name))
+        }
+      case Some(body) =>
+        body.decode match
+          case None =>
+            ZIO.fail(McpCallFailure.NoStructuredContent)
+          case Some(decode) =>
+            ToolShapes.output(ep.doc) match
+              case None        => ZIO.fail(McpCallFailure.NoStructuredContent)
+              case Some(shape) =>
+                ZIO
+                  .fromOption(result.structuredContent)
+                  .orElseFail(McpCallFailure.NoStructuredContent)
+                  .flatMap { sc =>
+                    val raw     = shape.unwrap(sc).toJson
+                    val decoded =
+                      Body.fromBytes(Chunk.fromArray(raw.getBytes(StandardCharsets.UTF_8)), Some(body.mediaType))
+                    decode(decoded).mapError(McpCallFailure.Undecodable(_))
+                  }
 
   private def text(result: CallToolResult): String =
     result.content.collect { case ContentBlock.Text(t, _) => t }.mkString("\n")

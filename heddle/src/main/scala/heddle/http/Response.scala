@@ -24,6 +24,12 @@ final class Response private[heddle] (
   def withHeader(name: String, value: String): Response =
     withHeader(HeaderName(name), value)
 
+  def removeHeader(name: HeaderName): Response =
+    copy(headers = headers.remove(name))
+
+  def removeHeader(name: String): Response =
+    removeHeader(HeaderName(name))
+
   def addCookie(cookie: SetCookie): Response =
     addHeader(HeaderName.SetCookie, SetCookie.render(cookie))
 

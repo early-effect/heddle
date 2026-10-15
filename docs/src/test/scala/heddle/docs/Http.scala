@@ -146,9 +146,10 @@ Node's `fetch`. TLS verifies the peer and its name on every platform. `ClientTls
       },
       md"""
 `Client.call(endpoint)(in)` is the typed call. It fails with `CallFailure[E]`: `Domain(e)` for
-one of the endpoint's own errors, `Transport` for a `ClientError`, `Undecodable` for a body the
-codecs reject (with the status and a `BodyError` saying why), `Unexpected` for a status the
-endpoint never declared. Nothing becomes a defect.
+one of the endpoint's own errors, `Transport` for a `ClientError`, `Undecodable` for a body or
+response header the codecs reject. The reason is an `OutputError`: `Body` for the body, `Header`
+naming the header and its `ParamError`. `Unexpected` is a status the endpoint never declared.
+Nothing becomes a defect.
 """,
       exampleZIO {
         val ep  = Endpoint.get("hello" / string("name")).out[String].outError[String](Status.NotFound)

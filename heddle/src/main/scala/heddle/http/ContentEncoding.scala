@@ -1,5 +1,8 @@
 package heddle.http
 
+import heddle.endpoint.SchemaDoc
+import heddle.error.ParamError
+import heddle.http.header.{HeaderName, TypedHeader}
 import zio.Chunk
 
 /** A content coding (RFC 9110 §8.4.1). `Other` keeps a token heddle does not implement, so it is never mistaken for one
@@ -66,6 +69,31 @@ object ContentEncoding:
         .headOption
         .map(_._1)
     }
+
+  /** Every coding named by `Content-Encoding`, one wire line per coding. */
+  given contentEncodingHeader: TypedHeader[Chunk[ContentEncoding]] =
+    TypedHeader.several(HeaderName.ContentEncoding, SchemaDoc.Array(SchemaDoc.Str(None)))(
+      values =>
+        if values.isEmpty then Left(ParamError.Missing)
+        else Right(values.flatMap(line => parseList(Some(line)))),
+      codings => codings.map(_.token),
+    )
+
+  /** Every member of `Accept-Encoding`. A member whose quality is not a number from 0 to 1 is ignored. */
+  given acceptEncodingHeader: TypedHeader[Chunk[AcceptEncoding]] =
+    TypedHeader.several(HeaderName.AcceptEncoding, SchemaDoc.Array(SchemaDoc.Str(None)))(
+      values => if values.isEmpty then Left(ParamError.Missing) else Right(values.flatMap(parseAccept)),
+      members => members.map(renderAccept),
+    )
+
+  private def renderAccept(member: AcceptEncoding): String =
+    val token = member.range match
+      case EncodingRange.Any          => "*"
+      case EncodingRange.Only(coding) => coding.token
+    if member.quality == 1.0 then token
+    else
+      val q = java.math.BigDecimal.valueOf(member.quality).stripTrailingZeros.toPlainString
+      s"$token;q=$q"
 
   private def members(raw: String): List[String] =
     raw.split(',').toList.map(_.trim).filter(_.nonEmpty)

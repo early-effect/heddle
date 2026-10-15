@@ -82,7 +82,14 @@ object OpenApiSpec extends ZIOSpecDefault:
         assertTrue(
           light("403").contains(Json.Obj("type" -> Json.Str("string"), "enum" -> Json.Arr(Json.Str("Red")))),
           light("410").contains(Json.Obj("type" -> Json.Str("string"), "enum" -> Json.Arr(Json.Str("Green")))),
-        ),
+        )
+      ,
+      test("a response header is documented on the success status only"):
+        val ep   = Endpoint.get("t").out[Text].outError[String](Status.BadRequest).outHeader[EntityTag]
+        val root = OpenApi.from("T", "1", ep).toJson.fromJson[Json].toOption
+        val etag = root.flatMap(at(_, "paths", "/t", "get", "responses", "200", "headers", "ETag", "required"))
+        val bad  = root.flatMap(at(_, "paths", "/t", "get", "responses", "400", "headers"))
+        assertTrue(etag.contains(Json.Bool(true)), bad.isEmpty),
     ) @@ TestAspect.timeout(5.seconds)
 
   private def errorSchema(ep: Endpoint[?, ?, ?], path: String, method: String): Map[String, Option[Json]] =
