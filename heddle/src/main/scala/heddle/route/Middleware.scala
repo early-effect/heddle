@@ -69,61 +69,52 @@ object Middleware:
     interceptZIO(req => ZIO.succeed(f(req)))
 
   def interceptZIO[R](f: Request => ZIO[R, Response, Request]): Middleware[R] =
-    wrap[R] { [R1 <: R, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        f(req).foldZIO(res => ZIO.succeed(res), handler.run)
-      }
+    around[R] { [R1 <: R, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      f(req).foldZIO(res => ZIO.succeed(Outcome.Answered(res)), next)
     }
 
   def mapResponse(f: Response => Response): Middleware[Any] =
     mapResponseZIO(res => ZIO.succeed(f(res)))
 
   def mapResponseZIO[R](f: Response => ZIO[R, Nothing, Response]): Middleware[R] =
-    wrap[R] { [R1 <: R, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        handler.run(req).flatMap(f)
-      }
-    }
+    around[R] { [R1 <: R, E] => (next: Request => ZIO[R1, E, Outcome]) => req => next(req).flatMap(Outcome.pipe(_)(f)) }
 
   def debug: Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        Clock.nanoTime.flatMap { start =>
-          handler.run(req).tap { res =>
-            Clock.nanoTime.flatMap { end =>
-              val ms = (end - start) / 1_000_000
-              ZIO.logInfo(s"${req.method.render} ${req.url.render} -> ${res.status.code} ${ms}ms")
-            }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      Clock.nanoTime.flatMap { start =>
+        next(req).tap { outcome =>
+          Clock.nanoTime.flatMap { end =>
+            val ms = (end - start) / 1_000_000
+            ZIO.logInfo(s"${req.method.render} ${req.url.render} -> ${outcome.status.code} ${ms}ms")
           }
         }
       }
     }
 
   def timeout(duration: Duration): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        handler.run(req).timeout(duration).map {
-          case Some(res) => res
-          case None      => Response.empty(Status.GatewayTimeout)
-        }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      next(req).timeout(duration).map {
+        case Some(outcome) => outcome
+        case None          => Outcome.Answered(Response.empty(Status.GatewayTimeout))
       }
     }
 
   def requestLog: Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        Clock.nanoTime.flatMap { start =>
-          handler.run(req).tap { res =>
-            Clock.nanoTime.flatMap { end =>
-              val ms  = (end - start) / 1_000_000
-              val rid = req.header(HeaderName.XRequestId).getOrElse("-")
-              val len = res.body.length.map(_.toString).getOrElse("-")
-              ZIO.logAnnotate("method", req.method.render) {
-                ZIO.logAnnotate("path", req.url.path.render) {
-                  ZIO.logAnnotate("status", res.status.code.toString) {
-                    ZIO.logAnnotate("request_id", rid) {
-                      ZIO.logInfo(s"${req.method.render} ${req.url.path.render} ${res.status.code} ${ms}ms bytes=$len")
-                    }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      Clock.nanoTime.flatMap { start =>
+        next(req).tap { outcome =>
+          Clock.nanoTime.flatMap { end =>
+            val ms     = (end - start) / 1_000_000
+            val rid    = req.header(HeaderName.XRequestId).getOrElse("-")
+            val status = outcome.status.code
+            val len    = outcome match
+              case Outcome.Answered(res) => res.body.length.map(_.toString).getOrElse("-")
+              case _                     => "-"
+            ZIO.logAnnotate("method", req.method.render) {
+              ZIO.logAnnotate("path", req.url.path.render) {
+                ZIO.logAnnotate("status", status.toString) {
+                  ZIO.logAnnotate("request_id", rid) {
+                    ZIO.logInfo(s"${req.method.render} ${req.url.path.render} $status ${ms}ms bytes=$len")
                   }
                 }
               }
@@ -134,52 +125,46 @@ object Middleware:
     }
 
   def serveDirectory(urlPrefix: String, root: String, indexHtml: Boolean): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        if req.method == Method.GET || req.method == Method.HEAD then
-          heddle.server.Files
-            .fromDirectory(root, urlPrefix, req, indexHtml)
-            .foldZIO(
-              _ => handler.run(req),
-              {
-                case Some(res) => ZIO.succeed(res)
-                case None      => handler.run(req)
-              },
-            )
-        else handler.run(req)
-      }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      if req.method == Method.GET || req.method == Method.HEAD then
+        heddle.server.Files
+          .fromDirectory(root, urlPrefix, req, indexHtml)
+          .foldZIO(
+            _ => next(req),
+            {
+              case Some(res) => ZIO.succeed(Outcome.Answered(res))
+              case None      => next(req)
+            },
+          )
+      else next(req)
     }
 
   def serveResources(urlPrefix: String, resourceRoot: String = ""): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        if req.method == Method.GET || req.method == Method.HEAD then
-          SafePath.remainder(urlPrefix, req.path).flatMap { rest =>
-            SafePath.resolveUnder(resourceRoot, rest)
-          } match
-            case None       => handler.run(req)
-            case Some(name) =>
-              Files
-                .fromResource(name, req)
-                .foldZIO(
-                  _ => handler.run(req),
-                  {
-                    case Some(res) => ZIO.succeed(res)
-                    case None      => handler.run(req)
-                  },
-                )
-        else handler.run(req)
-      }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      if req.method == Method.GET || req.method == Method.HEAD then
+        SafePath.remainder(urlPrefix, req.path).flatMap { rest =>
+          SafePath.resolveUnder(resourceRoot, rest)
+        } match
+          case None       => next(req)
+          case Some(name) =>
+            Files
+              .fromResource(name, req)
+              .foldZIO(
+                _ => next(req),
+                {
+                  case Some(res) => ZIO.succeed(Outcome.Answered(res))
+                  case None      => next(req)
+                },
+              )
+      else next(req)
     }
 
   def requestId(): Middleware[Any] = requestId("X-Request-Id")
 
   def requestId(headerName: String): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        req.header(headerName).fold(heddle.internal.Ids.uuid.map(_.toString))(ZIO.succeed(_)).flatMap { id =>
-          handler.run(req.withHeader(headerName, id)).map(_.withHeader(headerName, id))
-        }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      req.header(headerName).fold(heddle.internal.Ids.uuid.map(_.toString))(ZIO.succeed(_)).flatMap { id =>
+        next(req.withHeader(headerName, id)).map(outcome => Outcome.map(outcome)(_.withHeader(headerName, id)))
       }
     }
 
@@ -187,10 +172,8 @@ object Middleware:
       minBytes: Int = 1024,
       compressors: Chunk[Compressor] = Chunk(Compressor.gzip),
   ): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        handler.run(req).map(res => applyCompress(req, res, minBytes, compressors))
-      }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      next(req).map(outcome => Outcome.map(outcome)(res => applyCompress(req, res, minBytes, compressors)))
     }
 
   def decompress(
@@ -225,11 +208,9 @@ object Middleware:
     }
 
   def requireTls: Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        if req.secure then handler.run(req)
-        else ZIO.succeed(Response.empty(Status.Forbidden).withHeader("Connection", "close"))
-      }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      if req.secure then next(req)
+      else ZIO.succeed(Outcome.Answered(Response.empty(Status.Forbidden).withHeader("Connection", "close")))
     }
 
   def cors(): Middleware[Any] = cors(CorsConfig())
@@ -238,13 +219,11 @@ object Middleware:
     * handled, then answered with the origin policy.
     */
   def cors(config: CorsConfig): Middleware[Any] =
-    wrap[Any] { [R1, E] => (handler: Handler[R1, E]) =>
-      Handler { req =>
-        val origin = req.headers.get(HeaderName.Origin)
-        if req.method == Method.OPTIONS && req.headers.get(HeaderName.AccessControlRequestMethod).isDefined then
-          ZIO.succeed(preflight(origin, config))
-        else handler.run(req).map(allowOrigin(_, origin, config.origins))
-      }
+    around[Any] { [R1, E] => (next: Request => ZIO[R1, E, Outcome]) => req =>
+      val origin = req.headers.get(HeaderName.Origin)
+      if req.method == Method.OPTIONS && req.headers.get(HeaderName.AccessControlRequestMethod).isDefined then
+        ZIO.succeed(Outcome.Answered(preflight(origin, config)))
+      else next(req).map(outcome => Outcome.map(outcome)(allowOrigin(_, origin, config.origins)))
     }
 
   /** Which origins may read responses. */
@@ -322,10 +301,13 @@ object Middleware:
     private def removeLength: Response =
       res.copy(headers = res.headers.remove(HeaderName.ContentLength))
 
-  private def wrap[R](f: [R1 <: R, E] => Handler[R1, E] => Handler[R1, E]): Middleware[R] =
+  /** Middleware sees the routing outcome. A miss stays a miss, so `++` after `@@` still tries the right side. */
+  private def around[R](
+      f: [R1 <: R, E] => (Request => ZIO[R1, E, Outcome]) => Request => ZIO[R1, E, Outcome]
+  ): Middleware[R] =
     new Middleware[R]:
       def apply[R1 <: R, E](routes: Routes[R1, E]): Routes[R1, E] =
-        Routes.wrap(routes)(f[R1, E])
+        Routes.decided(routes.toChunk, f[R1, E](routes.decide))
 
   private def preflight(origin: Option[String], config: CorsConfig): Response =
     allowOrigin(Response.empty(Status.NoContent), origin, config.origins)

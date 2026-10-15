@@ -4,7 +4,7 @@ import heddle.http.{MediaType, Method, Request, Response, Status}
 import heddle.http.header.Headers
 import heddle.mcp.protocol.{Era, Message, Methods, ProtocolVersion, RequestMeta, RpcError}
 import heddle.mcp.server.{Engine, Envelope, SessionHub}
-import heddle.route.{Handler, Routes}
+import heddle.route.{PathCodec, Route, Routes}
 import heddle.sse.{ServerSentEvent, Sse}
 import zio.json.*
 import zio.json.ast.Json
@@ -20,17 +20,18 @@ object Http:
   val SessionHeader  = Envelope.SessionHeader
 
   def routes[R](engine: Engine[R], hub: SessionHub, path: String = "mcp"): Routes[R, ZNothing] =
-    val segs = path.split('/').filter(_.nonEmpty).toList
-    Routes.fromHandler(Handler { (req: Request) =>
-      if req.path.segments.toList != segs then ZIO.succeed(Response.notFound())
-      else
-        req.method match
-          case Method.POST   => post(engine, hub, req)
-          case Method.GET    => get(hub, req)
-          case Method.DELETE => delete(hub, req)
-          case _             => ZIO.succeed(Response.methodNotAllowed("GET, POST, DELETE"))
-    })
-  end routes
+    val at = literalPath(path.split('/').filter(_.nonEmpty).toList)
+    // Order is the Allow list. A different path is a miss. A different method is 405 from the router.
+    Routes(
+      Route.from(Method.GET, at, (_, req) => get(hub, req)),
+      Route.from(Method.POST, at, (_, req) => post(engine, hub, req)),
+      Route.from(Method.DELETE, at, (_, req) => delete(hub, req)),
+    )
+
+  private def literalPath(segments: List[String]): PathCodec[Unit] =
+    segments.foldLeft[PathCodec[Unit] { type Names = EmptyTuple }](PathCodec.empty) { (path, segment) =>
+      path.appendLit[EmptyTuple](segment)
+    }
 
   private def get(hub: SessionHub, req: Request): ZIO[Any, Nothing, Response] =
     val sid    = req.headers.get(SessionHeader)

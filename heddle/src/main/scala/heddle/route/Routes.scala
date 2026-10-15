@@ -1,6 +1,6 @@
 package heddle.route
 
-import heddle.http.{Request, Response, Status}
+import heddle.http.{Request, Response}
 import scala.collection.mutable
 import zio.*
 
@@ -8,6 +8,14 @@ abstract class Routes[-R, +E]:
   def toChunk: Chunk[Route[R, E]]
 
   def apply(request: Request): ZIO[R, E, Response]
+
+  /** Routing outcome. A handler response, including 404 and 405, is `Answered`. Only a path or method miss is not.
+    *
+    * The default seals `apply`: a subclass that only answers with a response does not fall through on 404. A route tree
+    * overrides this.
+    */
+  private[heddle] def decide(request: Request): ZIO[R, E, Outcome] =
+    apply(request).map(Outcome.Answered(_))
 
   def runZIO(request: Request): ZIO[R, E, Response] = apply(request)
 
@@ -31,36 +39,43 @@ object Routes:
     fromChunk(Chunk.fromIterable(routes))
 
   def fromChunk[R, E](routes: Chunk[Route[R, E]]): Routes[R, E] =
-    Impl(routes, Dispatch(routes))
+    decided(routes, Dispatch(routes))
 
+  /** Seals `inner` behind `around`. The function sees rendered responses, so a 404 it returns does not fall through. */
   def wrap[R, E](inner: Routes[R, E])(around: Handler[R, E] => Handler[R, E]): Routes[R, E] =
-    Impl(inner.toChunk, around(Handler(inner.apply)).run)
+    decided(inner.toChunk, req => around(Handler(inner.apply)).run(req).map(Outcome.Answered(_)))
 
   def fromHandler[R, E](handler: Handler[R, E]): Routes[R, E] =
-    Impl(Chunk.empty, handler.run)
+    decided(Chunk.empty, req => handler(req).map(Outcome.Answered(_)))
+
+  /** The routes `f` picks answer the request. A miss from them stays a miss, so a later `++` still runs. */
+  def choose[R, E](f: Request => ZIO[R, E, Routes[R, E]]): Routes[R, E] =
+    decided(Chunk.empty, req => f(req).flatMap(_.decide(req)))
+
+  private[heddle] def decided[R, E](
+      routes: Chunk[Route[R, E]],
+      run: Request => ZIO[R, E, Outcome],
+  ): Routes[R, E] =
+    Impl(routes, run)
 
   private def orElseNotFound[R, E](left: Routes[R, E], right: Routes[R, E]): Routes[R, E] =
-    Impl(
+    decided(
       left.toChunk ++ right.toChunk,
       req =>
-        left(req).flatMap { res =>
-          res.status match
-            case Status.NotFound         => right(req)
-            case Status.MethodNotAllowed =>
-              right(req).map { r2 =>
-                r2.status match
-                  case Status.NotFound         => res
-                  case Status.MethodNotAllowed =>
-                    Response.methodNotAllowed(mergeAllow(res.header("Allow"), r2.header("Allow")))
-                  case _ => r2
-              }
-            case _ => ZIO.succeed(res)
+        left.decide(req).flatMap {
+          case Outcome.Miss(_)              => right.decide(req)
+          case Outcome.Answered(response)   => ZIO.succeed(Outcome.Answered(response))
+          case Outcome.NotAllowed(allow, _) =>
+            right.decide(req).map {
+              case Outcome.Miss(_)              => Outcome.notAllowed(allow)
+              case Outcome.NotAllowed(other, _) => Outcome.notAllowed(mergeAllow(allow, other))
+              case answered                     => answered
+            }
         },
     )
 
-  private def mergeAllow(left: Option[String], right: Option[String]): String =
-    (left.toList ++ right.toList)
-      .flatMap(_.split(","))
+  private def mergeAllow(left: String, right: String): String =
+    (left.split(',') ++ right.split(','))
       .map(_.trim)
       .filter(_.nonEmpty)
       .distinct
@@ -68,9 +83,12 @@ object Routes:
 
   private final class Impl[-R, +E](
       val toChunk: Chunk[Route[R, E]],
-      dispatch: Request => ZIO[R, E, Response],
+      run: Request => ZIO[R, E, Outcome],
   ) extends Routes[R, E]:
-    def apply(request: Request): ZIO[R, E, Response] = dispatch(request)
+    def apply(request: Request): ZIO[R, E, Response] =
+      decide(request).flatMap(Outcome.render)
+
+    override private[heddle] def decide(request: Request): ZIO[R, E, Outcome] = run(request)
 
   extension [R, E](self: Routes[R, E])
     /** Runs `extract` first and hands its `P` to the routes, which then need only `R0`. A failed extract is the
@@ -79,31 +97,49 @@ object Routes:
     def provided[P: Tag, R0](extract: Request => ZIO[R0, Response, P])(using
         covers: (R0 & P) <:< R
     ): Routes[R0, E] =
-      fromHandler(
-        Handler { req =>
+      decided(
+        Chunk.empty,
+        req =>
           extract(req).foldZIO(
-            res => ZIO.succeed(res),
-            p => self(req).provideSomeEnvironment[R0](env => covers.liftCo[ZEnvironment](env ++ ZEnvironment(p))),
-          )
-        }
+            res => ZIO.succeed(Outcome.Answered(res)),
+            p =>
+              self
+                .decide(req)
+                .provideSomeEnvironment[R0](env => covers.liftCo[ZEnvironment](env ++ ZEnvironment(p))),
+          ),
       )
   end extension
 end Routes
 
 private[heddle] object Dispatch:
-  def apply[R, E](routes: Chunk[Route[R, E]]): Request => ZIO[R, E, Response] =
+  def apply[R, E](routes: Chunk[Route[R, E]]): Request => ZIO[R, E, Outcome] =
     val tree = Node.build(routes)
     (req: Request) =>
       val found = tree.lookup(req.path.segments, 0)
-      if found.isEmpty then ZIO.succeed(Response.notFound())
+      if found.isEmpty then ZIO.succeed(Outcome.miss)
       else
-        found.find(_.method == req.method) match
-          case Some(route) => route.dispatch(req).getOrElse(ZIO.succeed(Response.notFound()))
-          case None        =>
-            val allow = found.map(_.method).distinct.map(_.render).mkString(", ")
-            ZIO.succeed(Response.methodNotAllowed(allow))
-      end if
+        val same = found.filter(_.method == req.method)
+        firstDecoded(same, req) match
+          case Some(effect) => effect.map(Outcome.Answered(_))
+          case None         =>
+            if same.nonEmpty then ZIO.succeed(Outcome.miss)
+            else ZIO.succeed(Outcome.notAllowed(allowList(found)))
   end apply
+
+  /** The first same-method route whose path codec matches. A codec miss is not a response, so the next candidate runs.
+    */
+  private def firstDecoded[R, E](routes: Chunk[Route[R, E]], req: Request): Option[ZIO[R, E, Response]] =
+    def go(rest: Chunk[Route[R, E]]): Option[ZIO[R, E, Response]] =
+      rest.headOption match
+        case None        => None
+        case Some(route) =>
+          route.dispatch(req) match
+            case Some(effect) => Some(effect)
+            case None         => go(rest.drop(1))
+    go(routes)
+
+  private def allowList[R, E](routes: Chunk[Route[R, E]]): String =
+    routes.map(_.method).distinct.map(_.render).mkString(", ")
 
   private final class Node[-R, +E](
       val literals: Map[String, Node[R, E]],
