@@ -11,7 +11,7 @@ import zio.test.*
 /** Install coordinate. Judge the raw build version. Do not trust `displayVersion` after `-ci` was stripped. */
 object DocsVersion:
   /** Last published tag. */
-  val published = "0.10.0"
+  val published = "0.11.0"
 
   /** A dynver distance (`-ci`, `+`, `SNAPSHOT`) is the next line. Anything else is advertised as written. */
   def advertise(raw: String): String =
@@ -129,11 +129,12 @@ ${coordinate}
           !version.contains("+"),
           !coordinate.contains("-ci"),
           !coordinate.contains("SNAPSHOT"),
-          !coordinate.contains("0.11.0"),
-          DocsVersion.advertise("0.11.0-ci") == DocsVersion.published,
-          DocsVersion.advertise("0.10.0+7-abcdef") == DocsVersion.published,
-          DocsVersion.advertise("0.11.0-SNAPSHOT") == DocsVersion.published,
-          DocsVersion.advertise("0.10.0") == "0.10.0",
+          coordinate.contains("0.11.0"),
+          !coordinate.contains("0.11.1"),
+          DocsVersion.advertise("0.11.1-ci") == DocsVersion.published,
+          DocsVersion.advertise("0.11.0+7-abcdef") == DocsVersion.published,
+          DocsVersion.advertise("0.11.1-SNAPSHOT") == DocsVersion.published,
+          DocsVersion.advertise("0.11.0") == "0.11.0",
         )
       },
       test("sequence diagram fits a phone column") {
