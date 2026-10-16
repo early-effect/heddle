@@ -1,6 +1,5 @@
 package heddle.http.header
 
-import java.nio.charset.StandardCharsets
 import java.time.Instant
 import zio.*
 
@@ -12,8 +11,7 @@ private[heddle] object OriginDate:
   final case class Stamp(value: String, http1Line: Chunk[Byte])
 
   def stampOf(instant: Instant): Stamp =
-    val value = HttpDate.render(instant)
-    Stamp(value, Chunk.fromArray(s"Date: $value\r\n".getBytes(StandardCharsets.US_ASCII)))
+    DateStampPlatform.stamp(instant)
 
   /** Starts the one-second refresh fiber in the caller's scope. The fiber reads [[Clock]] from that environment. */
   def make: ZIO[Scope, Nothing, OriginDate] =

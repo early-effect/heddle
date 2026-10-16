@@ -1,8 +1,6 @@
 package heddle.http.header
 
 import java.time.{Instant, LocalDate, ZoneOffset}
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /** HTTP dates. Parsing is RFC 6265 §5.1.1, which reads all three RFC 9110 §5.6.7 forms (IMF-fixdate, RFC 850, asctime)
   * and the other shapes cookies arrive in; it is total and never throws.
@@ -27,11 +25,8 @@ private[heddle] object HttpDate:
     yield LocalDate.of(year, mon, day).atTime(h, m, s).toInstant(ZoneOffset.UTC)
   end parse
 
-  private val ImfFixdate =
-    DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US).withZone(ZoneOffset.UTC)
-
   def render(instant: Instant): String =
-    ImfFixdate.format(instant)
+    DateStampPlatform.render(instant)
 
   private final case class Found(
       time: Option[(Int, Int, Int)] = None,
