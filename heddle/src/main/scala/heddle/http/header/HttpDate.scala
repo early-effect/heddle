@@ -1,7 +1,6 @@
 package heddle.http.header
 
 import java.time.{Instant, LocalDate, ZoneOffset}
-import java.time.format.DateTimeFormatter
 
 /** HTTP dates. Parsing is RFC 6265 §5.1.1, which reads all three RFC 9110 §5.6.7 forms (IMF-fixdate, RFC 850, asctime)
   * and the other shapes cookies arrive in; it is total and never throws.
@@ -27,7 +26,7 @@ private[heddle] object HttpDate:
   end parse
 
   def render(instant: Instant): String =
-    DateTimeFormatter.RFC_1123_DATE_TIME.format(instant.atOffset(ZoneOffset.UTC))
+    DateStampPlatform.render(instant)
 
   private final case class Found(
       time: Option[(Int, Int, Int)] = None,

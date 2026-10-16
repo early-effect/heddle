@@ -3,7 +3,7 @@ package heddle.internal.engine
 import java.nio.charset.StandardCharsets
 import heddle.error.{HttpError, WireError}
 import heddle.http.{Body, HttpVersion, MediaType, Method, Request, Response, Status, TransferCoding, Url}
-import heddle.http.header.{Header, HeaderName, Headers}
+import heddle.http.header.{Header, HeaderName, Headers, OriginDate}
 import heddle.internal.Ascii
 import heddle.route.Routes
 import heddle.Server
@@ -19,9 +19,10 @@ private[heddle] object Http1:
       send: Sink,
       config: Server.Config,
       life: Lifecycle,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
     val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
-    serveConnection(routes, Wire(ConnBuf.fromPull(buf, pull), send, secure = false), config, life)
+    serveConnection(routes, Wire(ConnBuf.fromPull(buf, pull), send, secure = false), config, life, originDate)
   end serveConnection
 
   def serveConnection[R](
@@ -29,6 +30,7 @@ private[heddle] object Http1:
       wire: Wire,
       config: Server.Config,
       life: Lifecycle,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
     val Wire(src, send, secure) = wire
     val takingWork              = life.takingWork
@@ -44,7 +46,10 @@ private[heddle] object Http1:
           err =>
             err.toResponse match
               case None      => ZIO.fail(err)
-              case Some(res) => writeResponse(send, res, persist = false, version = HttpVersion.Http11)
+              case Some(res) =>
+                originDate.get.flatMap(stamp =>
+                  writeResponse(send, res, persist = false, version = HttpVersion.Http11, stamp)
+                )
           ,
           {
             case None                  => ZIO.unit
@@ -53,12 +58,14 @@ private[heddle] object Http1:
               dispatch(routes, req).flatMap { res =>
                 res.ws match
                   case Some(run) =>
-                    writeResponse(send, res, persist = false, req.version) *>
-                      leftover.orElse(ZIO.unit) *>
-                      run(src, send).mapError(HttpError.Io(_))
+                    originDate.get.flatMap(stamp =>
+                      writeResponse(send, res, persist = false, req.version, stamp) *>
+                        leftover.orElse(ZIO.unit) *>
+                        run(src, send).mapError(HttpError.Io(_))
+                    )
                   case None =>
                     val keep = persist(req) && !connectionClose(res) && underCap
-                    writeResponse(send, res, keep, req.version).flatMap { _ =>
+                    originDate.get.flatMap(stamp => writeResponse(send, res, keep, req.version, stamp)).flatMap { _ =>
                       leftover.foldZIO(
                         _ =>
                           busy.set(false)
@@ -256,36 +263,37 @@ private[heddle] object Http1:
       response: Response,
       persist: Boolean,
       version: HttpVersion,
+      stamp: OriginDate.Stamp,
   ): IO[HttpError, Unit] =
     def chunked(stream: ZStream[Any, Throwable, Byte]): IO[HttpError, Unit] =
       stream.mapError(HttpError.Io(_)).runForeachChunk(chunk => send(chunkedFrame(chunk))) *>
         send(Chunk.fromArray(Ascii.ChunkedEnd))
     if persist && version == HttpVersion.Http11 && !response.headers.has(Ascii.Connection) then
       response.body match
-        case Body.Empty | Body.Bytes(_, _)   => send(staticHttp11(response))
+        case Body.Empty | Body.Bytes(_, _)   => send(staticHttp11(response, stamp))
         case Body.Stream(stream, _, Some(n)) =>
-          send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
+          send(headBytes(response, Some(n), persist, version, stamp)) *> sendExactly(send, stream, n)
         case Body.Stream(stream, _, None) =>
-          send(headBytes(response, None, persist, version)) *> chunked(stream)
+          send(headBytes(response, None, persist, version, stamp)) *> chunked(stream)
     else
       response.body match
         case Body.Empty =>
-          send(headBytes(response, Some(0L), persist, version))
+          send(headBytes(response, Some(0L), persist, version, stamp))
         case Body.Bytes(bytes, _) =>
-          send(headBytes(response, Some(bytes.length.toLong), persist, version)) *> send(bytes)
+          send(headBytes(response, Some(bytes.length.toLong), persist, version, stamp)) *> send(bytes)
         case Body.Stream(stream, _, Some(n)) =>
-          send(headBytes(response, Some(n), persist, version)) *> sendExactly(send, stream, n)
+          send(headBytes(response, Some(n), persist, version, stamp)) *> sendExactly(send, stream, n)
         case Body.Stream(stream, _, None) =>
-          send(headBytes(response, None, persist, version)) *> chunked(stream)
+          send(headBytes(response, None, persist, version, stamp)) *> chunked(stream)
     end if
   end writeResponse
 
-  private[heddle] def staticHttp11(response: Response): Chunk[Byte] =
+  private[heddle] def staticHttp11(response: Response, stamp: OriginDate.Stamp): Chunk[Byte] =
     val bodyBytes = response.body match
       case Body.Bytes(b, _) => b
       case _                => Chunk.empty[Byte]
     val framed = withContentLength(response.headers, bodyBytes.length.toLong, response.body.mediaType)
-    val head   = encodeHead(response.status, framed)
+    val head   = encodeHead(response.status, framed, stamp)
     if bodyBytes.isEmpty then Chunk.fromArray(head)
     else
       val out = Array.ofDim[Byte](head.length + bodyBytes.length)
@@ -316,7 +324,13 @@ private[heddle] object Http1:
         }
     }
 
-  private def headBytes(response: Response, length: Option[Long], persist: Boolean, version: HttpVersion): Chunk[Byte] =
+  private def headBytes(
+      response: Response,
+      length: Option[Long],
+      persist: Boolean,
+      version: HttpVersion,
+      stamp: OriginDate.Stamp,
+  ): Chunk[Byte] =
     val framed =
       length match
         case Some(n) => withContentLength(response.headers, n, response.body.mediaType)
@@ -328,10 +342,10 @@ private[heddle] object Http1:
             if h.has(HeaderName.ContentType) then h else h.add(HeaderName.ContentType, mt.render)
           }
     val headers = withConnection(framed, persist, version)
-    Chunk.fromArray(encodeHead(response.status, headers))
+    Chunk.fromArray(encodeHead(response.status, headers, stamp))
   end headBytes
 
-  private def encodeHead(status: Status, headers: Headers): Array[Byte] =
+  private def encodeHead(status: Status, headers: Headers, stamp: OriginDate.Stamp): Array[Byte] =
     val b                            = Array.newBuilder[Byte]
     def putArr(a: Array[Byte]): Unit =
       var i = 0
@@ -365,6 +379,7 @@ private[heddle] object Http1:
       put(h.value)
       crlf()
     }
+    if !headers.has(HeaderName.Date) then putChunk(stamp.http1Line)
     crlf()
     b.result()
   end encodeHead

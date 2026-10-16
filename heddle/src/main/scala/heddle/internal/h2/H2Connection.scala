@@ -2,7 +2,7 @@ package heddle.internal.h2
 
 import heddle.error.{H2Violation, HttpError, WireError}
 import heddle.http.{Body, HttpVersion, Method, Request, Response, Url}
-import heddle.http.header.{Header, Headers}
+import heddle.http.header.{Header, HeaderName, Headers, OriginDate}
 import heddle.internal.duplex.Sink
 import heddle.internal.engine.{ConnBuf, IoKind, Lifecycle, Wire}
 import heddle.route.Routes
@@ -21,13 +21,14 @@ private[heddle] object H2Connection:
       wire: Wire,
       config: Server.Config,
       life: Lifecycle,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
     val Wire(src, send, secure) = wire
     val (takingWork, busy)      = (life.takingWork, life.busy)
     val h2                      = config.http2Config
     ZIO.scoped[R] {
       for
-        conn    <- Conn.make(config, busy, secure)
+        conn    <- Conn.make(config, busy, secure, originDate)
         drained <- Promise.make[Nothing, Unit]
         _       <- write(send, Chunk.single(H2Frame.Settings(localSettings(h2))))
         writer  <- conn.out.take
@@ -56,6 +57,7 @@ private[heddle] object H2Connection:
       val config: Server.Config,
       val busy: java.util.concurrent.atomic.AtomicBoolean,
       val secure: Boolean,
+      val originDate: OriginDate,
       val peerMaxFrame: Ref[Int],
       val lastStream: Ref[Int],
       val fibers: Ref[Map[Int, Fiber[Nothing, Unit]]],
@@ -66,14 +68,20 @@ private[heddle] object H2Connection:
   end Conn
 
   private object Conn:
-    def make(config: Server.Config, busy: java.util.concurrent.atomic.AtomicBoolean, secure: Boolean): UIO[Conn] =
+    def make(
+        config: Server.Config,
+        busy: java.util.concurrent.atomic.AtomicBoolean,
+        secure: Boolean,
+        originDate: OriginDate,
+    ): UIO[Conn] =
       for
         out    <- Queue.bounded[Chunk[H2Frame]](config.http2Config.maxOutstandingFrames.toInt)
         flow   <- H2Flow.make(config.http2Config.initialWindowSize.toInt)
         frame  <- Ref.make(H2Frame.DefaultMaxFrameSize)
         last   <- Ref.make(0)
         fibers <- Ref.make(Map.empty[Int, Fiber[Nothing, Unit]])
-      yield Conn(out, flow, config, busy, secure, frame, last, fibers)
+      yield Conn(out, flow, config, busy, secure, originDate, frame, last, fibers)
+  end Conn
 
   /** The reader's own state: an unfinished header block, the peer's HPACK table, and each open request body. */
   private final case class ReaderState(
@@ -347,9 +355,24 @@ private[heddle] object H2Connection:
   end requestOf
 
   private def respond(conn: Conn, id: Int, res: Response, q: Queue[Option[Chunk[Byte]]]): IO[HttpError, Unit] =
-    val block = Hpack.encode(
-      Chunk(":status" -> res.status.code.toString) ++ res.headers.toChunk.map(h => h.name.http2 -> h.value)
-    )
+    conn.originDate.get.flatMap { stamp =>
+      val extra =
+        if res.headers.has(HeaderName.Date) then Chunk.empty
+        else Chunk.single("date" -> stamp.value)
+      val block = Hpack.encode(
+        Chunk(":status" -> res.status.code.toString) ++ res.headers.toChunk.map(h => h.name.http2 -> h.value) ++ extra
+      )
+      respondEncoded(conn, id, res, q, block)
+    }
+  end respond
+
+  private def respondEncoded(
+      conn: Conn,
+      id: Int,
+      res: Response,
+      q: Queue[Option[Chunk[Byte]]],
+      block: Chunk[Byte],
+  ): IO[HttpError, Unit] =
     res.ws match
       case Some(run) =>
         val buf  = java.nio.ByteBuffer.allocate(math.max(conn.config.chunkSize.toInt, 4096))
@@ -365,7 +388,7 @@ private[heddle] object H2Connection:
             headers(conn, id, block, endStream = false) *> dataFrames(conn, id, ZStream.fromChunk(bytes))
           case Body.Stream(s, _, _) => headers(conn, id, block, endStream = false) *> dataFrames(conn, id, s)
     end match
-  end respond
+  end respondEncoded
 
   /** One batch: HEADERS, then CONTINUATIONs cut to the peer's SETTINGS_MAX_FRAME_SIZE (RFC 9113 §6.10). */
   private def headers(conn: Conn, id: Int, block: Chunk[Byte], endStream: Boolean): UIO[Unit] =

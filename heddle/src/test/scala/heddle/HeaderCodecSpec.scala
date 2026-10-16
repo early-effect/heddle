@@ -43,7 +43,7 @@ object HeaderCodecSpec extends ZIOSpecDefault:
         codec.decode(Chunk("Sun, 06 Nov 1994 08:49:37 GMT")) == Right(sunday),
         codec.decode(Chunk("not-a-date")) == Left(ParamError.Malformed("not-a-date", "an HTTP-date")),
         codec.encode(sunday) == Chunk(HttpDate.render(sunday)),
-        codec.encode(sunday) == Chunk("Sun, 6 Nov 1994 08:49:37 GMT"),
+        codec.encode(sunday) == Chunk("Sun, 06 Nov 1994 08:49:37 GMT"),
       )
     ,
     test("a url header keeps UrlError"):

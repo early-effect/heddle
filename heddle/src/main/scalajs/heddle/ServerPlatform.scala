@@ -2,6 +2,7 @@ package heddle
 
 import heddle.error.{HttpError, ServerError}
 import heddle.http.Response
+import heddle.http.header.OriginDate
 import heddle.internal.duplex.{Listener, NodeConn, NodeListener}
 import heddle.internal.engine.{ConnBuf, Http1, Lifecycle, LiveConnections, Wire}
 import heddle.route.Routes
@@ -17,11 +18,14 @@ private[heddle] object ServerPlatform:
       tls: Option[Tls],
   ): ZIO[R & Scope, ServerError, Server] =
     for
-      clock    <- ZIO.clock
-      live     <- LiveConnections.make(config.maxConnections.toInt)
-      listener <- ZIO.acquireRelease(bind(config, tls))(_.close)
+      clock      <- ZIO.clock
+      live       <- LiveConnections.make(config.maxConnections.toInt)
+      originDate <- OriginDate.make
+      listener   <- ZIO.acquireRelease(bind(config, tls))(_.close)
       halt0 = live.halt(listener, config.gracefulShutdownTimeout).withClock(clock)
-      _ <- live.acceptAll(listener)(runConnection(routes, _, config, live.takingWork, _, tls.isDefined)).forkScoped
+      _ <- live
+        .acceptAll(listener)(runConnection(routes, _, config, live.takingWork, _, tls.isDefined, originDate))
+        .forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(listener.localPort, halt0)
     end for
@@ -40,6 +44,7 @@ private[heddle] object ServerPlatform:
       takingWork: java.util.concurrent.atomic.AtomicBoolean,
       busy: java.util.concurrent.atomic.AtomicBoolean,
       secure: Boolean,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
     Http1.serveConnection(
@@ -47,6 +52,7 @@ private[heddle] object ServerPlatform:
       Wire(ConnBuf.fromConn(readBuf, conn), conn.write, secure),
       config,
       Lifecycle(takingWork, busy),
+      originDate,
     )
   end runConnection
 end ServerPlatform
