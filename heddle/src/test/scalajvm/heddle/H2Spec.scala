@@ -2,7 +2,7 @@ package heddle
 
 import heddle.server.{BodyBytes, ConcurrentStreams, WindowSize}
 import java.nio.charset.StandardCharsets
-import heddle.internal.h2.{FrameCodec, H2Flow, H2Frame, Hpack}
+import heddle.internal.h2.{FrameCodec, H2Flow, H2Frame, Hpack, HpackTable}
 import heddle.internal.engine.ConnBuf
 import heddle.ws.{WebSocketFrame, WsCodec}
 import zio.*
@@ -39,6 +39,28 @@ object H2Spec extends ZIOSpecDefault:
           val port = java.net.URI.create(base).getPort
           h2Get(port, "/health").map { body =>
             assertTrue(body.contains("ok"))
+          }
+        }
+      ,
+      test("response HEADERS include date"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        LiveServer(routes) { base =>
+          val port = java.net.URI.create(base).getPort
+          val req  = Hpack.encode(
+            Chunk(":method" -> "GET", ":path" -> "/health", ":scheme" -> "http", ":authority" -> "localhost")
+          )
+          H2Wire(port) { w =>
+            w.send(H2Frame.Headers(1, req, endStream = true, endHeaders = true)) *>
+              w.until(_.exists { case H2Frame.Headers(1, block, _, true, _, _, _) => block.nonEmpty; case _ => false })
+                .map { frames =>
+                  val date =
+                    for
+                      block       <- frames.collectFirst { case H2Frame.Headers(1, b, _, true, _, _, _) => b }
+                      (fields, _) <- Hpack.decode(block, HpackTable.empty, 8192L).toOption
+                      value       <- fields.collectFirst { case ("date", v) => v }
+                    yield value
+                  assertTrue(date.exists(_.length == 29))
+                }
           }
         }
       ,

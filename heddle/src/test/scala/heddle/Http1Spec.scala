@@ -3,6 +3,7 @@ package heddle
 import heddle.server.{HeaderBytes, KeepAliveRequests}
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import heddle.http.header.{HeaderName, HttpDate, OriginDate}
 import heddle.internal.engine.{Http1, Lifecycle}
 import heddle.sse.{ServerSentEvent, Sse, SseCodec, SseField}
 import zio.*
@@ -27,6 +28,26 @@ object Http1Spec extends ZIOSpecDefault:
       test("serveConnection writes 400 for a malformed request line"):
         runWire(Routes.empty, "GET\r\n\r\n").map { wire =>
           assertTrue(wire.startsWith("HTTP/1.1 400"))
+        }
+      ,
+      test("serveConnection stamps Date on 200 and 400 when the handler did not"):
+        val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
+        runWire(routes, get("/health")).zip(runWire(Routes.empty, "GET\r\n\r\n")).map { (ok, bad) =>
+          assertTrue(hasImfDate(ok), hasImfDate(bad))
+        }
+      ,
+      test("serveConnection keeps a handler-provided Date"):
+        val fixed  = "Sun, 06 Nov 1994 08:49:37 GMT"
+        val routes = Routes(
+          Method.GET / "d" -> handler(
+            ZIO.succeed(Response.text("x").withHeader(HeaderName.Date, fixed))
+          )
+        )
+        runWire(routes, get("/d")).map { wire =>
+          assertTrue(
+            wire.contains(s"Date: $fixed"),
+            wire.split("\r\n").count(_.startsWith("Date: ")) == 1,
+          )
         }
       ,
       test("serveConnection writes 431 when headers exceed maxHeaderBytes"):
@@ -114,9 +135,20 @@ object Http1Spec extends ZIOSpecDefault:
         val boom   = ZIO.fail(HttpError.Io(IOException("boom")))
         val taking = java.util.concurrent.atomic.AtomicBoolean(true)
         val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
-        for err <- Http1
-            .serveConnection(Routes.empty, boom, _ => ZIO.unit, Server.Config.default, Lifecycle(taking, busy))
-            .flip
+        for err <- ZIO.scoped {
+            OriginDate.make.flatMap(originDate =>
+              Http1
+                .serveConnection(
+                  Routes.empty,
+                  boom,
+                  _ => ZIO.unit,
+                  Server.Config.default,
+                  Lifecycle(taking, busy),
+                  originDate,
+                )
+                .flip
+            )
+          }
         yield err match
           case HttpError.Io(cause) => assertTrue(cause.getMessage == "boom")
           case other               => assertTrue(other.isInstanceOf[HttpError.Io])
@@ -137,9 +169,12 @@ object Http1Spec extends ZIOSpecDefault:
           out <- Ref.make(Chunk.empty[Byte])
           pull = remaining.modify(c => (c.headOption, c.drop(1)))
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          _     <- Http1.serveConnection(routes, pull, send, Server.Config.default, Lifecycle(taking, busy))
-          bytes <- out.get
-          wire = String(bytes.toArray, StandardCharsets.US_ASCII)
+          wire <- ZIO.scoped {
+            OriginDate.make.flatMap { originDate =>
+              Http1.serveConnection(routes, pull, send, Server.Config.default, Lifecycle(taking, busy), originDate) *>
+                out.get.map(bytes => String(bytes.toArray, StandardCharsets.US_ASCII))
+            }
+          }
         yield assertTrue(wire.startsWith("HTTP/1.1 200"), wire.endsWith("A"))
         end for
       ,
@@ -295,11 +330,13 @@ object Http1Spec extends ZIOSpecDefault:
             }
             .delay(1.hour)
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          _     <- Http1.serveConnection(Routes.empty, pull, send, config, Lifecycle(taking, busy))
-          bytes <- out.get
-        yield
-          val wire = String(bytes.toArray, StandardCharsets.US_ASCII)
-          assertTrue(wire.startsWith("HTTP/1.1 408"))
+          wire <- ZIO.scoped {
+            OriginDate.make.flatMap { originDate =>
+              Http1.serveConnection(Routes.empty, pull, send, config, Lifecycle(taking, busy), originDate) *>
+                out.get.map(bytes => String(bytes.toArray, StandardCharsets.US_ASCII))
+            }
+          }
+        yield assertTrue(wire.startsWith("HTTP/1.1 408"))
         end for
       @@ TestAspect.withLiveClock,
       test("idleTimeout ends keep-alive when the next request never arrives"):
@@ -319,7 +356,11 @@ object Http1Spec extends ZIOSpecDefault:
               case Some(c) => ZIO.succeed(Some(c))
             }
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-          done <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy)).timeout(2.seconds)
+          done <- ZIO.scoped {
+            OriginDate.make.flatMap(originDate =>
+              Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy), originDate).timeout(2.seconds)
+            )
+          }
         yield assertTrue(done.isDefined)
         end for
       @@ TestAspect.withLiveClock,
@@ -376,27 +417,37 @@ object Http1Spec extends ZIOSpecDefault:
         runWire(routes, get("/boom")).map { wire =>
           assertTrue(wire.startsWith("HTTP/1.1 500"), !wire.contains("secret internals"), !wire.contains("\tat "))
         },
-    ) @@ TestAspect.timeout(5.seconds)
+    ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.seconds)
 
   private def runWire[R](
       routes: Routes[R, Response],
       raw: String,
       config: Server.Config = Server.Config.default,
   ): ZIO[R, HttpError, String] =
-    val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-    val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
-    for
-      remaining <- Ref.make(Chunk.fromArray(raw.getBytes(StandardCharsets.US_ASCII)))
-      out       <- Ref.make(Chunk.empty[Byte])
-      pull = remaining.modify { c =>
-        if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
-      }
-      send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-      _     <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy))
-      bytes <- out.get
-    yield String(bytes.toArray, StandardCharsets.US_ASCII)
-    end for
+    ZIO.scoped {
+      val taking = java.util.concurrent.atomic.AtomicBoolean(true)
+      val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
+      for
+        originDate <- OriginDate.make
+        remaining  <- Ref.make(Chunk.fromArray(raw.getBytes(StandardCharsets.US_ASCII)))
+        out        <- Ref.make(Chunk.empty[Byte])
+        pull = remaining.modify { c =>
+          if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
+        }
+        send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
+        _     <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy), originDate)
+        bytes <- out.get
+      yield String(bytes.toArray, StandardCharsets.US_ASCII)
+      end for
+    }
   end runWire
+
+  private def hasImfDate(wire: String): Boolean =
+    wire.split("\r\n").drop(1).filter(_.startsWith("Date: ")) match
+      case Array(line) =>
+        val value = line.drop(6)
+        value.length == 29 && HttpDate.parse(value).isDefined
+      case _ => false
 
   private def get(path: String, headers: String = "Host: localhost", version: String = "HTTP/1.1"): String =
     s"GET $path $version\r\n$headers\r\n\r\n"

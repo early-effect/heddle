@@ -2,6 +2,7 @@ package heddle
 
 import heddle.error.{HttpError, ServerError, WireError}
 import heddle.http.Response
+import heddle.http.header.OriginDate
 import heddle.internal.duplex.{ChannelConn, ChannelListener}
 import heddle.internal.engine.{ConnBuf, Http1, Lifecycle, LiveConnections, PrefaceLook, Wire}
 import heddle.route.Routes
@@ -24,16 +25,17 @@ private[heddle] object ServerPlatform:
       tls: Option[Tls],
   ): ZIO[R & Scope, ServerError, Server] =
     for
-      _        <- enableLoom
-      clock    <- ZIO.clock
-      live     <- LiveConnections.make(config.maxConnections.toInt)
-      listener <- ZIO.acquireRelease(ChannelListener.bind(config))(_.close)
+      _          <- enableLoom
+      clock      <- ZIO.clock
+      live       <- LiveConnections.make(config.maxConnections.toInt)
+      originDate <- OriginDate.make
+      listener   <- ZIO.acquireRelease(ChannelListener.bind(config))(_.close)
       // Live clock plus SO_TIMEOUT: the read stays on the connection's virtual thread. TestClock keeps the ZIO race,
       // which can interrupt a blocking read. A wrapped clock is not `eq` ClockLive, so it keeps the race too.
       socketDeadline = clock eq Clock.ClockLive
       halt0          = live.halt(listener, config.gracefulShutdownTimeout).withClock(clock)
       _ <- live
-        .acceptAll(listener)(runConnection(routes, _, config, live.takingWork, _, tls, socketDeadline))
+        .acceptAll(listener)(runConnection(routes, _, config, live.takingWork, _, tls, socketDeadline, originDate))
         .forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(listener.localPort, halt0)
@@ -52,20 +54,28 @@ private[heddle] object ServerPlatform:
       busy: java.util.concurrent.atomic.AtomicBoolean,
       tls: Option[Tls],
       socketDeadline: Boolean,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
     val readBuf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
     val life    = Lifecycle(takingWork, busy)
     tls match
       case None =>
-        serve(routes, Wire(ConnBuf.fromConn(readBuf, conn, socketDeadline), conn.write, secure = false), config, life)
+        serve(
+          routes,
+          Wire(ConnBuf.fromConn(readBuf, conn, socketDeadline), conn.write, secure = false),
+          config,
+          life,
+          originDate,
+        )
       case Some(t) =>
         val alpn = if config.http2 then Chunk("h2", "http/1.1") else Chunk("http/1.1")
         t.server(conn, alpn).flatMap { session =>
           val wire = Wire(ConnBuf.fromConn(readBuf, session.conn, socketDeadline), session.conn.write, secure = true)
           val work =
             if session.applicationProtocol == "h2" && config.http2 then
-              consumePreface(wire.src) *> heddle.internal.h2.H2Connection.serve(routes, wire, config, life)
-            else Http1.serveConnection(routes, wire, config, life)
+              consumePreface(wire.src) *>
+                heddle.internal.h2.H2Connection.serve(routes, wire, config, life, originDate)
+            else Http1.serveConnection(routes, wire, config, life, originDate)
           work.ensuring(session.conn.close)
         }
     end match
@@ -82,8 +92,9 @@ private[heddle] object ServerPlatform:
       wire: Wire,
       config: Server.Config,
       life: Lifecycle,
+      originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =
-    if !config.http2 then Http1.serveConnection(routes, wire, config, life)
+    if !config.http2 then Http1.serveConnection(routes, wire, config, life, originDate)
     else
       val preface = heddle.internal.h2.H2Frame.Preface
       val src     = wire.src
@@ -93,9 +104,10 @@ private[heddle] object ServerPlatform:
         look match
           case PrefaceLook.Http2 =>
             src.clearHeaderBudget()
-            src.takeExact(preface.length) *> heddle.internal.h2.H2Connection.serve(routes, wire, config, life)
+            src.takeExact(preface.length) *>
+              heddle.internal.h2.H2Connection.serve(routes, wire, config, life, originDate)
           case PrefaceLook.Http1 | PrefaceLook.HeadersTooLarge | PrefaceLook.NeedMore =>
-            Http1.serveConnection(routes, wire, config, life)
+            Http1.serveConnection(routes, wire, config, life, originDate)
 
       def collect: IO[HttpError, PrefaceLook] =
         ZIO.suspendSucceed {
