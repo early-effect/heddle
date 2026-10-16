@@ -1,4 +1,5 @@
 import org.scalajs.linker.interface.ModuleKind
+import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.{NativeTags, nativeConfig}
 import chekhov.ChekhovBrowser
 
@@ -521,6 +522,59 @@ lazy val docs = project
     }.taskValue,
   )
 
+// One list: CI links these suites as a single native binary. A module added to only one of
+// `dependsOn` or the source scope would either drop tests or relink a second test binary.
+lazy val nativeTestProjects =
+  Seq(
+    heddle.native(scala3Version),
+    brotli.native(scala3Version),
+    mcpProtocol.native(scala3Version),
+    mcp.native(scala3Version),
+    mcpApps.native(scala3Version),
+  )
+
+// Per-module `*Native/test` still links that module alone. `testNative` does not: each of those
+// binaries is a cold closed-world link, and `test->test` was relinking heddle before brotli.
+lazy val nativeTests = {
+  val refs  = nativeTestProjects.map(project => project: ProjectReference)
+  val scope = ScopeFilter(inProjects(refs*), inConfigurations(Test))
+  project
+    .in(file("native-tests"))
+    .enablePlugins(ScalaNativePlugin)
+    .disablePlugins(chekhov.sbt.ChekhovPlugin)
+    .dependsOn(nativeTestProjects.map(project => project: ClasspathDep[ProjectReference])*)
+    .settings(commonSettings)
+    .settings(MyVersions.coreTest)
+    .settings(MyVersions.javaTime)
+    .settings(nativeThreads, nativeOpenssl)
+    .settings(
+      name                     := "heddle-native-tests",
+      scalaVersion             := scala3Version,
+      publish / skip           := true,
+      zipxPublish              := Some(false),
+      Test / parallelExecution := false,
+      Test / unmanagedSourceDirectories ++= Def.uncached {
+        (Test / unmanagedSourceDirectories)
+          .all(scope)
+          .value
+          .flatten
+          .filter(dir => nativeSuiteDir(dir, "/src/test/scala") || nativeSuiteDir(dir, "/src/test/scalanative"))
+          .distinct
+      },
+      Test / unmanagedResourceDirectories ++= Def.uncached {
+        (Test / unmanagedResourceDirectories)
+          .all(scope)
+          .value
+          .flatten
+          .filter(dir => nativeSuiteDir(dir, "/src/test/resources"))
+          .distinct
+      },
+    )
+}
+
+def nativeSuiteDir(dir: File, suffix: String): Boolean =
+  dir.toPath.normalize.toString.replace('\\', '/').endsWith(suffix)
+
 // Real browsers, kept out of testJVM so the everyday gates never launch one.
 addCommandAlias("testBrowsers", "appsBrowser/testFull")
 addCommandAlias("docsPreview", "~docs/specularPreview")
@@ -532,10 +586,7 @@ addCommandAlias(
   "testJS",
   "heddleJS/testFull; brotliJS/testFull; mcpProtocolJS/testFull; mcpJS/testFull; mcpAppsJS/testFull; mcpAppsHostJS/testFull; oauthJS/testFull; browser/browserCheck",
 )
-addCommandAlias(
-  "testNative",
-  "heddleNative/testFull; brotliNative/testFull; mcpProtocolNative/testFull; mcpNative/testFull; mcpAppsNative/testFull",
-)
+addCommandAlias("testNative", "nativeTests/testFull")
 
 // Same generator as docs/Test. Kept outside the docsJS project body so that body does not touch `docs` while it is
 // still being defined.
