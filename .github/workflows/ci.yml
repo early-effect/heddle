@@ -80,7 +80,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: save
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: cache-rehydrate
         run: sbt 'Test/compile'
   test:
@@ -107,7 +107,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: save
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: test
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -141,7 +141,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: fmt
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -175,7 +175,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: workflow-check
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -209,7 +209,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: advisories
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -247,7 +247,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: Fetch PR base SHA
         run: git fetch --no-tags origin "$ZIPX_MODVER_BASE_SHA"
       - name: modver-suggest
@@ -286,7 +286,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: Fetch PR base SHA
         run: git fetch --no-tags origin "$ZIPX_MODVER_BASE_SHA"
       - name: modver-check
@@ -322,7 +322,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: test-js
         run: |
           if [ "$ZIPX_VERIFY_CLEAN_FULL" = "true" ]; then
@@ -356,7 +356,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: Install Scala Native build dependencies
         run: sudo apt-get update && sudo apt-get install -y clang libstdc++-12-dev libgc-dev libunwind-dev libssl-dev
       - name: test-native
@@ -392,7 +392,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: Install the pinned Playwright browsers
         run: sbt appsBrowser/chekhovInstall
       - name: Install their Linux system libraries
@@ -451,7 +451,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: snapshots
         run: sbt 'zipxSnapshotPublish'
   snapshots-pr:
@@ -481,7 +481,7 @@ jobs:
           sbt-disk-cache: "false"
           cache-mode: restore
           purge: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'purge') }}
-          cache-epoch: b10c7e7dec783ba0
+          cache-epoch: "73bfb742c81c537b"
       - name: snapshots-pr
         run: sbt 'zipxSnapshotPublish pr'
   docs:
