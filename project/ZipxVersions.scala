@@ -14,7 +14,7 @@ object MyVersions extends ZipxVersions:
   val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
-  val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.7.0")
+  val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.8.0")
 
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.21.1")
   val specularZioTest = specular.mod("specular-zio-test").test
@@ -24,11 +24,11 @@ object MyVersions extends ZipxVersions:
   val mermoidAscent = Lib("rocks.earlyeffect", "mermoid-ascent", "0.2.0")
   // ascent-js 0.11.0 depends on facade 0.11.1. Core 0.10.1 depends on types 0.11.1.
   // Those are what specular 0.21.1 and mermoid-ascent 0.2.0 resolve. The older pins are stale.
-  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.1")
-  val ascentDomTypes  = Lib("rocks.earlyeffect", "ascent-dom-types", "0.11.1")
-  val ascentCore      = Lib("rocks.earlyeffect", "ascent-core", "0.10.1")
-  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.0")
-  val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.1")
+  val ascentDomFacade = Lib("rocks.earlyeffect", "ascent-dom-facade", "0.11.2")
+  val ascentDomTypes  = Lib("rocks.earlyeffect", "ascent-dom-types", "0.11.2")
+  val ascentCore      = Lib("rocks.earlyeffect", "ascent-core", "0.10.2")
+  val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.1")
+  val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.2")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
   val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
