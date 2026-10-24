@@ -1,6 +1,7 @@
 package heddle.internal.engine
 
 import java.nio.ByteBuffer
+import heddle.internal.engine.ConnBuf.ChunkedState
 import heddle.error.{HttpError, WireError}
 import heddle.internal.Ascii
 import zio.*
@@ -181,15 +182,17 @@ private[heddle] final class ConnBuf(
   end takeExact
 
   def takeUpTo(n: Long): IO[HttpError, Chunk[Byte]] =
-    if n <= 0 then ZIO.succeed(Chunk.empty)
-    else if buf.hasRemaining then
-      val takeAt = n.toInt.min(buf.remaining())
-      ZIO.succeed(copyOut(takeAt))
-    else
-      fillMore.flatMap {
-        case false => ZIO.succeed(Chunk.empty)
-        case true  => takeUpTo(n)
-      }
+    ZIO.suspendSucceed {
+      if n <= 0 then ZIO.succeed(Chunk.empty)
+      else if buf.hasRemaining then
+        val takeAt = n.min(buf.remaining().toLong).toInt
+        ZIO.succeed(copyOut(takeAt))
+      else
+        fillMore.flatMap {
+          case false => ZIO.succeed(Chunk.empty)
+          case true  => takeUpTo(n)
+        }
+    }
 
   def drop(n: Long): IO[HttpError, Unit] =
     if n <= 0 then ZIO.unit
@@ -200,43 +203,58 @@ private[heddle] final class ConnBuf(
       }
 
   def takeLine(max: Int): IO[HttpError, Option[Chunk[Byte]]] =
-    def go: IO[HttpError, Option[Chunk[Byte]]] =
-      val idx = indexOfCrlf
-      if idx >= 0 then
-        if idx > max then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
+    def go(acc: Chunk[Byte]): IO[HttpError, Option[Chunk[Byte]]] =
+      ZIO.suspendSucceed {
+        if acc.lastOption.contains('\r'.toByte) && buf.hasRemaining && buf.get(buf.position()) == '\n' then
+          buf.position(buf.position() + 1)
+          ZIO.succeed(Some(acc.dropRight(1)))
         else
-          val line = copyOut(idx)
-          buf.position(buf.position() + 2)
-          ZIO.succeed(Some(line))
-      else if buf.remaining() >= max then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
-      else
-        fillMore.flatMap {
-          case false if !buf.hasRemaining => ZIO.succeed(None)
-          case false                      => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
-          case true                       => go
-        }
-      end if
+          val idx = indexOfCrlf
+          if idx >= 0 then
+            if acc.length.toLong + idx > max.toLong then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
+            else
+              val line = acc ++ copyOut(idx)
+              buf.position(buf.position() + 2)
+              ZIO.succeed(Some(line))
+          else
+            // A trailing CR may be the first delimiter byte, not part of the bounded line.
+            val trailingCr =
+              if buf.hasRemaining then buf.get(buf.limit() - 1) == '\r'
+              else acc.lastOption.contains('\r'.toByte)
+            val length = acc.length.toLong + buf.remaining() - (if trailingCr then 1L else 0L)
+            if length > max.toLong then ZIO.fail(HttpError.Malformed(WireError.ChunkLineTooLong))
+            else
+              val next = acc ++ copyOut(buf.remaining())
+              fillMore.flatMap {
+                case false if next.isEmpty => ZIO.succeed(None)
+                case false                 => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
+                case true                  => go(next)
+              }
+          end if
+      }
     end go
-    go
+    go(Chunk.empty)
   end takeLine
 
   def expectCrlf: IO[HttpError, Unit] =
-    takeUpTo(2).flatMap { c =>
-      if c.length == 2 && c(0) == '\r' && c(1) == '\n' then ZIO.unit
-      else ZIO.fail(HttpError.Malformed(WireError.MissingChunkCrlf))
+    ZIO.suspendSucceed {
+      takeExact(2).flatMap { c =>
+        if c.length == 2 && c(0) == '\r' && c(1) == '\n' then ZIO.unit
+        else ZIO.fail(HttpError.Malformed(WireError.MissingChunkCrlf))
+      }
     }
 
   def skipTrailers(maxLine: Int): IO[HttpError, Unit] =
     takeLine(maxLine).flatMap {
-      case None    => ZIO.unit
+      case None    => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
       case Some(l) => if l.isEmpty then ZIO.unit else skipTrailers(maxLine)
     }
 
   def chunkedBytes(maxBody: Long, maxLine: Int): ZStream[Any, Throwable, Byte] =
     ZStream.unwrap {
-      Ref.make(0L).map { total =>
+      Ref.make(ChunkedState.initial).map { state =>
         ZStream.repeatZIOChunkOption {
-          readChunkedPiece(total, maxBody, maxLine).mapError(e => Some(toThrowable(e))).flatMap {
+          readChunkedPiece(state, maxBody, maxLine).mapError(e => Some(toThrowable(e))).flatMap {
             case None    => ZIO.fail(None)
             case Some(c) => ZIO.succeed(c)
           }
@@ -256,24 +274,36 @@ private[heddle] final class ConnBuf(
       }
     }
 
-  def readChunkedPiece(total: Ref[Long], maxBody: Long, maxLine: Int): IO[HttpError, Option[Chunk[Byte]]] =
-    takeLine(maxLine).flatMap {
-      case None       => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
-      case Some(line) =>
-        val token = String(line.toArray, java.nio.charset.StandardCharsets.US_ASCII).takeWhile(_ != ';').trim
-        Ascii.hex(token) match
-          case None       => ZIO.fail(HttpError.Malformed(WireError.BadChunkSize(token)))
-          case Some(0)    => skipTrailers(maxLine).as(None)
-          case Some(size) =>
-            total.updateAndGet(_ + size).flatMap { n =>
-              if n > maxBody then ZIO.fail(HttpError.BodyTooLarge)
-              else
-                takeUpTo(size).flatMap { data =>
-                  if data.length.toLong != size then ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
-                  else expectCrlf.as(Some(data))
-                }
-            }
-        end match
+  def readChunkedPiece(
+      state: Ref[ChunkedState],
+      maxBody: Long,
+      maxLine: Int,
+  ): IO[HttpError, Option[Chunk[Byte]]] =
+    state.get.flatMap {
+      case ChunkedState.Done             => ZIO.succeed(None)
+      case ChunkedState.Delimiter(total) =>
+        expectCrlf *> state.set(ChunkedState.Size(total)) *> readChunkedPiece(state, maxBody, maxLine)
+      case ChunkedState.Payload(total, remaining) =>
+        takeUpTo(remaining).flatMap { data =>
+          if data.isEmpty then ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
+          else
+            val left = remaining - data.length
+            val next = if left == 0 then ChunkedState.Delimiter(total) else ChunkedState.Payload(total, left)
+            state.set(next).as(Some(data))
+        }
+      case ChunkedState.Size(total) =>
+        takeLine(maxLine).flatMap {
+          case None       => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
+          case Some(line) =>
+            val token = String(line.toArray, java.nio.charset.StandardCharsets.US_ASCII).takeWhile(_ != ';').trim
+            Ascii.hex(token) match
+              case None       => ZIO.fail(HttpError.Malformed(WireError.BadChunkSize(token)))
+              case Some(0)    => skipTrailers(maxLine) *> state.set(ChunkedState.Done).as(None)
+              case Some(size) =>
+                if size > maxBody - total then ZIO.fail(HttpError.BodyTooLarge)
+                else state.set(ChunkedState.Payload(total + size, size)) *> readChunkedPiece(state, maxBody, maxLine)
+            end match
+        }
     }
 
   def toThrowable(err: HttpError): Throwable =
@@ -320,6 +350,15 @@ private[heddle] final class ConnBuf(
 end ConnBuf
 
 private[heddle] object ConnBuf:
+  enum ChunkedState:
+    case Size(total: Long)
+    case Payload(total: Long, remaining: Long)
+    case Delimiter(total: Long)
+    case Done
+
+  object ChunkedState:
+    val initial: ChunkedState = Size(0L)
+
   def fromConn(
       buf: ByteBuffer,
       conn: heddle.internal.duplex.ByteConn,
