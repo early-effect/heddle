@@ -135,10 +135,10 @@ private[heddle] object Http1Exchange:
             }
         rest(Chunk.empty)
       case Framing.Chunked =>
-        Ref.make(0L).flatMap { total =>
+        Ref.make(ConnBuf.ChunkedState.initial).flatMap { state =>
           def pieces(acc: Chunk[Byte]): IO[ClientError, Chunk[Byte]] =
             limits
-              .within(a)(c.src.readChunkedPiece(total, limits.maxBody, limits.maxHead).mapError(fromHttp(a, io)))
+              .within(a)(c.src.readChunkedPiece(state, limits.maxBody, limits.maxHead).mapError(fromHttp(a, io)))
               .flatMap {
                 case None      => ZIO.succeed(acc)
                 case Some(got) => pieces(acc ++ got)

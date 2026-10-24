@@ -230,32 +230,21 @@ private[heddle] object Http1:
       headers: Headers,
       config: Server.Config,
   ): IO[HttpError, (Body, IO[HttpError, Unit])] =
-    Ref.make(false).zip(Ref.make(0L)).map { (done, total) =>
+    Ref.make(ConnBuf.ChunkedState.initial).map { state =>
+      def read   = src.readChunkedPiece(state, config.maxBodyBytes.toLong, config.maxHeaderBytes.toInt)
       val stream =
         ZStream.repeatZIOChunkOption {
-          done.get.flatMap {
-            case true  => ZIO.fail(None)
-            case false =>
-              src
-                .readChunkedPiece(total, config.maxBodyBytes.toLong, config.maxHeaderBytes.toInt)
-                .mapError(e => Some(src.toThrowable(e)))
-                .flatMap {
-                  case None    => done.set(true) *> ZIO.fail(None)
-                  case Some(c) => ZIO.succeed(c)
-                }
+          read.mapError(e => Some(src.toThrowable(e))).flatMap {
+            case None    => ZIO.fail(None)
+            case Some(c) => ZIO.succeed(c)
           }
         }
-      val leftover = done.get.flatMap {
-        case true  => ZIO.unit
-        case false =>
-          def drain: IO[HttpError, Unit] =
-            src.readChunkedPiece(total, config.maxBodyBytes.toLong, config.maxHeaderBytes.toInt).flatMap {
-              case None    => done.set(true)
-              case Some(_) => drain
-            }
-          drain
-      }
-      (Body.Stream(stream, headers.contentType, None), leftover)
+      def drain: IO[HttpError, Unit] =
+        read.flatMap {
+          case None    => ZIO.unit
+          case Some(_) => drain
+        }
+      (Body.Stream(stream, headers.contentType, None), drain)
     }
 
   private def writeResponse(
