@@ -169,6 +169,28 @@ object StdioSessionSpec extends ZIOSpecDefault:
         }
       yield out
     ,
+    test("stdin EOF joins the waiting tool and its result is still written"):
+      for
+        started <- Promise.make[Nothing, Unit]
+        gate    <- Promise.make[Nothing, Unit]
+        mcp <- server(
+          in => started.succeed(()) *> gate.await *> ZIO.succeed(s"a:${in.name}"),
+          _ => ZIO.succeed("other"),
+        )
+        (client, remote) <- LinePipe.connected
+        running          <- mcp.stdio(remote).fork
+        out              <-
+          (for
+            _    <- write(client, call("tool_a", RequestId.Num(8), "ada"))
+            _    <- started.await
+            _    <- client.close
+            _    <- gate.succeed(())
+            exit <- running.await
+            line <- read(client)
+          yield assertTrue(exit.isSuccess) && resultIs(line, RequestId.Num(8), "a:ada"))
+            .ensuring(running.interrupt.unit)
+      yield out
+    ,
     test("interrupting stdio interrupts the in-flight tool"):
       for
         started <- Promise.make[Nothing, Unit]

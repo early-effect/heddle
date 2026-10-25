@@ -152,7 +152,7 @@ object HttpSessionSpec extends ZIOSpecDefault:
       yield assertTrue(
         cancelled.status == Status.Accepted,
         cancelled.headers.contentType.isEmpty,
-        cancelled.body.text.contains(""),
+        cancelled.body.text.exists(_.isEmpty),
         otherStill.isEmpty,
         otherRes.status == Status.Ok,
         resultIs(decoded(otherText), 5, "from-pass"),
@@ -180,7 +180,33 @@ object HttpSessionSpec extends ZIOSpecDefault:
           yield ()
         }
         _ <- stopped.await
-      yield assertTrue(true)
+      yield assertCompletes
+    ,
+    test("notifications/cancelled interrupts a JSON call, which answers 202, and the next call still runs"):
+      for
+        holdGate    <- Promise.make[Nothing, Unit]
+        holdStarted <- Promise.make[Nothing, Unit]
+        holdStopped <- Promise.make[Nothing, Unit]
+        server      <- pair(
+          _ => (holdStarted.succeed(()) *> holdGate.await).onInterrupt(holdStopped.succeed(())).as("from-hold"),
+          _ => ZIO.succeed("from-pass"),
+        )
+        held      <- server.routes(call(ToolName("hold"), 11, None, sse = false)).fork
+        _         <- holdStarted.await
+        cancelled <- server.routes(cancel(RequestId.Num(11), None))
+        _         <- holdStopped.await
+        passed    <- server.routes(call(ToolName("pass"), 12, None, sse = false))
+        passText  <- passed.body.utf8
+        heldRes   <- held.join
+        heldText  <- heldRes.body.utf8
+      yield assertTrue(
+        cancelled.status == Status.Accepted,
+        cancelled.body.text.exists(_.isEmpty),
+        heldRes.status == Status.Accepted,
+        heldText.isEmpty,
+        passed.status == Status.Ok,
+        resultIs(decoded(passText), 12, "from-pass"),
+      )
     ,
     test("DELETE interrupts the session tool and not a stateless one"):
       for
