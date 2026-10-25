@@ -84,6 +84,24 @@ object ProtocolLawsSpec extends ZIOSpecDefault:
           )
         },
     ),
+    suite("cancelled")(
+      test("a request id and an optional reason round-trip through the codec"):
+        val stop = Cancelled(RequestId.Num(7), Some("stop"))
+        val bare = Cancelled(RequestId.Str("a"), None)
+        assertTrue(
+          stop.toJson.fromJson[Cancelled] == Right(stop),
+          bare.toJson.fromJson[Cancelled] == Right(bare),
+          stop.message == Message.Notification(Notifications.Cancelled, Cancelled.params(stop)),
+          bare.message.params.as[Cancelled] == Right(bare),
+        )
+      ,
+      test("a missing id or a non-string reason is ignored"):
+        val missing = Cancelled.from(Json.Obj())
+        val badId   = Cancelled.from(Json.Obj("requestId" -> Json.Bool(true)))
+        val badWhy  = Cancelled.from(Json.Obj("requestId" -> Json.Num(1), "reason" -> Json.Num(2)))
+        assertTrue(missing.isEmpty, badId.isEmpty, badWhy.isEmpty)
+      ,
+    ),
     suite("extension ids")(
       test("prefix/name parses back to its text"):
         check(idPart, idPart)((p, n) => assertTrue(ExtensionId.from(s"$p/$n").map(_.value) == Right(s"$p/$n")))

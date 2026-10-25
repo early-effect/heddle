@@ -5,7 +5,7 @@ import heddle.mcp.ServedResource
 import heddle.mcp.protocol.*
 import zio.json.*
 import zio.json.ast.Json
-import zio.{Chunk, ZIO}
+import zio.{Chunk, UIO, ZIO}
 
 /** What a server offers: tools, resources, and the extensions it advertises with their settings. */
 final case class Offer[-R](
@@ -45,7 +45,18 @@ final class Engine[-R](
     msg match
       case Message.Request(id, method, params) =>
         answer(method, params, headers, era, session).map(reply(id, era, _)).asSome
+      case Message.Notification(method, params) =>
+        noted(method, params, session).as(None)
       case _ => ZIO.none
+
+  /** `notifications/cancelled` interrupts that request. Any other notification, including a cancel with a bad body, is
+    * ignored. A notification never becomes a response.
+    */
+  private def noted(method: String, params: Json.Obj, session: Option[String]): UIO[Unit] =
+    method match
+      case Notifications.Cancelled =>
+        ZIO.foreachDiscard(Cancelled.from(params))(c => hub.interrupt(session, c.requestId))
+      case _ => ZIO.unit
 
   private def reply(id: RequestId, era: Era, out: Either[RpcError, Json.Obj]): Message =
     out match

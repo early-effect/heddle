@@ -9,7 +9,8 @@ private[server] object ConcurrentMapPlatform:
       underlying.put(key, value); ()
     def putIfAbsent(key: K, value: V): Unit =
       underlying.putIfAbsent(key, value); ()
-    def remove(key: K): Option[V] = underlying.remove(key)
+    def remove(key: K): Option[V]         = underlying.remove(key)
+    def remove(key: K, value: V): Boolean = underlying.remove(key, value)
     def get(key: K): Option[V]    = underlying.get(key)
     def contains(key: K): Boolean = underlying.contains(key)
     def values: List[V]           = underlying.values.toList
