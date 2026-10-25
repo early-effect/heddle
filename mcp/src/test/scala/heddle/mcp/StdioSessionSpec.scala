@@ -55,10 +55,10 @@ object StdioSessionSpec extends ZIOSpecDefault:
 
   private def read(pipe: LinePipe): ZIO[Any, Boom, Message] =
     pipe.readLine.mapError(Boom.Pipe(_)).flatMap {
-      case None => ZIO.fail(Boom.Closed)
+      case None       => ZIO.fail(Boom.Closed)
       case Some(line) =>
         line.fromJson[Json] match
-          case Left(_) => ZIO.fail(Boom.Undecodable(line))
+          case Left(_)     => ZIO.fail(Boom.Undecodable(line))
           case Right(json) =>
             Message.decode(json) match
               case Left(_)    => ZIO.fail(Boom.Undecodable(line))
@@ -80,7 +80,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
       for
         started <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           in => started.succeed(()) *> gate.await *> ZIO.succeed(s"a:${in.name}"),
           in => ZIO.succeed(s"b:${in.name}"),
         )
@@ -113,7 +113,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
         started <- Promise.make[Nothing, Unit]
         stopped <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           _ => (started.succeed(()) *> gate.await).onInterrupt(stopped.succeed(())).as("a"),
           _ => ZIO.succeed("b-finished"),
         )
@@ -133,7 +133,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
       for
         started <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           in => started.succeed(()) *> gate.await *> ZIO.succeed(s"a:${in.name}"),
           _ => ZIO.succeed("other"),
         )
@@ -153,7 +153,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
       for
         started <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           in => started.succeed(()) *> gate.await *> ZIO.succeed(in.name),
           _ => ZIO.succeed("other"),
         )
@@ -173,7 +173,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
       for
         started <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           in => started.succeed(()) *> gate.await *> ZIO.succeed(s"a:${in.name}"),
           _ => ZIO.succeed("other"),
         )
@@ -196,7 +196,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
         started <- Promise.make[Nothing, Unit]
         stopped <- Promise.make[Nothing, Unit]
         gate    <- Promise.make[Nothing, Unit]
-        mcp <- server(
+        mcp     <- server(
           _ => (started.succeed(()) *> gate.await).onInterrupt(stopped.succeed(())).as("a"),
           _ => ZIO.succeed("b"),
         )
@@ -206,8 +206,7 @@ object StdioSessionSpec extends ZIOSpecDefault:
         _                <- started.await
         _                <- server.interrupt
         _                <- stopped.await
-      yield assertCompletes
-    ,
+      yield assertCompletes,
   )
 
   private def isParseError(msg: Message): TestResult =

@@ -17,7 +17,7 @@ import heddle.mcp.protocol.{
   Resource,
   ToolName,
 }
-import heddle.mcp.transport.{Http as McpHttp}
+import heddle.mcp.transport.Http as McpHttp
 import heddle.sse.SseCodec
 import specular.*
 import specular.ziotest.DocSpecSuite
@@ -197,7 +197,7 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
         final case class Arg(name: String) derives Schema, JsonCodec
         val tickNote: Message.Notification =
           Message.Notification("notifications/progress", Json.Obj("token" -> Json.Str("tick")))
-        val settings = McpClient.Settings(Implementation("docs", "1"))
+        val settings                         = McpClient.Settings(Implementation("docs", "1"))
         def textOf(result: Json.Obj): String =
           result.as[CallToolResult] match
             case Right(got) => got.content.collect { case ContentBlock.Text(text, _) => text }.mkString
@@ -207,7 +207,7 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
           started <- Promise.make[Nothing, Unit]
           stopped <- Promise.make[Nothing, Unit]
           gate    <- Promise.make[Nothing, Unit]
-          mcp <- ZIO.fromEither(
+          mcp     <- ZIO.fromEither(
             Mcp
               .from(Api("shop", "1"))
               .flatMap(_.tool[Arg]("hold") { a =>
@@ -219,17 +219,18 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
           (client, remote) <- LinePipe.connected
           _                <- mcp.stdio(remote).forkScoped
           session          <- McpClient.pipe(client, settings)
-          held             <- session.open(ClientRequest.CallTool(ToolName("hold"), Json.Obj("name" -> Json.Str("ada"))))
-          _                <- started.await
-          passed           <- session.open(ClientRequest.CallTool(ToolName("pass"), Json.Obj("name" -> Json.Str("bea"))))
-          passText         <- passed.result.map(textOf)
-          _                <- held.cancel
-          _                <- stopped.await
-          cancelled        <- held.result.flip
-          ticked           <- session.open(ClientRequest.CallTool(ToolName("tick"), Json.Obj("name" -> Json.Str("ada"))))
-          tickText         <- ticked.result.map(textOf)
-          notes            <- ticked.notifications
+          held      <- session.open(ClientRequest.CallTool(ToolName("hold"), Json.Obj("name" -> Json.Str("ada"))))
+          _         <- started.await
+          passed    <- session.open(ClientRequest.CallTool(ToolName("pass"), Json.Obj("name" -> Json.Str("bea"))))
+          passText  <- passed.result.map(textOf)
+          _         <- held.cancel
+          _         <- stopped.await
+          cancelled <- held.result.flip
+          ticked    <- session.open(ClientRequest.CallTool(ToolName("tick"), Json.Obj("name" -> Json.Str("ada"))))
+          tickText  <- ticked.result.map(textOf)
+          notes     <- ticked.notifications
         yield (passText, cancelled, notes == Chunk(tickNote), tickText)
+        end for
       }.assert { case (passText, cancelled, sameNote, tickText) =>
         val wasCancelled = cancelled match
           case McpError.Cancelled(_) => true
@@ -254,10 +255,11 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
               .withHeader(McpHttp.ProtocolHeader, ProtocolVersion.Current.value)
               .withHeader(McpHttp.MethodHeader, "tools/call")
               .withHeader(McpHttp.NameHeader, "tick")
-              .withHeader("Accept", "application/json, text/event-stream"),
+              .withHeader("Accept", "application/json, text/event-stream")
           )
           events <- SseCodec.stream(res.body.toStream).runCollect
         yield events.map(_.data)
+        end for
       }.assert { data =>
         assertTrue(
           data.size == 2,

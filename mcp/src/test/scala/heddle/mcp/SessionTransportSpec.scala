@@ -114,7 +114,6 @@ object SessionTransportSpec extends ZIOSpecDefault:
             body    <- other.result
             failed  <- held.result.flip
           yield assertTrue(still.isEmpty, said(body, "bea"), failed == McpError.Cancelled(held.id))
-        }
-      ,
+        },
     )
 end SessionTransportSpec

@@ -27,8 +27,8 @@ object InflightSpec extends ZIOSpecDefault:
       for
         seen <- Ref.make(Chunk.empty[String])
         send = (n: Message.Notification) => seen.update(_ :+ n.method)
-        _   <- Session.publish(note)
-        _   <- Session.bind(send) {
+        _ <- Session.publish(note)
+        _ <- Session.bind(send) {
           Session.publish(note) *> Session.publish(note).fork.flatMap(_.join)
         }
         got <- seen.get
@@ -36,16 +36,16 @@ object InflightSpec extends ZIOSpecDefault:
     ,
     test("untrack of a replaced fiber leaves the newer one, which interrupt then stops"):
       for
-        hub                            <- ZIO.succeed(new SessionHub)
-        _                              <- hub.open("s")
+        hub                          <- ZIO.succeed(new SessionHub)
+        _                            <- hub.open("s")
         (fiber, _, interrupted)      <- waiting
         (newer, _, newerInterrupted) <- waiting
         _                            <- hub.track(Some("s"), RequestId.Num(1), fiber)
         _                            <- hub.track(Some("s"), RequestId.Num(1), newer)
-        _                              <- hub.untrack(Some("s"), RequestId.Num(1), fiber)
-        _                              <- hub.interrupt(Some("s"), RequestId.Num(1))
-        _                              <- newerInterrupted.await
-        first <- interrupted.poll
+        _                            <- hub.untrack(Some("s"), RequestId.Num(1), fiber)
+        _                            <- hub.interrupt(Some("s"), RequestId.Num(1))
+        _                            <- newerInterrupted.await
+        first                        <- interrupted.poll
       yield assertTrue(first.isEmpty)
     ,
     test("a cancel for another session does not interrupt"):
@@ -79,7 +79,7 @@ object InflightSpec extends ZIOSpecDefault:
         _                       <- hub.open("s")
         (fiber, _, interrupted) <- waiting
         _                       <- hub.track(Some("s"), RequestId.Num(9), fiber)
-        gone <- engine(hub).respond(
+        gone                    <- engine(hub).respond(
           Cancelled(RequestId.Num(9), Some("stop")).message,
           heddle.http.header.Headers.empty,
           Era.Session,
@@ -107,7 +107,6 @@ object InflightSpec extends ZIOSpecDefault:
           None,
         )
         state <- interrupted.poll
-      yield assertTrue(state.isEmpty)
-    ,
+      yield assertTrue(state.isEmpty),
   )
 end InflightSpec

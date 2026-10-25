@@ -99,8 +99,7 @@ object ProtocolLawsSpec extends ZIOSpecDefault:
         val missing = Cancelled.from(Json.Obj())
         val badId   = Cancelled.from(Json.Obj("requestId" -> Json.Bool(true)))
         val badWhy  = Cancelled.from(Json.Obj("requestId" -> Json.Num(1), "reason" -> Json.Num(2)))
-        assertTrue(missing.isEmpty, badId.isEmpty, badWhy.isEmpty)
-      ,
+        assertTrue(missing.isEmpty, badId.isEmpty, badWhy.isEmpty),
     ),
     suite("extension ids")(
       test("prefix/name parses back to its text"):
