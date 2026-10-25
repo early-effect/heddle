@@ -3,7 +3,8 @@ package heddle.mcp.client
 import heddle.client.ClientError
 import heddle.error.HeddleError
 import heddle.http.Status
-import heddle.mcp.protocol.RpcError
+import heddle.mcp.protocol.{RequestId, RpcError}
+import zio.json.EncoderOps
 
 /** Why an MCP request produced no result. A tool's own failure is not one of these: it is an `isError` result. */
 enum McpError(val message: String) extends HeddleError:
@@ -30,4 +31,7 @@ enum McpError(val message: String) extends HeddleError:
 
   /** No answer arrived within the session's request timeout. */
   case TimedOut(method: String) extends McpError(s"No answer to $method in time")
+
+  /** The caller cancelled this request. A result that arrives later is ignored. */
+  case Cancelled(id: RequestId) extends McpError(s"Cancelled ${id.json.toJson}")
 end McpError

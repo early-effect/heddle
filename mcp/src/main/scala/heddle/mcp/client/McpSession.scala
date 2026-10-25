@@ -8,7 +8,7 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.stream.ZStream
 
-/** A connected MCP server. `request` is the one primitive; the rest decode its results into protocol types. */
+/** A connected MCP server. `open` is the one primitive; `request` is that call plus the session timeout. */
 trait McpSession:
   /** The handshake this session negotiated. */
   def era: Era
@@ -16,7 +16,12 @@ trait McpSession:
   /** What the server said it is, when it said. */
   def server: Option[Implementation]
 
-  /** One request and its raw result object. A JSON-RPC error answer is `McpError.Rpc`. */
+  /** Send `req` and keep the call. `result` does not time out; `cancel` fails it with `McpError.Cancelled`. */
+  def open(req: ClientRequest): IO[McpError, McpSession.OpenCall]
+
+  /** One request and its raw result object, bounded by the session's request timeout. A JSON-RPC error is
+    * `McpError.Rpc`.
+    */
   def request(req: ClientRequest): IO[McpError, Json.Obj]
 
   /** Server notifications on the session stream. Empty when this connection did not open one. */
@@ -48,6 +53,14 @@ trait McpSession:
 end McpSession
 
 object McpSession:
+  /** A request that has been sent. `notifications` are what the reader saw before `result` completed. */
+  final class OpenCall(
+      val id: RequestId,
+      val result: IO[McpError, Json.Obj],
+      val notifications: UIO[Chunk[Message.Notification]],
+      val cancel: IO[McpError, Unit],
+  )
+
   final class CallPartiallyApplied[In, Err, Out](session: McpSession, ep: Endpoint[In, Err, Out]):
     def apply(in: In): IO[McpCallFailure[Err], Out] =
       val doc = ep.doc
