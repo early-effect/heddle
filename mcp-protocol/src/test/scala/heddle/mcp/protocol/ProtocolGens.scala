@@ -32,7 +32,6 @@ object ProtocolGens:
         Gen.listOfBounded(0, 3)(jsonAt(depth - 1)).map(xs => Json.Arr(Chunk.fromIterable(xs))),
         obj(depth - 1),
       )
-  end jsonAt
 
   def obj(depth: Int = 2): Gen[Any, Json.Obj] =
     Gen.mapOfBounded(0, 3)(Gen.alphaNumericStringBounded(1, 6), jsonAt(depth)).map(m => Json.Obj(Chunk.fromIterable(m)))

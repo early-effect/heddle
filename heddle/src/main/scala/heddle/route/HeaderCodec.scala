@@ -56,7 +56,6 @@ object HeaderCodec:
     def encode(value: Boolean): Chunk[String] = Chunk(if value then "true" else "false")
     def schema: SchemaDoc                     = SchemaDoc.Boolean
     def required: Boolean                     = true
-  end given
 
   /** An HTTP-date (RFC 9110 §5.6.7). `Date`, `Expires`, `Last-Modified`, and `If-Modified-Since` share it. */
   given HeaderCodec[Instant] with

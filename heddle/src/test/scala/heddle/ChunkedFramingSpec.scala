@@ -200,7 +200,6 @@ object ChunkedFramingSpec extends ZIOSpecDefault:
           }
         }
       yield assertTrue(streamed == payload, batched == payload, streamed == batched)
-      end for
     ,
     test("client batched failures preserve protocol error types"):
       ZIO
@@ -254,7 +253,6 @@ object ChunkedFramingSpec extends ZIOSpecDefault:
         case Some(c) => loop(acc :+ c)
       }
     loop(Chunk.empty)
-  end collect
 
   private def decode(raw: String, maxBody: Long, capacity: Int): IO[HttpError, Chunk[Chunk[Byte]]] =
     for
@@ -280,7 +278,6 @@ object ChunkedFramingSpec extends ZIOSpecDefault:
         )
         result <- out.get
       yield String(result.toArray, StandardCharsets.US_ASCII)
-      end for
     }
 
   private def connection(input: Chunk[Chunk[Byte]]): ZIO[Scope, Nothing, Http1Conn] =

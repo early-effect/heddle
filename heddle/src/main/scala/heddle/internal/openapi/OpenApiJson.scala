@@ -44,7 +44,6 @@ private[heddle] object OpenApiJson:
         if componentFields.isEmpty then Nil else List("components" -> Json.Obj(componentFields*))
       )
     Json.Obj(root*).toJson
-  end render
 
   private def rewriteEndpoint(ep: EndpointDoc, components: mutable.LinkedHashMap[String, SchemaDoc]): EndpointDoc =
     ep.copy(
@@ -125,7 +124,6 @@ private[heddle] object OpenApiJson:
             )
         )
     Json.Obj(fields*)
-  end operationJson
 
   private def responseJson(r: StatusDoc): Json =
     val content = (r.schema, r.contentType) match
@@ -152,7 +150,6 @@ private[heddle] object OpenApiJson:
           )
         )
     Json.Obj(("description" -> Json.Str(r.description)) :: (content ++ headers)*)
-  end responseJson
 
   private def securitySchemeJson(scheme: SecurityScheme): Json =
     scheme match

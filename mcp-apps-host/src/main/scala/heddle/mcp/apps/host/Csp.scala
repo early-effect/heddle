@@ -52,5 +52,4 @@ object Csp:
       "object-src"  -> List("'none'"),
     )
     Csp(directives.map((name, sources) => (name :: sources).mkString(" ")).mkString("; "))
-  end compile
 end Csp

@@ -16,6 +16,7 @@ trait Client:
 
   /** Sends `req` and returns once the head arrives. The body streams from the connection until `Scope` closes. */
   def streaming(req: Request): ZIO[Scope, ClientError, Response]
+end Client
 
 object Client:
   def batched(req: Request): ZIO[Client, ClientError, Response] =
@@ -146,6 +147,7 @@ object Client:
 
     def at(base: Url, in: In): ZIO[Client, CallFailure[Err], Out] =
       Client.batched(ep.toRequest(in, base)).mapError(CallFailure.Transport(_)).flatMap(ep.fromResponse)
+  end CallPartiallyApplied
 
   /** Pins an `EventStream` endpoint; `apply` streams its events. The connection lives as long as the stream. */
   def subscribe[In, Err](

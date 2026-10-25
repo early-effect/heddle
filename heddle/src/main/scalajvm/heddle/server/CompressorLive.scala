@@ -24,7 +24,6 @@ private[server] object CompressorLive:
           n = in.read(buf)
         if total > limit then Left(HttpError.BodyTooLarge) else Right(Chunk.fromArray(out.toByteArray))
       finally in.close()
-      end try
     catch
       case e: java.io.IOException =>
         Left(HttpError.Malformed(WireError.Undecodable(ContentEncoding.Gzip, String.valueOf(e.getMessage))))

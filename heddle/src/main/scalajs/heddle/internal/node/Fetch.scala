@@ -51,7 +51,6 @@ trait FetchResponse extends FetchBody:
   val ok: Boolean           = js.native
   val headers: FetchHeaders = js.native
   val url: String           = js.native
-end FetchResponse
 
 @js.native
 @JSGlobal("fetch")

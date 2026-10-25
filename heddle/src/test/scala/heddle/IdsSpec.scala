@@ -34,4 +34,3 @@ object IdsSpec extends ZIOSpecDefault:
         }
       } @@ TestAspect.samples(20),
     ) @@ TestAspect.timeout(60.seconds)
-end IdsSpec

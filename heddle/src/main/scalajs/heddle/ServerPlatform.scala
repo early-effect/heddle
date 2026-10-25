@@ -28,8 +28,6 @@ private[heddle] object ServerPlatform:
         .forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(listener.localPort, halt0)
-    end for
-  end install
 
   /** Node terminates TLS in its own listener, so a connection arrives already decrypted. */
   private def bind(config: Server.Config, tls: Option[Tls]): IO[ServerError, Listener[NodeConn]] =
@@ -54,5 +52,4 @@ private[heddle] object ServerPlatform:
       Lifecycle(takingWork, busy),
       originDate,
     )
-  end runConnection
 end ServerPlatform

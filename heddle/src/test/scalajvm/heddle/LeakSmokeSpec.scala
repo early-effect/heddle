@@ -21,7 +21,5 @@ object LeakSmokeSpec extends ZIOSpecDefault:
               case (Some(a), Some(b)) => b <= a + 2
               case _                  => true
             assertTrue(tcpOk)
-          end for
         }
     ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect.timeout(15.seconds)
-end LeakSmokeSpec

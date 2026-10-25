@@ -52,3 +52,4 @@ object Request:
 
   def post(path: String, body: Body): Request =
     Request(Method.POST, Url.parse(path), body = body)
+end Request

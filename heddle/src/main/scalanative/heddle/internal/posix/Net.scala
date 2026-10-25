@@ -31,7 +31,6 @@ private object Gai:
       hints: Ptr[netdb.addrinfo],
       res: Ptr[Ptr[netdb.addrinfo]],
   ): CInt = extern
-end Gai
 
 /** POSIX sockets. `Ptr` stays in this package. */
 private[heddle] object Net:
@@ -55,7 +54,6 @@ private[heddle] object Net:
         yield ()
       }
     }
-  end listen
 
   /** Starts a non-blocking connect to an IPv4 literal. Wait for `AsyncFd.writable`, then read `socketError`. */
   def connect(host: String, port: Int): Either[NetError, Int] =
@@ -69,7 +67,6 @@ private[heddle] object Net:
         yield ()
       }
     }
-  end connect
 
   /** Starts a non-blocking connect. Wait for `AsyncFd.writable`, then read `socketError`. */
   def connect(addr: SockAddr): Either[NetError, Int] =
@@ -101,10 +98,8 @@ private[heddle] object Net:
             i += 1
           out += SockAddr(ai.ai_family, bytes)
           ai = ai.ai_next
-        end while
         netdb.freeaddrinfo(!res)
         Right(out.result())
-      end if
     }
 
   /** The pending error of a connect that `AsyncFd.writable` says has finished; `0` is success. */
@@ -251,7 +246,6 @@ private[heddle] object Net:
       addr.sin_port = htons(port.toUShort)
       addr.sin_addr._1 = raw
       Right(addr)
-  end ipv4
 
   private def ntohPort(p: in_port_t): Int =
     val x = p.toInt

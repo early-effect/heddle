@@ -14,7 +14,6 @@ trait JwkFields extends js.Object:
   val n: String               = js.native
   val e: String               = js.native
   val d: js.UndefOr[String]   = js.native
-end JwkFields
 
 class JwkKeyInput(val key: js.Dictionary[String], val format: String) extends js.Object
 

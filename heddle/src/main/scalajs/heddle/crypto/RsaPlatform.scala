@@ -84,7 +84,6 @@ private[heddle] object RsaPlatform:
       "dq"  -> b64enc(unsigned(dq)),
       "qi"  -> b64enc(unsigned(qi)),
     )
-  end privateJwk
 
   private def publicJwk(pub: RsaPublic): js.Dictionary[String] =
     js.Dictionary(
@@ -117,9 +116,7 @@ private[heddle] object RsaPlatform:
           x = y
           i += 1
       aInt += 1
-    end while
     found
-  end recoverPrimes
 
   private def integer(bytes: Chunk[Byte]): BigInteger =
     BigInteger(1, bytes.toArray)

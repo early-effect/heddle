@@ -15,4 +15,3 @@ private[brotli] enum BrotliError(val message: String):
   case BadReference               extends BrotliError("a backward reference points outside the window or dictionary")
   case OverLimit                  extends BrotliError("the output would pass its limit")
   case CorruptTable(name: String) extends BrotliError(s"the embedded $name does not decode")
-end BrotliError

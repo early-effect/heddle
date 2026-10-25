@@ -7,6 +7,7 @@ enum Scheme(val render: String, val defaultPort: Int):
   case Wss   extends Scheme("wss", 443)
 
   def secure: Boolean = this == Https || this == Wss
+end Scheme
 
 object Scheme:
   def parse(raw: String): Option[Scheme] =

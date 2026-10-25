@@ -26,7 +26,6 @@ private[heddle] object PathMacros:
           $path.withMatcher(${ extractFn[A](parts) })
         }
       case None => path
-  end specializeImpl
 
   /** The unrolled matcher builds `()`, the one value, or a flat tuple; a path that groups its codecs keeps its reader.
     */
@@ -43,7 +42,6 @@ private[heddle] object PathMacros:
       case one :: Nil => one
       case many       => defn.TupleClass(many.length).typeRef.appliedTo(many)
     shape =:= TypeRepr.of[A]
-  end fitsFlat
 
   private def registerLits(parts: List[Part])(using Quotes): Expr[Unit] =
     val regs = parts.collect { case Part.Lit(v) => '{ PathLits.register(${ Expr(v) }) } }
@@ -89,9 +87,7 @@ private[heddle] object PathMacros:
                 case None    => None
                 case Some(x) => ${ rec(i + 1, vars :+ '{ x }) }
             }
-        end match
     rec(0, Nil)
-  end unrolled
 
   /** `fitsFlat` checked the shape before expanding, and `asExprOf` has the compiler check it again. */
   private def finish[A: Type](vars: List[Expr[Any]])(using Quotes): Expr[Option[A]] =
@@ -119,7 +115,6 @@ private[heddle] object PathMacros:
           case None       =>
             val u = other.underlyingArgument
             if u == other then other else strip(u)
-  end strip
 
   private def partsOf(using Quotes)(term: quotes.reflect.Term): Option[List[Part]] =
     import quotes.reflect.*
@@ -203,7 +198,6 @@ private[heddle] object PathMacros:
                 case (List(s), Nil) => Some(List(Part.Lit(s)))
                 case _              => None
             case _ => None
-          end match
         case Select(_, "empty") | Ident("empty") => Some(Nil)
         case _                                   => None
 

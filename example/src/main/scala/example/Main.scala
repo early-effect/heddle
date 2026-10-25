@@ -27,8 +27,8 @@ object Main extends ZIOAppDefault:
 
   /** Tokens from the embedded provider are for this API, so the verifier accepts exactly that audience. */
   private def runHttp =
-    val meta  = s"$issuer/.well-known/oauth-protected-resource"
-    val serve = for
+    val meta = s"$issuer/.well-known/oauth-protected-resource"
+    (for
       key    <- SigningKey.generateRsa("op")
       ada    <- Passwords.hash("ada")
       secret <- Passwords.hash("secret")
@@ -65,9 +65,7 @@ object Main extends ZIOAppDefault:
         .serve(routes @@ (Middleware.requestId() ++ Middleware.cors() ++ Middleware.debug))
         .provide(Server.Config.defaults, Rsa.live)
         .catchAllCause(c => if c.isInterruptedOnly then ZIO.unit else ZIO.refailCause(c))
-    yield ()
-    serve.provide(Rsa.live)
-  end runHttp
+    yield ()).provide(Rsa.live)
 
   private[example] def publicApi(office: BoxOffice): Api[Any] =
     Api("Box office", "0.1.0")
@@ -98,7 +96,6 @@ object Main extends ZIOAppDefault:
         }
       },
     )
-  end preview
 
   private def file(path: Path): UIO[Response] =
     Files.fromPath(path).fold(_ => Response.notFound(), identity)

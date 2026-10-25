@@ -32,10 +32,7 @@ private[heddle] object HeaderParams:
             while i < n && raw.charAt(i) != ';' do i += 1
             raw.substring(start, i).trim
         if name.nonEmpty then out += (lower(name) -> value)
-      end if
-    end while
     out.result()
-  end parse
 
   /** `; name=value`, quoting the value unless it is a non-empty token. */
   def render(name: String, value: String): String =
@@ -53,7 +50,6 @@ private[heddle] object HeaderParams:
     }
     sb += '"'
     sb.result()
-  end quoted
 
   def lower(s: String): String =
     val arr = s.toCharArray

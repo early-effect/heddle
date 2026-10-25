@@ -38,4 +38,3 @@ object HuffmanSpec extends ZIOSpecDefault:
           assertTrue(Huffman.prefixFree(len, codes))
         },
     ) @@ TestAspect.timeout(30.seconds)
-end HuffmanSpec

@@ -65,8 +65,6 @@ object Http:
         }
       case _ =>
         ZIO.succeed(reply(Message.Error(None, RpcError.InvalidRequest("GET /mcp needs Accept: text/event-stream"))))
-    end match
-  end get
 
   private def delete(hub: SessionHub, req: Request): ZIO[Any, Nothing, Response] =
     req.headers
@@ -113,8 +111,6 @@ object Http:
             case true  =>
               dispatch(engine, hub, req, msg, Era.Session, Some(id)).map(_.withHeader(Envelope.SessionHeader, id))
           }
-    end if
-  end sessionPost
 
   /** `Accept` chooses the body before the tool runs. A cancel or a closed stream interrupts the tracked fiber. */
   private def dispatch[R](

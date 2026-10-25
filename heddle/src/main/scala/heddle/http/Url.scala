@@ -29,7 +29,6 @@ final case class Url(
         val sch = scheme.getOrElse(Scheme.Http)
         val ps  = port.filterNot(_ == sch.defaultPort).map(n => s":$n").getOrElse("")
         s"${sch.render}://$h$ps$pq"
-  end render
 end Url
 
 object Url:
@@ -62,8 +61,6 @@ object Url:
               .filter(url => url.host.forall(validHost) && portIsNumeric(noFragment, sep))
               .toRight(UrlError.BadAuthority(authorityOf(noFragment, sep)))
       case at => Left(UrlError.BadCharacter(raw(at), at))
-    end match
-  end decode
 
   private def authorityOf(raw: String, sep: Int): String =
     val rest = raw.substring(sep + 3)
@@ -100,8 +97,6 @@ object Url:
           target.copy(scheme = Some(scheme), host = Some(host), port = port.filterNot(_ == scheme.defaultPort))
         }
       }
-    end if
-  end absolute
 
   private def uriChar(c: Char): Boolean =
     (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || "-._~:/?#[]@!$&'()*+,;=%".contains(c)
@@ -126,7 +121,6 @@ object Url:
       val digits = authority.substring(colon + 1)
       digits.nonEmpty && digits.forall(_.isDigit) && digits.toIntOption.exists(p => p >= 0 && p <= 65535)
     }
-  end portIsNumeric
 
   private def splitAuthority(authority: String): (String, Option[Int]) =
     val bracket = authority.lastIndexOf(']')

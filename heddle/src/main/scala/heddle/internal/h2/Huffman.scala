@@ -25,12 +25,9 @@ private[heddle] object Huffman:
           case Some(_)            => ok = false
           case None if bits >= 38 => ok = false
           case None               => cont = false
-      end while
-    end while
     Option.when(ok && bits < 8 && acc == (1L << bits) - 1)(
       String(out.result(), java.nio.charset.StandardCharsets.ISO_8859_1)
     )
-  end decode
 
   private def matchSymbol(acc: Long, bits: Int): Option[(Int, Int)] =
     var best: Option[(Int, Int)] = None
@@ -45,9 +42,7 @@ private[heddle] object Huffman:
             case Some((_, bn)) if bn <= n => ()
             case _                        => best = Some((s, n))
       s += 1
-    end while
     best
-  end matchSymbol
 
   private val codes: Array[Long] = Array.ofDim(257)
   private val lens: Array[Int]   = Array.ofDim(257)

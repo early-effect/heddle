@@ -100,8 +100,6 @@ object ViewRequest:
       case "resources/read" => p.required[String]("uri").map(ReadResource(_))
       case "ping"           => Right(Ping)
       case other            => Left(UiError.UnknownMethod(other))
-    end match
-  end decode
 
   private def downloadable(b: ContentBlock): Boolean =
     b match
@@ -152,9 +150,6 @@ object ViewNotification:
           data   <- p.required[Json]("data")
         yield Log(level, logger, data)
       case other => Left(UiError.UnknownMethod(other))
-    end match
-  end decode
-end ViewNotification
 
 /** The notifications a host sends its view, after the view's `ui/notifications/initialized`. */
 enum HostNotification(val method: String):
@@ -187,8 +182,6 @@ object HostNotification:
       case "ui/notifications/tool-cancelled"       => p.optional[String]("reason").map(ToolCancelled(_))
       case "ui/notifications/host-context-changed" => p.whole[HostContext].map(HostContextChanged(_))
       case other                                   => Left(UiError.UnknownMethod(other))
-  end decode
-end HostNotification
 
 /** The one request a host sends its view: tear down, answered once the view has saved what it must. */
 enum HostRequest(val method: String):
@@ -199,6 +192,7 @@ enum HostRequest(val method: String):
       case ResourceTeardown(reason) => Json.Obj(Chunk.fromIterable(reason.map("reason" -> Json.Str(_))))
 
   def message(id: RequestId): Message.Request = Message.Request(id, method, params)
+end HostRequest
 
 object HostRequest:
   def decode(method: String, params: Json.Obj): Either[UiError, HostRequest] =
@@ -247,8 +241,6 @@ object SandboxMessage:
           grant   <- p.whole[SandboxGrant]
         yield ResourceReady(html, sandbox, grant)
       case other => Left(UiError.UnknownMethod(other))
-    end match
-  end decode
 end SandboxMessage
 
 /** JSON plumbing shared by the message codecs. */

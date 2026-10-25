@@ -135,7 +135,6 @@ object WebSocketSpec extends ZIOSpecDefault:
       acc += b.toByte
     val raw = String(acc.toArray, StandardCharsets.US_ASCII)
     (raw, raw)
-  end upgrade
 
   private def writeFrame(out: OutputStream, text: String): Unit =
     writeOpcode(out, 1, text.getBytes(StandardCharsets.UTF_8))
@@ -161,7 +160,6 @@ object WebSocketSpec extends ZIOSpecDefault:
       i += 1
     out.write(hdr)
     out.flush()
-  end writeOversizeHeader
 
   private def readFrame(in: InputStream): String =
     val (_, data) = readOpcode(in)
@@ -185,5 +183,4 @@ object WebSocketSpec extends ZIOSpecDefault:
         n.toInt
     val data = in.readNBytes(len)
     (op, data)
-  end readOpcode
 end WebSocketSpec

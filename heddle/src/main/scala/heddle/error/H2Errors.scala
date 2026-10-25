@@ -11,7 +11,6 @@ enum HpackError(val message: String) extends HeddleError:
   case LateSizeUpdate extends HpackError("a table size update follows a header field")
   case ListTooLarge(size: Long, limit: Long)
       extends HpackError(s"the header list is $size octets, over the $limit this endpoint allows")
-end HpackError
 
 /** A peer broke an HTTP/2 rule that is not about framing bytes (RFC 9113). */
 enum H2Violation(val message: String, val code: Int):
@@ -29,4 +28,3 @@ enum H2Violation(val message: String, val code: Int):
   case WindowOverflow(stream: Int)
       extends H2Violation(s"a WINDOW_UPDATE pushes stream $stream's window past 2^31-1", 0x3)
   case ZeroIncrement extends H2Violation("a connection WINDOW_UPDATE of 0", 0x1)
-end H2Violation

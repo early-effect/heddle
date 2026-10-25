@@ -21,7 +21,6 @@ private[brotli] object WordTransform:
         case _ => None
     }
     Either.cond(parsed.length == Tables.transforms.length, parsed.toArray, BrotliError.CorruptTable("transforms"))
-  end all
 
   def omitFirst(op: Int): Int = if op >= 12 then op - 11 else 0
   def omitLast(op: Int): Int  = if op >= 1 && op <= 9 then op else 0
@@ -60,16 +59,12 @@ private[brotli] object WordTransform:
           dst(up + 2) = (dst(up + 2) ^ 5).toByte
           up += 3
           n -= 3
-        end if
-      end while
-    end if
     i = 0
     while i < tx.suffix.length do
       dst(offset) = tx.suffix(i)
       offset += 1
       i += 1
     offset - dstOff
-  end apply
 
   private def unhex(s: String): Option[Array[Byte]] =
     Option.when(s.length % 2 == 0 && s.forall(c => Character.digit(c, 16) >= 0)) {

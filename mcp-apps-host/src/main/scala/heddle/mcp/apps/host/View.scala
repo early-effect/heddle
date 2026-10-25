@@ -51,7 +51,6 @@ enum MountRefusal(val message: String) extends HeddleError:
       extends MountRefusal(s"${uri.value} changed since it was pinned (${pinned.hex} is now ${served.hex})")
   case Pins(error: PinFileError) extends MountRefusal(error.message)
   case Session(error: McpError)  extends MountRefusal(error.message)
-end MountRefusal
 
 /** A view as the server links it: its `ui://` resource, the tool that opened it, and the tools it may call. The host
   * reads all of this from the live `tools/list`, never from the view.
@@ -118,4 +117,3 @@ object ViewResource:
       val (ask, policyProblems) = UiMeta.decodeResource(content.meta)
       val (scripts, badScripts) = UiMeta.decodeScripts(content.meta)
       ViewResource(html, ask, Csp.Scripts.of(scripts), policyProblems ++ badScripts)
-end ViewResource

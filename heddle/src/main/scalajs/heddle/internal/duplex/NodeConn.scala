@@ -121,8 +121,6 @@ private[heddle] final class NodeConn(val socket: NetSocket, val alpn: String) ex
         socket.resume()
         paused = false
       n
-    end if
-  end take
 
   private def wakeRead(): Unit =
     timeoutHandle.foreach(js.timers.clearTimeout)
@@ -135,7 +133,6 @@ private[heddle] final class NodeConn(val socket: NetSocket, val alpn: String) ex
         case None if eof               => cb(ZIO.succeed(-1))
         case None                      => readWaiter = Some((dst, cb))
     }
-  end wakeRead
 end NodeConn
 
 object NodeConn:

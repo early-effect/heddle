@@ -13,3 +13,4 @@ private[heddle] object AsyncFd:
   def writable(fd: Int): IO[NetError, Unit] = Poller.await(fd, Interest.Write)
 
   def ready(fd: Int, on: Interest): IO[NetError, Unit] = Poller.await(fd, on)
+end AsyncFd

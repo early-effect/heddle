@@ -46,9 +46,7 @@ object Sha256:
         t += 1
       h(0) += a; h(1) += b; h(2) += c; h(3) += d; h(4) += e; h(5) += f; h(6) += g; h(7) += hh
       off += 64
-    end while
     Chunk.fromArray(h.flatMap(v => Array((v >>> 24).toByte, (v >>> 16).toByte, (v >>> 8).toByte, v.toByte)))
-  end digest
 
   def hex(bytes: Chunk[Byte]): String = digest(bytes).map(b => f"${b & 0xff}%02x").mkString
 
@@ -63,5 +61,4 @@ object Sha256:
       out(total - 1 - i) = (bitLen >>> (8 * i)).toByte
       i += 1
     out
-  end padded
 end Sha256

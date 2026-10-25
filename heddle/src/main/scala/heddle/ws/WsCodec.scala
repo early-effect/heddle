@@ -28,7 +28,6 @@ private[heddle] object WsCodec:
         System.arraycopy(reason, 0, p, 2, reason.length)
         (8, p)
     frameBytes(opcode, payload, fin = true, mask = None)
-  end encode
 
   def frameBytes(opcode: Int, payload: Array[Byte], fin: Boolean, mask: Option[Array[Byte]]): Chunk[Byte] =
     val len    = payload.length
@@ -47,7 +46,6 @@ private[heddle] object WsCodec:
       while s >= 0 do
         header += ((len.toLong >> s) & 0xff).toByte
         s -= 8
-    end if
     mask.foreach { m =>
       var i = 0
       while i < 4 do
@@ -65,5 +63,4 @@ private[heddle] object WsCodec:
             i += 1
           out
     Chunk.fromArray(header.result() ++ pay)
-  end frameBytes
 end WsCodec

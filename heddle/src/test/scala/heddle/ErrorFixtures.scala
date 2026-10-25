@@ -7,6 +7,7 @@ object OrderError:
   case object Unavailable                   extends OrderError
 
   val all: List[OrderError] = List(NotFound(1), Conflict("busy"), Unavailable)
+end OrderError
 
 enum Seating derives Schema, JsonCodec:
   case SoldOut(showId: Int)

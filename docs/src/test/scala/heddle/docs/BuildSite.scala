@@ -75,7 +75,6 @@ object BuildSite extends DocsSite:
         )
       ),
     )
-  end site
 
   override def layers: ZLayer[Any, Nothing, SiteBuilder] =
     EarlyEffectTheme.layers
@@ -91,7 +90,6 @@ object BuildSite extends DocsSite:
         SiteError.WriteFailed(index, err)
       }
     promote *> EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out)
-  end afterBuild
 
   private def copyClientBundle(out: Path): IO[SiteError, Unit] =
     val dest = out.resolve("assets/client.js")
@@ -106,8 +104,6 @@ object BuildSite extends DocsSite:
             ()
           }
           .mapError(err => SiteError.WriteFailed(dest, err))
-    end match
-  end copyClientBundle
 
   private def clientJsMarker: Path =
     repoRoot.resolve("target/specular-client-js.path")

@@ -19,7 +19,6 @@ final class Tls private (ctx: Ssl.Ctx):
           .as(Tls.Session(NativeConn.tls(conn.fd, session), ""))
       }
       .mapError(e => HttpError.Io(e.exception))
-end Tls
 
 object Tls:
   private[heddle] final class Session(val conn: ByteConn, val applicationProtocol: String)

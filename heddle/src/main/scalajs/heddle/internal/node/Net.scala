@@ -20,7 +20,6 @@ trait NetSocket extends js.Object:
   def destroy(): this.type                                                 = js.native
   def setTimeout(ms: Int): this.type                                       = js.native
   val destroyed: Boolean                                                   = js.native
-end NetSocket
 
 @js.native
 trait NetServer extends js.Object:
@@ -30,7 +29,6 @@ trait NetServer extends js.Object:
   def close(cb: js.Function0[Unit]): this.type                           = js.native
   def address(): AddressInfo | String | Null                             = js.native
   val listening: Boolean                                                 = js.native
-end NetServer
 
 extension (server: NetServer)
   /** The bound TCP port, or 0 before `listen` completes. A native JS trait cannot be type-tested, so narrowing the

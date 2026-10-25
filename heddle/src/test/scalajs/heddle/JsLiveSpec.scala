@@ -130,7 +130,6 @@ object JsLiveSpec extends ZIOSpecDefault:
               acc.write(arr)
               drain
           }
-        end drain
         (conn.write(req).mapError(_.asThrowable) *> drain).ensuring(conn.close)
       }
 end JsLiveSpec

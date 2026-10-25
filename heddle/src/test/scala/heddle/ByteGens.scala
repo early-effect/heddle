@@ -12,3 +12,4 @@ object ByteGens:
 
   def nonEmptyUpTo(max: Int): Gen[Any, Chunk[Byte]] =
     Gen.int(1, max).flatMap(n => Gen.fromZIO(Random.nextBytes(n)))
+end ByteGens

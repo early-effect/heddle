@@ -17,3 +17,4 @@ object Compressor:
   /** Inflates at most `limit` bytes. More than that is `BodyTooLarge`; corrupt input is `Malformed`. */
   def gunzip(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]] =
     CompressorLive.gunzip(bytes, limit.toLong)
+end Compressor

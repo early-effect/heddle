@@ -84,9 +84,6 @@ private[heddle] object Poller:
           while i < fds.length do
             if revents(i) != 0 then fire(fds(i), revents(i))
             i += 1
-      end match
-    end while
-  end loop
 
   private def fire(fd: Int, revents: Int): Unit =
     Option(waiters.get(fd)).foreach { list =>

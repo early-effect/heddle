@@ -11,4 +11,3 @@ private[heddle] object SslIo:
         case Some(on) => AsyncFd.ready(fd, on) *> step
       }
     step
-end SslIo

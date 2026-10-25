@@ -163,4 +163,3 @@ object SseSpec extends ZIOSpecDefault:
             .map(evs => assertTrue(evs == Chunk(ServerSentEvent("x")))),
       ) @@ TestAspect.sequential @@ TestAspect.timeout(5.seconds) @@ TestAspect.withLiveClock,
     ) @@ TestAspect.timeout(5.seconds)
-end SseSpec

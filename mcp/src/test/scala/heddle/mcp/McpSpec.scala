@@ -121,7 +121,6 @@ object McpSpec extends ZIOSpecDefault:
     val req1 = protocol.fold(req0)(v => req0.withHeader(Http.ProtocolHeader, v))
     val req  = session.fold(req1)(s => req1.withHeader(Legacy.SessionHeader, s))
     mcp.routes(req)
-  end postLegacyJson
 
   def spec =
     suite("Mcp")(
@@ -211,7 +210,6 @@ object McpSpec extends ZIOSpecDefault:
             case Left(McpBuildError.NotPromotable("home_page", OpArgsError.NonJsonSuccess)) => true
             case _                                                                          => false,
         )
-        end for
       ,
       test("withCatalog adds search_operations and invoke"):
         for
@@ -395,7 +393,6 @@ object McpSpec extends ZIOSpecDefault:
             text.contains("get_items_id"),
             text.contains("ada"),
           )
-        end for
       ,
       test("HTTP header mismatch is 400 / -32020"):
         for
@@ -519,7 +516,6 @@ object McpSpec extends ZIOSpecDefault:
             r.content == Chunk(ContentBlock.Text("hi ada")),
             schema.flatMap(_.get("type")).contains(Json.Str("object")),
           )
-        end for
       ,
       test("a native tool's own error is typed; one that cannot fail needs no codec"):
         val tools = shop
@@ -539,7 +535,6 @@ object McpSpec extends ZIOSpecDefault:
           !good.failed,
           good.structuredContent.contains(obj("value" -> Json.Str("ada"))),
         )
-        end for
       ,
       test("a message with an id is a request, even when its method looks like a notification"):
         for
@@ -600,7 +595,6 @@ object McpSpec extends ZIOSpecDefault:
             contents.contains(Chunk(ResourceContents.Text("ui://shop/board", page.mimeType, "<p>hi</p>", None))),
             miss.exists(_.toJson.contains("-32002")),
           )
-        end for
       ,
       test("a resource that cannot be read now is an internal error, not a crash"):
         val flaky = ServedResource(Resource("ui://shop/flaky", "flaky"), ZIO.fail(ResourceUnavailable("disk")))
@@ -642,7 +636,6 @@ object McpSpec extends ZIOSpecDefault:
           disc.exists(_.toJson.contains(""""extensions":{"io.modelcontextprotocol/ui":{"mimeTypes"""")),
           body.contains("io.modelcontextprotocol/ui"),
         )
-        end for
       ,
       test("a native tool name outside the grammar does not compile"):
         typeCheck("""Mcp.from(Api("S", "1")).flatMap(_.tool[Query]("no spaces")(q => ZIO.succeed(q.q)))""").map { r =>
@@ -776,19 +769,17 @@ object McpSpec extends ZIOSpecDefault:
           ).mkString("", "\n", "\n")
         val in  = java.io.ByteArrayInputStream(lines.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val out = java.io.ByteArrayOutputStream()
-        val ran =
-          for
-            store <- Ref.make(Map(1 -> Item(1, "ada")))
-            mcp   <- mcpOf(store)
-            _     <- mcp.stdio(in, out)
-          yield
-            val text = String(out.toByteArray)
-            assertTrue(
-              text.contains("2025-11-25"),
-              text.contains("get_items_id"),
-              text.contains("ada"),
-              !text.contains("resultType"),
-            )
-        ran,
+        for
+          store <- Ref.make(Map(1 -> Item(1, "ada")))
+          mcp   <- mcpOf(store)
+          _     <- mcp.stdio(in, out)
+        yield
+          val text = String(out.toByteArray)
+          assertTrue(
+            text.contains("2025-11-25"),
+            text.contains("get_items_id"),
+            text.contains("ada"),
+            !text.contains("resultType"),
+          ),
     ) @@ TestAspect.timeout(10.seconds)
 end McpSpec

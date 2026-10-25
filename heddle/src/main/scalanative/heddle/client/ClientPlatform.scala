@@ -51,7 +51,6 @@ private[heddle] object ClientPlatform:
         yield Http1Conn(conn, cfg.maxHeaderBytes)
       if cfg.connectTimeout == Duration.Infinity || cfg.connectTimeout.toNanos <= 0L then connected
       else connected.timeoutFail(ClientError.ConnectTimeout(a))(cfg.connectTimeout)
-    end open
 
     /** Tries each resolved address in order. A socket is closed unless its connect succeeds. */
     private def first(a: Authority, addrs: List[SockAddr]): IO[ClientError, Int] =
@@ -86,7 +85,6 @@ private[heddle] object ClientPlatform:
             .handshake(session, accept = false, fd)
             .mapBoth(e => ClientError.Tls(a, e.exception), _ => NativeConn.tls(fd, session))
         )
-    end secure
 
     private def connectFailed(a: Authority)(e: NetError): ClientError = ClientError.Connect(a, e.exception)
   end NativeConnector

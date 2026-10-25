@@ -29,7 +29,6 @@ private[brotli] object Lz77:
           if len >= 4 then
             bestLen = len.min(n - i)
             bestDist = i - p
-      end if
       if bestLen >= 4 then
         out += Cmd(insert, bestLen, bestDist, lits.result())
         lits.clear()
@@ -43,11 +42,8 @@ private[brotli] object Lz77:
         lits += data(i)
         insert += 1
         i += 1
-      end if
-    end while
     if insert > 0 || out.result().isEmpty then out += Cmd(insert, 2, 0, lits.result())
     out.result()
-  end compress
 
   def covers(data: Array[Byte], cmds: Array[Cmd]): Boolean =
     cmds.map(_.produced).sum == data.length
@@ -66,7 +62,6 @@ private[brotli] object Lz77:
           n += 1
     }
     buf.toArray
-  end reconstruct
 
   private def hash4(data: Array[Byte], i: Int): Int =
     val v =

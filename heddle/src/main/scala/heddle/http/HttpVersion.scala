@@ -10,6 +10,7 @@ enum HttpVersion(val render: String):
   /** HTTP/2 (`"HTTP/2"`). h2 requests carry this, not [[Http11]]. */
   case Http2              extends HttpVersion("HTTP/2")
   case Other(raw: String) extends HttpVersion(raw)
+end HttpVersion
 
 object HttpVersion:
   def parse(raw: Chunk[Byte], from: Int, until: Int): HttpVersion =

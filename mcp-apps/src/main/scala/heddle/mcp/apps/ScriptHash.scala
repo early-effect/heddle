@@ -55,4 +55,5 @@ object ScriptHash:
 
     /** `'sha256-<base64>'`, as it goes in `script-src`. */
     def source: String = s"'$h'"
+  end extension
 end ScriptHash

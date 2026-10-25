@@ -95,4 +95,3 @@ object BodyCodecSpec extends ZIOSpecDefault:
           bytes <- typeCheck("""Endpoint.get("bin").out[zio.Chunk[Byte]]""")
         yield assertTrue(unit.isLeft, bytes.isLeft),
     ) @@ TestAspect.timeout(5.seconds)
-end BodyCodecSpec

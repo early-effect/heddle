@@ -34,4 +34,3 @@ object Lz77Spec extends ZIOSpecDefault:
         val cmds = Lz77.compress(data)
         assertTrue(cmds.forall(c => c.dist == 0 || (c.dist >= 1 && c.dist <= Lz77.MaxDistance))),
     ) @@ TestAspect.timeout(30.seconds)
-end Lz77Spec

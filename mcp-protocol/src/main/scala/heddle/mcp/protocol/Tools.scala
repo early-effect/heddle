@@ -41,7 +41,6 @@ enum ContentBlock derives JsonCodec:
       @jsonField("_meta") meta: Option[Json.Obj] = None,
   )
   @jsonHint("resource") case Embedded(resource: ResourceContents, @jsonField("_meta") meta: Option[Json.Obj] = None)
-end ContentBlock
 
 /** `tools/call`'s result. A tool's own failure is `isError: true` with content, never a JSON-RPC error.
   * `structuredContent` is an object, as the spec requires; it conforms to the tool's `outputSchema`.

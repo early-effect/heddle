@@ -74,7 +74,6 @@ private[heddle] object Http1Exchange:
       case Body.Empty           => write(head)
       case Body.Bytes(bytes, _) => write(head ++ bytes)
       case Body.Stream(s, _, _) => write(head) *> s.mapError(io(target.authority, _)).runForeachChunk(write)
-  end send
 
   def readHead(c: Http1Conn, target: Target, limits: Limits, io: IoFailure): IO[ClientError, Head] =
     limits
@@ -99,7 +98,6 @@ private[heddle] object Http1Exchange:
       head.headers.get(HeaderName.ContentLength) match
         case None      => Right(Framing.UntilClose)
         case Some(raw) => Ascii.decimal(raw).map(Framing.Length(_)).toRight(WireError.BadContentLength(raw))
-  end framing
 
   def reuse(request: Headers, head: Head, framing: Framing): Reuse =
     val closes    = (h: Headers) => h.connection.contains("close")
@@ -153,8 +151,6 @@ private[heddle] object Http1Exchange:
             else rest(acc ++ got)
           }
         rest(Chunk.empty)
-    end match
-  end readBody
 
   /** The body as it arrives. The connection stays open until the stream ends or its scope closes. */
   def streamBody(c: Http1Conn, framing: Framing, contentType: Option[heddle.http.MediaType], limits: Limits): Body =
@@ -175,7 +171,6 @@ private[heddle] object Http1Exchange:
         case Framing.Length(n) => Some(n)
         case _                 => None,
     )
-  end streamBody
 
   def response(head: Head, body: Body): Response =
     Response(head.status, head.headers, body)
@@ -219,11 +214,5 @@ private[heddle] object Http1Exchange:
                     val (ns, ne) = Ascii.trim(raw, j, colon)
                     hdrs += Header.slice(HeaderName.intern(raw, ns, ne), raw, colon + 1, k)
                     j = k + 2
-                end if
-            end while
             err.toLeft(Head(version, Status.fromCode(c), Headers(Chunk.fromIterable(hdrs))))
-        end match
-      end if
-    end if
-  end parseHead
 end Http1Exchange

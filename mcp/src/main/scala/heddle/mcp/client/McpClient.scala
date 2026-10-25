@@ -81,8 +81,6 @@ object McpClient:
       settings,
       notes,
     )
-    end for
-  end initialize
 
   private def speaksOnlySession(e: McpError): Boolean =
     e match

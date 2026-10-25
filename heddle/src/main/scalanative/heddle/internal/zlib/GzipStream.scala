@@ -72,7 +72,6 @@ private[heddle] object GzipStream:
       val end  = ZStream.fromZIO(step(Chunk.empty, ZFinish))
       (body ++ end).flattenChunks
     }
-  end stream
 
   private def open(): Either[ZlibError, Ptr[Z.Stream]] =
     val size = sizeof[Z.Stream]
@@ -85,7 +84,6 @@ private[heddle] object GzipStream:
       else
         stdlib.free(strm.asInstanceOf[Ptr[Byte]])
         Left(ZlibError.Failed("deflateInit2", rc))
-  end open
 
   private def close(strm: Ptr[Z.Stream]): Unit =
     val _ = Z.deflateEnd(strm)
@@ -114,10 +112,7 @@ private[heddle] object GzipStream:
           acc += out(i)
           i += 1
         more = if flush == ZFinish then rc != ZStreamEnd else produced == OutBuffer
-      end if
-    end while
     failed.toLeft(acc.result())
-  end run
 end GzipStream
 
 /** A zlib call that returned an error code. */

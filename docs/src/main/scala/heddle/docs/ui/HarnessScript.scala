@@ -103,7 +103,6 @@ object HarnessScript:
       rpcResponse = pretty(reply),
       rpcKicker = s"same function as ${request.method.render} ${request.url.path.render}",
     )
-  end render
 
   private def listText(rows: List[String], footnote: String): String =
     val body = dialogue(rows)
@@ -158,7 +157,6 @@ object HarnessScript:
       case name :: Nil => s"$name cannot be a tool."
       case names       => s"${names.mkString(", ")} cannot be tools."
     List(open, shut).filter(_.nonEmpty).mkString("\n")
-  end note
 
   private def argsOf(doc: EndpointDoc, request: Request): String =
     val names    = doc.pathTemplate.split('/').toList.filter(_.nonEmpty)
@@ -170,7 +168,6 @@ object HarnessScript:
       request.url.query.getAll(query.name).toList.map(value => s"${query.name}: $value")
     }
     s"{${(pathArgs ++ queryArgs).mkString(", ")}}"
-  end argsOf
 
   private def callArguments(doc: EndpointDoc, request: Request): Either[Gap, Json.Obj] =
     val names  = doc.pathTemplate.split('/').toList.filter(_.nonEmpty)
@@ -194,7 +191,6 @@ object HarnessScript:
       }
       Json.Obj(Chunk.fromIterable(fields ++ queryFields))
     }
-  end callArguments
 
   private def jsonValue(schema: SchemaDoc, raw: String): Json =
     schema.unwrapOptional._1 match
@@ -230,8 +226,6 @@ object HarnessScript:
         val body = values.map(value => s"$nest${renderJson(value, indent + 1)}").mkString(",\n")
         s"[\n$body\n$pad]"
       case other => other.toJson
-    end match
-  end renderJson
 
   private def hintLabel(hint: Hint): String =
     hint match

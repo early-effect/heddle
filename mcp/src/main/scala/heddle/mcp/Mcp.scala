@@ -101,8 +101,6 @@ final class Mcp[-R] private (
             path,
           )
         )
-    end match
-  end withToolMeta
 
   /** Advertises an extension in `server/discover` and `initialize` capabilities, with its settings. */
   def withExtension(id: ExtensionId, settings: Json.Obj = Json.Obj()): Mcp[R] =
@@ -154,7 +152,6 @@ object Mcp:
         val title   = apis.headOption.map(_.title).getOrElse("heddle")
         val version = apis.headOption.map(_.version).getOrElse("0.0.0")
         Right(new Mcp(Implementation(title, version), Offer(tools, Chunk.empty, Map.empty), catalog, None, "mcp"))
-  end from
 
   def unauthorized(resourceMetadata: String, scopes: List[String] = Nil): Response =
     ProtectedResource.unauthorized(resourceMetadata, scopes)
@@ -210,7 +207,6 @@ object Mcp:
             b => ToolCall.success(jb.encoder.toJsonAST(b).getOrElse(Json.Null), Some(out)),
           )
     }
-  end native
 
   private def catalogTools[R](ops: Chunk[BoundOp[R, ?, ?, ?]]): Chunk[ToolCall[R]] =
     val byName = ops.map(o => o.endpoint.doc.toolName -> o).toMap
@@ -247,7 +243,6 @@ object Mcp:
       })
       ZIO.succeed(ToolCall.success(Json.Obj("operations" -> found), None))
     }
-  end searchTool
 
   private def invokeTool[R](byName: Map[String, BoundOp[R, ?, ?, ?]]): ToolCall[R] =
     val schema = Json.Obj(
@@ -271,5 +266,4 @@ object Mcp:
                 case Left(e)  => ZIO.succeed(ToolCall.failed(e.message))
                 case Right(t) => t.call(inner, headers)
     }
-  end invokeTool
 end Mcp

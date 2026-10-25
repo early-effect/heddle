@@ -33,7 +33,6 @@ object Files:
                   else stat(index).map(_.filter(_.isFile()).map(_ => index))
                 case _ => ZIO.none
               }
-            end if
           }
           .flatMap {
             case None       => ZIO.none
@@ -73,7 +72,6 @@ object Files:
                 case None        => base.withBody(Body.fromBytes(bytes, Some(ct)))
             case None =>
               base.withBody(Body.fromBytes(bytes, Some(ct)))
-          end match
         }
     }
 

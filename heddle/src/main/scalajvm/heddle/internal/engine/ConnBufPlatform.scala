@@ -29,7 +29,6 @@ private[heddle] object ConnBufPlatform:
           .mapError(HttpError.Io(_)),
       d => ZIO.succeed(soTimeout(ch.socket, d)),
     )
-  end channel
 
   def inputStream(buf: ByteBuffer, in: java.io.InputStream, sock: java.net.Socket): ConnBuf =
     ConnBuf.fromPull(
