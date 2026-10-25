@@ -20,16 +20,16 @@ private[client] final case class Inflight(
 /** How messages reach one server. `submit` sends one request; the reader completes `flight.answer`. */
 private[client] trait Carrier:
   def submit(req: Message.Request, era: Era, flight: Inflight): IO[McpError, Unit]
-  def forget(id: RequestId): UIO[Unit] = ZIO.succeed(id).whenDiscard(false).unit
+  def forget(id: RequestId): UIO[Unit]
   def notify(note: Message.Notification, era: Era): IO[McpError, Unit]
 
-  /** The session hub, from `connect`, before the handshake. A pipe publishes into it; HTTP also needs the scope. */
-  def attach(notes: Hub[Message.Notification], scope: Scope): UIO[Unit] =
-    ZIO.succeed((notes, scope)).whenDiscard(false).unit
+  /** The session hub, from `connect`, before the handshake. A pipe publishes into it. HTTP forks each read into
+    * `scope`.
+    */
+  def attach(notes: Hub[Message.Notification], scope: Scope): UIO[Unit]
 
-  /** Attach the session's server-to-client stream. A pipe already carries those lines, so it does nothing. */
-  def openEvents(sink: Hub[Message.Notification]): ZIO[Scope, McpError, Unit] =
-    ZIO.succeed(sink).whenDiscard(false).unit
+  /** Attach the session's server-to-client GET stream. A pipe already carries those lines, so it does nothing. */
+  def openEvents(sink: Hub[Message.Notification]): ZIO[Scope, McpError, Unit]
 end Carrier
 
 /** Streamable HTTP. Each request is one POST; the answer is a JSON body or an event stream carrying it. */
@@ -204,8 +204,11 @@ private[client] final class PipeCarrier private (
   def notify(note: Message.Notification, era: Era): IO[McpError, Unit] =
     write(note.json)
 
-  override def attach(notes: Hub[Message.Notification], scope: Scope): UIO[Unit] =
-    ZIO.succeed(scope).whenDiscard(false) *> sink.set(Some(notes))
+  override def attach(notes: Hub[Message.Notification], _scope: Scope): UIO[Unit] =
+    sink.set(Some(notes))
+
+  override def openEvents(_sink: Hub[Message.Notification]): ZIO[Scope, McpError, Unit] =
+    ZIO.unit
 
   /** Runs until the pipe ends, then fails every waiting request with `Closed`. */
   private def read: UIO[Unit] =

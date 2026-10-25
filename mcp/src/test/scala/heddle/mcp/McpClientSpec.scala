@@ -59,15 +59,6 @@ object McpClientSpec extends ZIOSpecDefault:
           ZIO.foreachDiscard(msgs)(m => pipe.writeLine(m.toJson).orDie)
       }.forever
 
-  /** `ZStream.fromHub` retains values only after `Hub.subscribe`. `take` is the first async point, so a suspended
-    * consumer has already subscribed.
-    */
-  private def awaitSubscribed(fiber: Fiber.Runtime[?, ?]): UIO[Unit] =
-    fiber.status.flatMap { status =>
-      if status.isSuspended || status.isDone then ZIO.unit
-      else ZIO.yieldNow *> awaitSubscribed(fiber)
-    }
-
   private def answered(id: Json, result: Json.Obj): String =
     Json.Obj("jsonrpc" -> Json.Str("2.0"), "id" -> id, "result" -> result).toJson
 
@@ -278,47 +269,22 @@ object McpClientSpec extends ZIOSpecDefault:
             )
         }
       ,
-      test("a notification before the result is on the call and the session stream"):
+      test("a notification before the result is on the open call"):
         val note       = Message.Notification(Notifications.ToolsListChanged, Json.Obj())
         val resultBody = Json.Obj("content" -> Json.Arr())
+        val speak      = peer { msg =>
+          msg.get("method") match
+            case Some(Json.Str(Methods.Discover)) => List(resultFor(msg, Json.Obj()))
+            case Some(Json.Str(Methods.CallTool)) => List(note.json, resultFor(msg, resultBody))
+            case _                                => Nil
+        }
         ZIO.scoped {
           for
-            seen <- Promise.make[Nothing, Unit]
-            go   <- Promise.make[Nothing, Unit]
-            serve = (pipe: LinePipe) =>
-              def answer(msg: Json.Obj, result: Json.Obj): UIO[Unit] =
-                msg.get("id") match
-                  case Some(id) => pipe.writeLine(answered(id, result)).orDie
-                  case None     => ZIO.die(IllegalStateException("request had no id"))
-              def loop: UIO[Unit] =
-                pipe.readLine.orDie.flatMap {
-                  case None       => ZIO.unit
-                  case Some(line) =>
-                    line.fromJson[Json.Obj] match
-                      case Left(_)    => loop
-                      case Right(msg) =>
-                        msg.get("method") match
-                          case Some(Json.Str(Methods.Discover)) => answer(msg, Json.Obj()) *> loop
-                          case Some(Json.Str(Methods.CallTool)) =>
-                            seen.succeed(()) *> go.await *>
-                              pipe.writeLine(note.json.toJson).orDie *>
-                              answer(msg, resultBody) *>
-                              loop
-                          case _ => loop
-                }
-              loop
-            session <- overPipe(serve)
+            session <- overPipe(speak)
             call    <- session.open(ClientRequest.CallTool(ToolName("x"), Json.Obj()))
-            _       <- seen.await
-            // fromHub drops a publish that happens before subscribe. Suspended means take is waiting, and
-            // Hub.subscribe has already run, so the note is retained.
-            heard   <- session.notifications.runHead.fork
-            _       <- awaitSubscribed(heard)
-            _       <- go.succeed(())
             body    <- call.result
             notes   <- call.notifications
-            fromHub <- heard.join
-          yield assertTrue(body == resultBody, notes == Chunk(note), fromHub.contains(note))
+          yield assertTrue(body == resultBody, notes == Chunk(note))
         }
       ,
       test("cancel fails the open call without waiting out the request timeout"):

@@ -160,9 +160,8 @@ object AppBridge:
         id,
         answer.await.ensuring(pending.update(_ - id)),
         ZIO.succeed(Chunk.empty),
-        port
-          .send(Cancelled(id, None).message)
-          .ensuring(answer.fail(McpError.Cancelled(id)).unit *> pending.update(_ - id)),
+        answer.fail(McpError.Cancelled(id)) *>
+          port.send(Cancelled(id, None).message).ensuring(pending.update(_ - id)),
       )
 
     def ask(req: ViewRequest): IO[McpError, Json.Obj] = send(req.method, req.params)

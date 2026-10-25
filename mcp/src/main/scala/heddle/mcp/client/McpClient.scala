@@ -125,9 +125,9 @@ object McpClient:
       open(req).flatMap(_.result).timeoutFail(McpError.TimedOut(req.method))(settings.requestTimeout)
 
     private def cancel(id: RequestId, answer: Promise[McpError, Message]): IO[McpError, Unit] =
-      carrier
-        .notify(Cancelled(id, None).message, era)
-        .ensuring(answer.fail(McpError.Cancelled(id)).unit *> carrier.forget(id))
+      // Fail the waiter first. The server then closing this call's stream must not replace `Cancelled`.
+      answer.fail(McpError.Cancelled(id)) *>
+        carrier.notify(Cancelled(id, None).message, era).ensuring(carrier.forget(id))
 
     private def outcome(message: IO[McpError, Message]): IO[McpError, Json.Obj] =
       message.flatMap {

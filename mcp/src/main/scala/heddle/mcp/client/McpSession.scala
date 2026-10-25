@@ -24,7 +24,9 @@ trait McpSession:
     */
   def request(req: ClientRequest): IO[McpError, Json.Obj]
 
-  /** Server notifications on the session stream. Empty when this connection did not open one. */
+  /** Server notifications published after this stream subscribes. `ZStream.fromHub` does not retain a value published
+    * before that. Notifications for one open call are [[McpSession.OpenCall.notifications]].
+    */
   def notifications: ZStream[Any, McpError, Message.Notification] = ZStream.empty
 
   final def ping: IO[McpError, Unit] = request(ClientRequest.Ping).unit
@@ -53,7 +55,9 @@ trait McpSession:
 end McpSession
 
 object McpSession:
-  /** A request that has been sent. `notifications` are what the reader saw before `result` completed. */
+  /** A request that has been sent. `notifications` are what the reader recorded before `result` completed. On a pipe
+    * that reader is shared, so each still-open call records the line. On HTTP they are the events of this POST.
+    */
   final class OpenCall(
       val id: RequestId,
       val result: IO[McpError, Json.Obj],
