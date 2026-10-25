@@ -3,9 +3,12 @@ package heddle.mcp
 import heddle.*
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError, McpSession}
 import heddle.mcp.protocol.*
+import heddle.sse.{ServerSentEvent, Sse}
+import java.util.concurrent.TimeUnit
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+import zio.stream.ZStream
 import zio.test.*
 
 object McpClientSpec extends ZIOSpecDefault:
@@ -55,6 +58,9 @@ object McpClientSpec extends ZIOSpecDefault:
           val msgs = line.fromJson[Json.Obj].toOption.toList.flatMap(reply)
           ZIO.foreachDiscard(msgs)(m => pipe.writeLine(m.toJson).orDie)
       }.forever
+
+  private def answered(id: Json, result: Json.Obj): String =
+    Json.Obj("jsonrpc" -> Json.Str("2.0"), "id" -> id, "result" -> result).toJson
 
   private def idOf(msg: Json.Obj): Json = msg.get("id").getOrElse(Json.Null)
 
@@ -113,6 +119,40 @@ object McpClientSpec extends ZIOSpecDefault:
             assertTrue(e match
               case McpError.Rpc(_: RpcError.ResourceNotFound) => true
               case _                                          => false)
+          }
+        }
+      ,
+      test("a POST event stream keeps the notification that arrived before the result"):
+        val note       = Message.Notification(Notifications.ToolsListChanged, Json.Obj())
+        val resultBody = Json.Obj("content" -> Json.Arr())
+        val routes     = Routes.fromHandler(Handler { (req: Request) =>
+          req.body.utf8.orDie.flatMap { raw =>
+            raw.fromJson[Json.Obj] match
+              case Left(_)    => ZIO.succeed(Response.badRequest("json"))
+              case Right(msg) =>
+                (msg.get("method"), msg.get("id")) match
+                  case (Some(Json.Str(Methods.Discover)), Some(id)) =>
+                    ZIO.succeed(Response.json(answered(id, Json.Obj())))
+                  case (Some(Json.Str(Methods.CallTool)), Some(id)) =>
+                    RequestId.fromJson(id) match
+                      case None      => ZIO.succeed(Response.badRequest("id"))
+                      case Some(rid) =>
+                        val events = ZStream(
+                          ServerSentEvent(note.json.toJson),
+                          ServerSentEvent(Message.Result(rid, resultBody).json.toJson),
+                        )
+                        ZIO.succeed(Sse.response(events))
+                  case _ => ZIO.succeed(Response.badRequest("method"))
+          }
+        })
+        ZIO.scoped {
+          overHttp(routes).flatMap { session =>
+            session.open(ClientRequest.CallTool(ToolName("x"), Json.Obj())).flatMap { call =>
+              for
+                body  <- call.result
+                notes <- call.notifications
+              yield assertTrue(body == resultBody, notes == Chunk(note))
+            }
           }
         },
     ),
@@ -227,6 +267,40 @@ object McpClientSpec extends ZIOSpecDefault:
               byId.get("s1").exists(_.get("result").isDefined),
               byId.get("s2").flatMap(_.get("error")).exists(_.toJson.contains("-32601")),
             )
+        }
+      ,
+      test("a notification before the result is on the open call"):
+        val note       = Message.Notification(Notifications.ToolsListChanged, Json.Obj())
+        val resultBody = Json.Obj("content" -> Json.Arr())
+        val speak      = peer { msg =>
+          msg.get("method") match
+            case Some(Json.Str(Methods.Discover)) => List(resultFor(msg, Json.Obj()))
+            case Some(Json.Str(Methods.CallTool)) => List(note.json, resultFor(msg, resultBody))
+            case _                                => Nil
+        }
+        ZIO.scoped {
+          for
+            session <- overPipe(speak)
+            call    <- session.open(ClientRequest.CallTool(ToolName("x"), Json.Obj()))
+            body    <- call.result
+            notes   <- call.notifications
+          yield assertTrue(body == resultBody, notes == Chunk(note))
+        }
+      ,
+      test("cancel fails the open call without waiting out the request timeout"):
+        val quiet = peer { msg =>
+          msg.get("method") match
+            case Some(Json.Str(Methods.Discover)) => List(resultFor(msg, Json.Obj()))
+            case _                                => Nil
+        }
+        ZIO.scoped {
+          for
+            session <- overPipe(quiet)
+            call    <- session.open(ClientRequest.CallTool(ToolName("x"), Json.Obj()))
+            _       <- call.cancel
+            failed  <- call.result.flip
+            nanos   <- ZIO.clockWith(_.currentTime(TimeUnit.NANOSECONDS))
+          yield assertTrue(failed == McpError.Cancelled(call.id), nanos == 0L)
         },
     ),
   ) @@ TestAspect.timeout(60.seconds)

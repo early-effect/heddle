@@ -8,7 +8,7 @@ import zio.json.*
 import zio.json.ast.Json
 import zio.stream.ZStream
 
-/** A connected MCP server. `request` is the one primitive; the rest decode its results into protocol types. */
+/** A connected MCP server. `open` is the one primitive; `request` is that call plus the session timeout. */
 trait McpSession:
   /** The handshake this session negotiated. */
   def era: Era
@@ -16,10 +16,17 @@ trait McpSession:
   /** What the server said it is, when it said. */
   def server: Option[Implementation]
 
-  /** One request and its raw result object. A JSON-RPC error answer is `McpError.Rpc`. */
+  /** Send `req` and keep the call. `result` does not time out; `cancel` fails it with `McpError.Cancelled`. */
+  def open(req: ClientRequest): IO[McpError, McpSession.OpenCall]
+
+  /** One request and its raw result object, bounded by the session's request timeout. A JSON-RPC error is
+    * `McpError.Rpc`.
+    */
   def request(req: ClientRequest): IO[McpError, Json.Obj]
 
-  /** Server notifications on the session stream. Empty when this connection did not open one. */
+  /** Server notifications published after this stream subscribes. `ZStream.fromHub` does not retain a value published
+    * before that. Notifications for one open call are [[McpSession.OpenCall.notifications]].
+    */
   def notifications: ZStream[Any, McpError, Message.Notification] = ZStream.empty
 
   final def ping: IO[McpError, Unit] = request(ClientRequest.Ping).unit
@@ -48,6 +55,16 @@ trait McpSession:
 end McpSession
 
 object McpSession:
+  /** A request that has been sent. `notifications` are what the reader recorded before `result` completed. On a pipe
+    * that reader is shared, so each still-open call records the line. On HTTP they are the events of this POST.
+    */
+  final class OpenCall(
+      val id: RequestId,
+      val result: IO[McpError, Json.Obj],
+      val notifications: UIO[Chunk[Message.Notification]],
+      val cancel: IO[McpError, Unit],
+  )
+
   final class CallPartiallyApplied[In, Err, Out](session: McpSession, ep: Endpoint[In, Err, Out]):
     def apply(in: In): IO[McpCallFailure[Err], Out] =
       val doc = ep.doc

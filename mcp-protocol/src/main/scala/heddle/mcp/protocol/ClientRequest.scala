@@ -53,6 +53,7 @@ end ClientRequest
 /** Wire notification names. */
 object Notifications:
   val Initialized          = "notifications/initialized"
+  val Cancelled            = "notifications/cancelled"
   val ResourceUpdated      = "notifications/resources/updated"
   val ToolsListChanged     = "notifications/tools/list_changed"
   val ResourcesListChanged = "notifications/resources/list_changed"

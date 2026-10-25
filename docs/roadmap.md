@@ -57,7 +57,7 @@ Memory and File remain optional provided impls. Bringing your own `ProviderStore
 - CIMD / DCR completeness on the OP; MCP authorization-code client flow.
 - Catalog `invoke` for bodies that are not JSON, such as form, bytes, and event streams (HTTP-dispatch those; do not flatten them into tools).
 - OpenAPI `x-mcp-*` (or equivalent) so hints round-trip in the docs projection.
-- Dual-era 2025-11-25 `initialize` on HTTP and stdio (ephemeral session echo, GET 405). Done. GET SSE as a back-channel, MRTR, and progress stay Later. Native remains 2026-07-28.
+- Dual-era 2025-11-25 `initialize` on HTTP and stdio (ephemeral session id). Done. A tool call stays open for later requests, and `Session.publish` rides that request's own response. GET SSE is the resource stream. MRTR stays Later. Native remains 2026-07-28.
 
 ## Out
 

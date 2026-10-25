@@ -150,6 +150,20 @@ object AppBridge:
 
     def request(req: ClientRequest): IO[McpError, Json.Obj] = send(req.method, req.params)
 
+    def open(req: ClientRequest): IO[McpError, McpSession.OpenCall] =
+      for
+        id     <- ids.updateAndGet(_ + 1).map(RequestId.Num(_))
+        answer <- Promise.make[McpError, Json.Obj]
+        _      <- pending.update(_ + (id -> answer))
+        _      <- port.send(Message.Request(id, req.method, req.params))
+      yield new McpSession.OpenCall(
+        id,
+        answer.await.ensuring(pending.update(_ - id)),
+        ZIO.succeed(Chunk.empty),
+        answer.fail(McpError.Cancelled(id)) *>
+          port.send(Cancelled(id, None).message).ensuring(pending.update(_ - id)),
+      )
+
     def ask(req: ViewRequest): IO[McpError, Json.Obj] = send(req.method, req.params)
 
     def tell(note: ViewNotification): IO[McpError, Unit] = port.send(note.message)
