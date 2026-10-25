@@ -10,6 +10,7 @@ object ConnectionsPerHost extends Newtype[Int]:
     else s"connections per host must be a positive int, got $input"
 
   extension (value: Type) def toInt: Int = value.unwrap
+end ConnectionsPerHost
 
 /** Idle sockets kept for one host. `0` keeps none. */
 type IdlePerHost = IdlePerHost.Type
@@ -19,3 +20,4 @@ object IdlePerHost extends Newtype[Int]:
     else s"idle connections per host must be >= 0, got $input"
 
   extension (value: Type) def toInt: Int = value.unwrap
+end IdlePerHost

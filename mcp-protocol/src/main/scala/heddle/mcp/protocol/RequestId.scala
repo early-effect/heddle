@@ -12,6 +12,7 @@ enum RequestId:
     this match
       case Num(n) => Json.Num(n)
       case Str(s) => Json.Str(s)
+end RequestId
 
 object RequestId:
   def fromJson(json: Json): Option[RequestId] =

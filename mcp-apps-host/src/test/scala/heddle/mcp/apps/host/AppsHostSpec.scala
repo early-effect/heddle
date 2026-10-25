@@ -81,7 +81,6 @@ object AppsHostSpec extends ZIOSpecDefault:
           Set(Narrowing.OriginDropped(Directive.Connect, connect), Narrowing.PermissionDropped(Permission.Camera)),
         log.lastOption.map(_.decision).contains(Decision.Allowed),
       )
-      end for
     ,
     test("changed bytes are refused and audited until the user accepts them"):
       val changed = UiDocument("Counter", "window.counter = 2;")
@@ -96,7 +95,6 @@ object AppsHostSpec extends ZIOSpecDefault:
         log.exists(_.decision == Decision.HashMismatch(Digest.of(view.html), Digest.of(changed.html))),
         again._1.html == changed.html,
       )
-      end for
     ,
     test("a launch tool with no view, or one the server does not list, mounts nothing"):
       for
@@ -244,7 +242,6 @@ object AppsHostSpec extends ZIOSpecDefault:
         subscribed,
         seen.contains(Notifications.ToolsListChanged),
       )
-      end for
     ,
     test("subscribe forwards the uri the view named, including one this server does not have"):
       val uri    = "notes://today"
@@ -271,7 +268,6 @@ object AppsHostSpec extends ZIOSpecDefault:
         refused == refusal(1, Denial.NotOffered("resources/subscribe")),
         reached,
       )
-      end for
     ,
     test("what this host does not offer is refused in the shape the spec gives each method"):
       val text = Json.Arr(Json.Obj("type" -> Json.Str("text"), "text" -> Json.Str("hi")))
@@ -286,7 +282,6 @@ object AppsHostSpec extends ZIOSpecDefault:
         message == Message.Result(RequestId.Num(2), Outcome.wire(Outcome.Refused)),
         unknown == Message.Error(Some(RequestId.Num(3)), RpcError.methodNotFound("sampling/createMessage")),
       )
-      end for
     ,
     test("only an http or https link is opened, and nothing else reaches the page"):
       val urls = Chunk("https://example.test/a", "javascript:alert(1)", "file:///etc/passwd", "ws://example.test")
@@ -302,7 +297,6 @@ object AppsHostSpec extends ZIOSpecDefault:
           Chunk(Outcome.Done, Outcome.Refused, Outcome.Refused, Outcome.Refused),
         opened.map(_.render) == Chunk("https://example.test/a"),
       )
-      end for
     ,
     test("the host says nothing before initialized, then sends the tool input and result exactly once"):
       for

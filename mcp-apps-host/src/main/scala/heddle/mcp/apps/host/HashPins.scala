@@ -39,7 +39,6 @@ object Pins:
         )
       }))
       .toJson
-  end encode
 
   def decode(text: String): Either[PinFileError, Map[PinKey, Digest]] =
     if text.trim.isEmpty then Right(Map.empty)
@@ -90,6 +89,7 @@ trait HashPins:
 
   /** The user accepted new bytes: they are the pin from now on. */
   def accept(key: PinKey, served: Digest): IO[PinFileError, Unit]
+end HashPins
 
 object HashPins:
   /** Pins that last as long as the layer. */

@@ -11,3 +11,4 @@ private[heddle] object DateStampPlatform extends DateStamp:
 
   def render(instant: Instant): String =
     ImfFixdate.format(instant)
+end DateStampPlatform

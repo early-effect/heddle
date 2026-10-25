@@ -41,5 +41,4 @@ object CryptoSpec extends ZIOSpecDefault:
       out(i * 2 + 1) = digits.charAt(v & 0x0f)
       i += 1
     String(out)
-  end hex
 end CryptoSpec

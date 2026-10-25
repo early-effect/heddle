@@ -113,4 +113,3 @@ object FormSpec extends ZIOSpecDefault:
         val req = Request.get("/").addCookie("sid", "abc")
         assertTrue(req.cookie("sid").contains("abc")),
     ) @@ TestAspect.timeout(60.seconds)
-end FormSpec

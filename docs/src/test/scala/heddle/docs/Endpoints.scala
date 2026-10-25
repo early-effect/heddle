@@ -107,7 +107,6 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
           basic.status,
           basicBody,
         )
-        end for
       }.assert { case (documented, host, hostBody, again, bearer, bearerBody, basic, basicBody) =>
         assertTrue(
           documented.contains(("Host", true, SchemaDoc.Str(None))),
@@ -138,7 +137,6 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
           ep.doc.responses.exists(r => r.status == Status.BadRequest && r.headers.nonEmpty),
           OpArgs.promotable(ep.doc),
         )
-        end for
       }.assert { case (etag, back, gone, called, onSuccess, onError, promotable) =>
         assertTrue(
           etag.contains(EntityTag("abc").render),

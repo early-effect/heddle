@@ -69,11 +69,9 @@ object Multipart:
           b ++= utf8(s"Content-Type: ${ct.render}\r\n\r\n")
           b ++= data
           b ++= utf8("\r\n")
-      end match
     }
     b ++= utf8(s"$dash--\r\n")
     b.result()
-  end encode
 
   private def takeComplete(
       bytes: Chunk[Byte],
@@ -113,14 +111,10 @@ object Multipart:
             if startsWith(raw, from, Close) then
               closed = true
               keepFrom = raw.length
-          end if
-      end while
       val rest =
         if keepFrom >= raw.length then Chunk.empty
         else Chunk.fromArray(Arrays.copyOfRange(raw, keepFrom, raw.length))
       (Chunk.fromIterable(out.result()), rest, err)
-    end if
-  end takeComplete
 
   /** A part without headers or a `Content-Disposition` name is skipped, as RFC 7578 §4.2 leaves it unnamed. */
   private def parsePart(raw: Array[Byte], from: Int, until: Int): Option[FormField] =
@@ -136,8 +130,6 @@ object Multipart:
           case Some(file) => FormField.Binary(name, body, ct.getOrElse(MediaType.OctetStream), Some(file))
           case None       => FormField.Text(name, String(body.toArray, StandardCharsets.UTF_8), ct)
       }
-    end if
-  end parsePart
 
   private def disposition(headers: String): Option[(String, Option[String])] =
     headers

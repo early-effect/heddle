@@ -17,7 +17,6 @@ private[heddle] enum Syscall(val label: String):
   case SetOption   extends Syscall("setsockopt")
   case SocketError extends Syscall("getsockopt(SO_ERROR)")
   case Pipe        extends Syscall("pipe")
-end Syscall
 
 /** A POSIX socket call that failed, with the `errno` it left. */
 private[heddle] enum NetError(val message: String) extends FfiError:

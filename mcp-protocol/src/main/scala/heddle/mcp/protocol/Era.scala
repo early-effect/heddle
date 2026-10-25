@@ -7,3 +7,4 @@ enum Era:
 
   /** 2025-11-25: `initialize`, then a session; results without the 2026 envelope. */
   case Session
+end Era

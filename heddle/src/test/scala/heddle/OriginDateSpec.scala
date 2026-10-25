@@ -29,4 +29,3 @@ object OriginDateSpec extends ZIOSpecDefault:
         assertTrue(HttpDate.render(t) == "Tue, 03 Jun 2008 11:05:30 GMT")
       },
     ) @@ TestAspect.timeout(5.seconds)
-end OriginDateSpec

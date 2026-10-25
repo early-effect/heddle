@@ -22,4 +22,3 @@ object ResponseHeaderSpec extends ZIOSpecDefault:
         assertTrue(got == Left(McpCallFailure.NoArguments(OpArgsError.ResponseHeader("ETag"))))
       },
   )
-end ResponseHeaderSpec

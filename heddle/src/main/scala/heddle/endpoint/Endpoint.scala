@@ -249,7 +249,6 @@ sealed abstract class Endpoint[In, Err, Out]:
       body,
       doc.copy(responses = responses),
     )
-  end attaching
 
   private def replace[E1, O1](
       encodeOut: O1 => Response,
@@ -276,7 +275,6 @@ sealed abstract class Endpoint[In, Err, Out]:
       )
     )
     BoundOp(this, f, routes)
-  end implement
 
 end Endpoint
 
@@ -362,7 +360,6 @@ object Endpoint:
       val doc: EndpointDoc,
   ) extends Endpoint[In, Err, Out]:
     type PathIn = P
-  end Impl
 
   /** A 400 that names the parameter and why it was refused: `query parameter n: expected an int, got 'x'`. */
   private[endpoint] def refused(what: String)(e: ParamError): Response =

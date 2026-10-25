@@ -35,4 +35,3 @@ object HandlerSpec extends ZIOSpecDefault:
           rc <- c(Request.get("/"))
         yield assertTrue(ra.body.text.is(_.some) == "a", rb.body.text.is(_.some) == "b", rc.body.text.is(_.some) == "c"),
     ) @@ TestAspect.timeout(5.seconds)
-end HandlerSpec

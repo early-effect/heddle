@@ -31,7 +31,6 @@ private[heddle] object PrefaceLook:
     else if hasDoubleCrlf(raw, offset, length) then PrefaceLook.Http1
     else if length >= maxHeader then PrefaceLook.HeadersTooLarge
     else PrefaceLook.NeedMore
-  end classify
 
   /** How many leading bytes match. `preface.length` is a full preface. `length` is a proper prefix. Anything else
     * diverged.

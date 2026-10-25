@@ -106,7 +106,6 @@ object ServerLimitsSpec extends ZIOSpecDefault:
                   catch case _: java.net.SocketTimeoutException => ()
                   if acc.size() == 0 && i < 12 then Thread.sleep(50)
                   i += 1
-                end while
                 var open = acc.size() > 0
                 while open do
                   try
@@ -116,10 +115,8 @@ object ServerLimitsSpec extends ZIOSpecDefault:
                   catch
                     case _: java.net.SocketTimeoutException => open = false
                     case _: java.io.IOException             => open = false
-                end while
                 (String(acc.toByteArray, StandardCharsets.US_ASCII), hit.get())
               finally sock.close()
-              end try
             }
             .map { (wire, reached) =>
               assertTrue(wire.startsWith("HTTP/1.1 408"), !reached)
@@ -168,7 +165,6 @@ object ServerLimitsSpec extends ZIOSpecDefault:
               finally
                 a.close()
                 b.close()
-              end try
             }
             .either
             .map {
@@ -178,7 +174,6 @@ object ServerLimitsSpec extends ZIOSpecDefault:
         },
     )
     limits @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds)
-  end spec
 
   private def writeGet(sock: Socket, path: String): String =
     val raw = s"GET $path HTTP/1.1\r\nHost: localhost\r\n\r\n"
@@ -204,8 +199,6 @@ object ServerLimitsSpec extends ZIOSpecDefault:
             0
           case (2, _) => 0
           case _      => 0
-      end if
-    end while
     val head = String(headers.toByteArray, StandardCharsets.US_ASCII)
     val len  =
       head
@@ -216,7 +209,6 @@ object ServerLimitsSpec extends ZIOSpecDefault:
         .getOrElse(0)
     val body = if len > 0 then in.readNBytes(len) else Array.emptyByteArray
     head + String(body, StandardCharsets.UTF_8)
-  end readHttpResponse
 
   private def openHeld(port: Int): Socket =
     val sock = Socket("127.0.0.1", port)

@@ -22,8 +22,6 @@ private[brotli] object HuffmanTable:
         off += (v & mask) >>> TableBits
         br.dropBits((data(off) >>> 16) + TableBits)
         data(off) & 0xffff
-    end read
-  end Table
 
   def build(codeLengths: Array[Int], rootBits: Int): Table =
     val table = Array.ofDim[Int](MaxTableSize)
@@ -66,8 +64,6 @@ private[brotli] object HuffmanTable:
           lengths(symbols(2)) = 3
           lengths(symbols(3)) = 3
         else lengths(symbols(0)) = 2
-    end match
-  end readSimple
 
   private val CodeLengthOrder =
     Array(1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15)
@@ -94,7 +90,6 @@ private[brotli] object HuffmanTable:
       i += 1
     if ncode == 1 || space == 0 then readCodeLengths(br, clcl, lengths, alphabetSize)
     else br.fail(BrotliError.IncompleteCode)
-  end readComplex
 
   private def readCodeLengths(br: BitReader, clcl: Array[Int], lengths: Array[Int], numSymbols: Int): Unit =
     val table = Array.ofDim[Int](32)
@@ -135,10 +130,7 @@ private[brotli] object HuffmanTable:
             symbol += 1
             k += 1
           if repeatCodeLen != 0 then space -= delta << (15 - repeatCodeLen)
-      end if
-    end while
     if space != 0 then br.fail(BrotliError.IncompleteCode)
-  end readCodeLengths
 
   private def getNextKey(key: Int, len: Int): Int =
     var step = 1 << (len - 1)
@@ -220,10 +212,6 @@ private[brotli] object HuffmanTable:
           symbol += 1
           key = getNextKey(key, len)
           count(len) -= 1
-        end while
         len += 1
         step <<= 1
-      end while
-    end if
-  end buildInto
 end HuffmanTable

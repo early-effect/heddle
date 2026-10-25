@@ -51,6 +51,7 @@ object SigningKey:
 
   def generateRsa(kid: String): ZIO[Rsa, RsaError, SigningKey] =
     Rsa.generate(2048).map(SigningKey(kid, _))
+end SigningKey
 
 /** What a signed token says. `iat`, `exp`, and `jti` come from the clock and the CSPRNG when it is signed. */
 final case class TokenClaims(
@@ -116,7 +117,6 @@ object Jose:
         "scope" -> Json.Str(claims.scopes.mkString(" ")),
       ) ++ Chunk.fromIterable(claims.extra.toList.map((k, v) => k -> Json.Str(v)))
     s"${Base64Url.encode(utf8(header.toJson))}.${Base64Url.encode(utf8(Json.Obj(body).toJson))}"
-  end signingInput
 
   /** The signed bytes, the signature, the key the header names, and the still-encoded payload. */
   private def signed(token: String, jwks: Jwks): Either[JoseError, (Chunk[Byte], Chunk[Byte], Jwk, String)] =
@@ -165,8 +165,6 @@ object Jose:
       issuedAt = num(payload, "iat").map(Instant.ofEpochSecond),
       jwtId = str(payload, "jti"),
     )
-    end for
-  end claimsOf
 
   private def audienceOf(payload: Json.Obj): List[String] =
     payload.get("aud") match

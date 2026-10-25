@@ -74,3 +74,4 @@ object NativeConn:
   def of(fd: Int): NativeConn = NativeConn(fd, None)
 
   def tls(fd: Int, session: Ssl.Session): NativeConn = NativeConn(fd, Some(session))
+end NativeConn

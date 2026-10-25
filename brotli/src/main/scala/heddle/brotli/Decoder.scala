@@ -49,10 +49,8 @@ private[brotli] object Decoder:
         br.jumpToByteBoundary()
         out ++= br.copyBytes(hdr.length)
       else distI = compressed(br, out, hdr.length, maxBack, distRb, distI, tables)
-    end while
     br.jumpToByteBoundary()
     br.failure.toLeft(out.toArray)
-  end run
 
   private def windowBits(br: BitReader): Int =
     if br.readBits(1) == 0 then 16
@@ -92,9 +90,6 @@ private[brotli] object Decoder:
           i += 1
         val uncomp = if last then false else br.readBits(1) == 1
         Header(last, len + 1, uncomp, metadata = false)
-      end if
-    end if
-  end metablock
 
   private def varLenByte(br: BitReader): Int =
     if br.readBits(1) == 0 then 0
@@ -167,7 +162,6 @@ private[brotli] object Decoder:
       typeRb(off) = typeRb(off + 1)
       typeRb(off + 1) = btype
       btype
-    end switchType
 
     while mlen > 0 && br.ok do
       if blen(1) == 0 then
@@ -209,7 +203,6 @@ private[brotli] object Decoder:
           blen(0) -= 1
           out += litTrees(idx).read(br).toByte
           ins += 1
-      end if
       mlen -= insertLen
       if mlen > 0 && br.ok then
         if distCode < 0 then
@@ -226,7 +219,6 @@ private[brotli] object Decoder:
             val n      = (distCode >>> 1) + 1
             val offset = ((2 + (distCode & 1)) << n) - 4
             distCode = nDirect + postfix + ((offset + br.readBits(n)) << postfixBits)
-        end if
         val distance    = translateShort(distCode, distRb, distI)
         val maxDistance = math.min(out.length, maxBack)
         if distance <= 0 then br.fail(BrotliError.BadDistance)
@@ -242,10 +234,6 @@ private[brotli] object Decoder:
               out += out(out.length - distance)
               k += 1
             mlen -= copyLen
-          end if
-        end if
-      end if
-    end while
     distI
   end compressed
 
@@ -270,9 +258,6 @@ private[brotli] object Decoder:
           out += tmp(k)
           k += 1
         nout
-      end if
-    end if
-  end dictionaryWord
 
   private def readBlockLength(table: HuffmanTable.Table, br: BitReader): Int =
     val code = table.read(br)
@@ -305,13 +290,9 @@ private[brotli] object Decoder:
         else
           map(i) = (code - maxRun).toByte
           i += 1
-        end if
-      end while
       if br.readBits(1) == 1 then inverseMtf(map)
       if map.exists(v => (v & 0xff) >= ntrees) then br.fail(BrotliError.BadContextMap)
-    end if
     (map, ntrees)
-  end contextMap
 
   private def inverseMtf(v: Array[Byte]): Unit =
     val mtf = Array.tabulate(256)(identity)
@@ -327,6 +308,4 @@ private[brotli] object Decoder:
           j -= 1
         mtf(0) = value
       i += 1
-    end while
-  end inverseMtf
 end Decoder

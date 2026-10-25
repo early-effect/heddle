@@ -135,8 +135,6 @@ object AppBridge:
       _    <- contexts.set(host.hostContext)
       _    <- session.tell(ViewNotification.Initialized)
     yield AppBridge(shed, host, session, runs, contexts, updates)
-    end for
-  end connect
 
   /** The host, seen as an MCP peer that answers `tools/call`, `resources/read`, and `ping` over the view's port. */
   private[ui] final class HostSession(

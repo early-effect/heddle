@@ -48,7 +48,6 @@ object QueryCodec:
     def encode(value: Boolean): Chunk[String] = Chunk(if value then "true" else "false")
     def schema: SchemaDoc                     = SchemaDoc.Boolean
     def required: Boolean                     = true
-  end given
 
   given [A](using inner: QueryCodec[A]): QueryCodec[Option[A]] with
     def decode(values: Chunk[String]): Either[ParamError, Option[A]] =

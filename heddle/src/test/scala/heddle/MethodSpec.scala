@@ -44,4 +44,3 @@ object MethodSpec extends ZIOSpecDefault:
           assertTrue(res.status == Status.MethodNotAllowed, allow.contains("GET"), allow.contains("CONNECT"))
         },
     ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
-end MethodSpec

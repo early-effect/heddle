@@ -20,6 +20,7 @@ enum RelayMode:
   /** A `srcdoc` this page writes, with its CSP as the first `<meta>`: for a host with no second origin to serve from.
     */
   case Opaque
+end RelayMode
 
 /** Why a frame did not start. */
 enum FrameError(val message: String) extends HeddleError:
@@ -149,7 +150,6 @@ object Frame:
     Permission.allow(request.grant.permissions).foreach(frame.setAttribute("allow", _))
     frame.setAttribute("style", "display:block;width:100%;height:96px;border:0")
     val _ = parent.appendChild(frame)
-  end insert
 
   /** The relay: posted to at its origin, and heard only from its window at that origin (`null` when opaque). */
   private def relay(frame: dom.HTMLIFrameElement, mode: RelayMode): PostTarget =
@@ -165,7 +165,6 @@ object Frame:
         PostTarget.messages(dom.window)(e =>
           if PostTarget.sentBy(e, frame.contentWindow) && e.origin == origin then deliver(e.data)
         )
-  end relay
 
   /** What the page does for the view: size its frame, and open a link in a new, unrelated tab. */
   private def page(frame: dom.HTMLIFrameElement): ViewFrame = new ViewFrame:

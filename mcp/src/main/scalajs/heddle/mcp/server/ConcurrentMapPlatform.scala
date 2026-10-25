@@ -21,4 +21,3 @@ private[server] object ConcurrentMapPlatform:
     def values: List[V]           = underlying.values.toList
     def size: Int                 = underlying.size
     def clear(): Unit             = underlying.clear()
-end ConcurrentMapPlatform

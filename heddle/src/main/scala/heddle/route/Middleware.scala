@@ -19,6 +19,7 @@ trait Middleware[-R]:
     new Middleware[R1]:
       def apply[R2 <: R1, E](routes: Routes[R2, E]): Routes[R2, E] =
         that(self(routes))
+end Middleware
 
 object Middleware:
   val identity: Middleware[Any] =
@@ -233,6 +234,7 @@ object Middleware:
 
     /** Exactly these serialized origins (`https://app.example`), echoed back with `Vary: Origin`. */
     case Only(origins: Set[String], credentials: CorsCredentials = CorsCredentials.Omit)
+  end CorsOrigins
 
   /** Whether a listed origin may send cookies and `Authorization` and read the answer. */
   enum CorsCredentials:
@@ -278,7 +280,6 @@ object Middleware:
                     .withHeader(HeaderName.ContentEncoding, c.encoding.token)
                     .removeLength
             next
-          end if
 
   private def skipCompress(res: Response): Boolean =
     val ct  = res.headers.contentType.orElse(res.body.mediaType)
@@ -290,7 +291,6 @@ object Middleware:
     || ct.exists(_.isVideo)
     || ct.exists(m => m.mainType.contains("zip") || m.subType.contains("zip"))
     || res.headers.get(HeaderName.Upgrade).exists(_.toLowerCase.contains("websocket"))
-  end skipCompress
 
   private def pick(req: Request, compressors: Chunk[Compressor]): Option[Compressor] =
     ContentEncoding

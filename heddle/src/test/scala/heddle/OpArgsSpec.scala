@@ -24,7 +24,6 @@ object OpArgsSpec extends ZIOSpecDefault:
               required.contains("name"),
             )
           case Right(_) => assertTrue(false)
-        end match
       ,
       test("fails on path and body name collision"):
         val ep = Endpoint.post("items" / int("name")).in[NewItem].out[Item]
@@ -84,4 +83,3 @@ object OpArgsSpec extends ZIOSpecDefault:
         val ep = Endpoint.get("t").out[String].outHeader[EntityTag]
         assertTrue(!OpArgs.promotable(ep.doc), ep.doc.successHeader.contains("ETag")),
     ) @@ TestAspect.timeout(5.seconds)
-end OpArgsSpec

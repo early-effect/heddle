@@ -134,7 +134,6 @@ object ServerSpec extends ZIOSpecDefault:
                   catch case _: java.io.IOException => -1
                 (first, second)
               finally sock.close()
-              end try
             }
             .map { (first, second) =>
               assertTrue(first.contains("A"), first.contains("Connection: close"), second < 0)
@@ -281,7 +280,6 @@ object ServerSpec extends ZIOSpecDefault:
             yield assertTrue(wire.contains("200"), wire.contains("ok"))
           }
         yield result
-        end for
       @@ TestAspect.timeout(5.seconds),
       test("shutdown force-kills a stuck send after gracefulShutdownTimeout"):
         val routes = Routes(
@@ -351,8 +349,6 @@ object ServerSpec extends ZIOSpecDefault:
             0
           case (2, _) => 0
           case _      => 0
-      end if
-    end while
     val head = String(headers.toByteArray, StandardCharsets.US_ASCII)
     val len  =
       head
@@ -363,5 +359,4 @@ object ServerSpec extends ZIOSpecDefault:
         .getOrElse(0)
     val body = if len > 0 then in.readNBytes(len) else Array.emptyByteArray
     head + String(body, StandardCharsets.UTF_8)
-  end readHttpResponse
 end ServerSpec

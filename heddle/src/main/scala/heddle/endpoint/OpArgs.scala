@@ -137,7 +137,6 @@ object OpArgs:
           val name = seg.drop(1).dropRight(1)
           name -> scalar(byName.getOrElse(name, SchemaDoc.Str(None)), value)
       })
-  end pathArgs
 
   private def queryArgs(doc: EndpointDoc, req: Request): Either[OpArgsError, List[(String, Json)]] =
     doc.queries.foldLeft[Either[OpArgsError, List[(String, Json)]]](Right(Nil)) {

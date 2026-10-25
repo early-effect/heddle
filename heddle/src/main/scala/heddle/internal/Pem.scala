@@ -16,4 +16,3 @@ private[heddle] object Pem:
     else
       val b64 = pem.substring(from + begin.length, until).filterNot(_.isWhitespace)
       Try(Base64.getDecoder.decode(b64.getBytes(StandardCharsets.US_ASCII))).toEither.left.map(TlsError.Unusable(_))
-end Pem

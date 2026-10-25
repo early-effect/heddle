@@ -40,7 +40,6 @@ final class Tls private (ctx: SSLContext):
             ZIO.fail(IllegalStateException(s"an SSLSocketFactory made a ${other.getClass.getName}"))
       }
       .mapError(HttpError.Io(_))
-  end wrap
 end Tls
 
 object Tls:

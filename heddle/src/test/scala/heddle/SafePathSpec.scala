@@ -47,4 +47,3 @@ object SafePathSpec extends ZIOSpecDefault:
         val got = SafePath.resolveUnder("/var/www", "")
         assertTrue(got.contains("/var/www")),
     ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
-end SafePathSpec

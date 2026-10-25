@@ -88,7 +88,6 @@ final class AppsHost private (settings: HostSettings, generations: Ref[Long]):
       resource.scripts,
       generation,
     )
-end AppsHost
 
 object AppsHost:
   def make(settings: HostSettings): UIO[AppsHost] = Ref.make(0L).map(AppsHost(settings, _))
@@ -150,6 +149,7 @@ final class Mounted private[host] (leaving: Promise[Nothing, String], ended: Pro
 
   /** Asks the view to save what it must and go, waits for its answer or the host's patience, then ends it. */
   def teardown(reason: String): UIO[Ending] = leaving.succeed(reason) *> ended.await
+end Mounted
 
 object Mount:
   final case class State(
@@ -286,8 +286,6 @@ object Mount:
           record(plain, Decision.Denied(Denial.NotOffered(req.method))) *>
             fail(id, refused(Denial.NotOffered(req.method)))
         case ViewRequest.Ping => answer(id, Json.Obj())
-      end match
-    end viewRequest
 
     /** Work that waits on the user or the server runs on its own fiber, so the view is heard meanwhile: its pings, its
       * size, its next call, its answer to teardown. JSON-RPC ids pair the answers; the mount's end interrupts it.
@@ -315,8 +313,6 @@ object Mount:
                 )
           }
         }
-      end if
-    end callTool
 
     private def call(cleared: Cleared): IO[McpError, CallToolResult] =
       mount.server.session.callTool(cleared.tool, cleared.arguments)

@@ -12,4 +12,3 @@ object Sha256OracleSpec extends ZIOSpecDefault:
         assertTrue(Sha256.digest(bytes) == jdk)
       }
   ) @@ TestAspect.timeout(60.seconds)
-end Sha256OracleSpec

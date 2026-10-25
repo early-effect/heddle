@@ -21,7 +21,6 @@ object RangeSpec:
       else
         val parsed = rest.split(',').toList.map(_.trim).filter(_.nonEmpty).flatMap(parseOne)
         if parsed.isEmpty then None else Some(RangeSpec(unit, Chunk.fromIterable(parsed)))
-  end parse
 
   private def parseOne(raw: String): Option[ByteRange] =
     if raw.startsWith("-") then raw.substring(1).toLongOption.filter(_ >= 0).map(ByteRange.Suffix.apply)
@@ -67,6 +66,7 @@ object ContentRange:
 
   def unsatisfiable(complete: Long, unit: String = "bytes"): ContentRange =
     ContentRange(unit, None, None, Some(complete))
+end ContentRange
 
 final case class EntityTag(tag: String, weak: Boolean = false):
   def render: String =

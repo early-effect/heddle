@@ -13,3 +13,4 @@ private[heddle] trait DateStamp:
   final def stamp(instant: Instant): OriginDate.Stamp =
     val value = render(instant)
     OriginDate.Stamp(value, Chunk.fromArray(s"Date: $value\r\n".getBytes(StandardCharsets.US_ASCII)))
+end DateStamp

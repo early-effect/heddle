@@ -12,5 +12,3 @@ object ScalaLiteral:
       case char => char.toString
     }
     "\"" + escaped + "\""
-  end apply
-end ScalaLiteral

@@ -20,4 +20,3 @@ enum OpArgsError(val message: String) extends HeddleError:
   case RepeatedQuery(name: String) extends OpArgsError(s"query parameter '$name' repeats; an argument holds one value")
   case ResponseHeader(name: String)
       extends OpArgsError(s"response header '$name' is part of the HTTP output, not the tool result")
-end OpArgsError

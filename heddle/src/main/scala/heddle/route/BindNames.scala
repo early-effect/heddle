@@ -45,9 +45,6 @@ private[route] object BindNames:
           case (Slot.Named(expected), Some(actual))                       =>
             report.errorAndAbort(s"capture $expected was bound as $actual. ${spell(names, request)}")
         }
-      end if
-    end if
-  end check
 
   private def mismatch(names: List[Slot], request: Boolean)(using Quotes): Nothing =
     quotes.reflect.report.errorAndAbort(spell(names, request))
@@ -75,7 +72,6 @@ private[route] object BindNames:
         case other                                    =>
           report.errorAndAbort(s"capture names are not in the type of this path (${other.show})")
     loop(tpe)
-  end readNames
 
   /** `(arity, slots by position, body is a match)`. A synthetic tuple parameter with no `_n` binding is all `_`. */
   private def readLambda(using Quotes)(term: quotes.reflect.Term): (Int, Vector[Option[String]], Boolean) =
@@ -125,7 +121,6 @@ private[route] object BindNames:
           else if bound.nonEmpty || synthetic(param.name) then
             (arity, Vector.tabulate(arity)(i => bound.get(i + 1).flatten), false)
           else (arity, Vector(slotName(param.name)), false)
-    end if
   end readLambda
 
   private def slotName(name: String): Option[String] =
@@ -146,5 +141,4 @@ private[route] object BindNames:
       case Block(stats, expr) => stats.flatMap(from) ++ from(expr)
       case _                  => Nil
     from(body).toMap
-  end bindings
 end BindNames

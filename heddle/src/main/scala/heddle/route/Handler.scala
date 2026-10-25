@@ -80,7 +80,6 @@ object Handler:
           )
         case (Method.GET, None) => Left(Response.badRequest("Expected WebSocket upgrade"))
         case _                  => Left(Response.methodNotAllowed("GET"))
-      end match
 end Handler
 
 def handler[R, E](f: Request => ZIO[R, E, Response]): Handler[R, E] = Handler(f)

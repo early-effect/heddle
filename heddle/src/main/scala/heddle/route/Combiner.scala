@@ -15,6 +15,7 @@ object Combiner extends CombinerRightUnit:
     type Out = B
     def combine(a: Unit, b: B): B   = b
     def separate(out: B): (Unit, B) = ((), out)
+end Combiner
 
 trait CombinerRightUnit extends CombinerAppend:
   given rightUnit[A]: Combiner.WithOut[A, Unit, A] = new Combiner[A, Unit]:

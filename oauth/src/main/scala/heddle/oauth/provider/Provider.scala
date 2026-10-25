@@ -42,7 +42,6 @@ object Provider:
       Method.POST / "introspect" -> Handler { (req: Request) => introspect(config, key, req) },
       Method.POST / "revoke"     -> Handler { (req: Request) => revoke(stores, req) },
     )
-  end routes
 
   private def discovery(iss: String): String =
     def strs(xs: String*) = Json.Arr(Chunk.fromIterable(xs.map(Json.Str(_))))
@@ -64,7 +63,6 @@ object Provider:
         "scopes_supported"                      -> strs("openid", "profile", "email", "offline_access"),
       )
       .toJson
-  end discovery
 
   private def authorize(config: ProviderConfig, stores: ProviderStores, req: Request): UIO[Response] =
     val q         = req.query
@@ -110,7 +108,6 @@ object Provider:
             }
         }
     }
-  end authorize
 
   private def loginGet(req: Request): UIO[Response] =
     val resume = req.query.get("resume").getOrElse("/")
@@ -124,7 +121,6 @@ object Provider:
            |</form>""".stripMargin
       )
     )
-  end loginGet
 
   private def loginPost(config: ProviderConfig, stores: ProviderStores, req: Request): UIO[Response] =
     withForm(req) { form =>
@@ -193,7 +189,6 @@ object Provider:
           else issue(config, stores, key, client, Grant(ac.userId, ac.scopes, ac.nonce), now)
         }
     }
-  end authCodeGrant
 
   private def clientCredGrant(
       config: ProviderConfig,
@@ -231,7 +226,6 @@ object Provider:
           else issue(config, stores, key, client, Grant(r.userId, r.scopes, None), now)
         }
     }
-  end refreshGrant
 
   private def issue(
       config: ProviderConfig,
@@ -262,7 +256,6 @@ object Provider:
         }
       yield jsonToken(a, rt, id, config.accessTokenTtl.toSeconds)
     )
-  end issue
 
   /** Whom a token is for and what it may do. */
   private final case class Grant(userId: String, scopes: Set[String], nonce: Option[String])
@@ -341,8 +334,6 @@ object Provider:
               case None    => ZIO.some(c)
               case Some(h) => ZIO.blocking(ZIO.succeed(secret.exists(Passwords.check(_, h)))).map(Option.when(_)(c))
         }
-    end match
-  end clientOf
 
   private def sessionUser(stores: ProviderStores, req: Request): UIO[Option[UserRecord]] =
     req.cookie("op_session") match

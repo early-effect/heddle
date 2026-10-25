@@ -20,7 +20,6 @@ object ProtectedResource:
       (Method.GET / ".well-known" / "oauth-protected-resource")         -> body,
       (Method.GET / ".well-known" / "oauth-protected-resource" / "mcp") -> body,
     )
-  end routes
 
   def unauthorized(resourceMetadata: String, scopes: List[String] = Nil): Response =
     val params =

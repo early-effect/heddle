@@ -8,3 +8,4 @@ private[heddle] object IdsPlatform:
   def fill(dst: Array[Byte]): Boolean =
     rng.nextBytes(dst)
     true
+end IdsPlatform

@@ -20,4 +20,3 @@ object JsAsyncSpec extends ZIOSpecDefault:
         val next    = JsAsync.fromPromise(js.Promise.resolve[Int](started.getAndIncrement()))
         next.repeatN(2).map(last => assertTrue(last == 2, started.get == 3)),
     ) @@ TestAspect.timeout(5.seconds)
-end JsAsyncSpec

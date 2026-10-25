@@ -46,7 +46,6 @@ object HttpSessionSpec extends ZIOSpecDefault:
           base.withHeader(Http.MethodHeader, Methods.CallTool).withHeader(Http.NameHeader, name.value)
         case Some(sid) => base.withHeader(Http.SessionHeader, sid)
     if sse then routed.withHeader("Accept", "application/json, text/event-stream") else routed
-  end call
 
   private def initialize: Request =
     val msg = Message.request(

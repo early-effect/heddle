@@ -50,7 +50,6 @@ object UiMeta:
       case Some(s) if s == Set("app")   => Visibility.App
       case _                            => Visibility.ModelAndApp
     (ToolUi(uri.flatMap(_.toOption), vis), Chunk.fromIterable(uri.flatMap(_.left.toOption)))
-  end decodeTool
 
   /** `McpUiResourceCsp`: each directive's origins, sorted; an empty directive is omitted. */
   def encodeCsp(n: Network): Json.Obj =
@@ -64,7 +63,6 @@ object UiMeta:
         list(Directive.Base, n.base),
       ).flatten
     )
-  end encodeCsp
 
   /** `McpUiResourcePermissions`: one empty object per permission. */
   def encodePermissions(ps: Set[Permission]): Json.Obj =
@@ -81,7 +79,6 @@ object UiMeta:
     val (frames, p3)    = origins(Directive.Frame)
     val (base, p4)      = origins(Directive.Base)
     (Network(connect, resources, frames, base), p1 ++ p2 ++ p3 ++ p4)
-  end decodeCsp
 
   def decodePermissions(perms: Json.Obj): (Set[Permission], Chunk[MetaProblem]) =
     val asked = perms.fields.map(_._1)
@@ -103,7 +100,6 @@ object UiMeta:
         case Border.Hidden      => Some("prefersBorder" -> Json.Bool(false))
         case Border.HostDefault => None)
     Json.Obj(Key -> Json.Obj(fields))
-  end encodeResource
 
   def decodeResource(meta: Option[Json.Obj]): (UiPolicy, Chunk[MetaProblem]) =
     val ui                     = meta.flatMap(_.get(Key)).collect { case o: Json.Obj => o }.getOrElse(Json.Obj())
@@ -121,7 +117,6 @@ object UiMeta:
       case Some(Json.Bool(false)) => Border.Hidden
       case _                      => Border.HostDefault
     (UiPolicy(network, known, origin, border), cspProblems ++ unknown)
-  end decodeResource
 
   /** `_meta["rocks.earlyeffect/heddle"]` as a server writes it. Hashes arrive as text and are parsed one by one, so a
     * bad one is reported and the rest kept.

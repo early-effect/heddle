@@ -23,4 +23,3 @@ object ResponseSpec extends ZIOSpecDefault:
       test("apply does not attach a websocket"):
         assertTrue(Response(Status.Ok).ws.isEmpty, Response.ok.ws.isEmpty),
     ) @@ TestAspect.timeout(5.seconds)
-end ResponseSpec

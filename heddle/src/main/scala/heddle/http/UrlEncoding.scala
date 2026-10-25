@@ -30,7 +30,6 @@ object UrlEncoding:
         out.append(hex(b & 0xf))
       i += 1
     out.toString
-  end encodeBytes
 
   private def decodeBytes(s: String, plusIsSpace: Boolean): String =
     val n     = s.length
@@ -50,9 +49,7 @@ object UrlEncoding:
         case c =>
           bytes ++= String.valueOf(c).getBytes(StandardCharsets.UTF_8)
           i += 1
-    end while
     String(bytes.result(), StandardCharsets.UTF_8)
-  end decodeBytes
 
   private def keep(b: Int, form: Boolean): Boolean =
     (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') ||

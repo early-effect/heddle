@@ -28,6 +28,7 @@ trait BodyCodec[A]:
 
   def encode(value: A): Payload
   def decode(body: Body): IO[BodyError, A]
+end BodyCodec
 
 /** A typed server-sent event body. `Client.call` rejects it; `Client.subscribe` reads it. */
 type EventStream = ZStream[Any, Throwable, ServerSentEvent]
@@ -46,8 +47,6 @@ object BodyCodec extends BodyCodecLowPriority:
             codec.decoder.decodeJson(utf8(raw)).left.map(BodyError.Json(_))
           )
         }
-    end new
-  end json
 
   def text[A](mediaType: MediaType): TextPartiallyApplied[A] =
     TextPartiallyApplied(mediaType)
@@ -110,8 +109,6 @@ final class TextPartiallyApplied[A](mediaType: MediaType):
         BodyCodec.charset(mt) match
           case Left(err) => ZIO.fail(err)
           case Right(_)  => BodyCodec.bytes(body).map(raw => read(BodyCodec.utf8(raw)))
-  end apply
-end TextPartiallyApplied
 
 final class BytesPartiallyApplied[A](mediaType: MediaType):
   def apply(write: A => Chunk[Byte], read: Chunk[Byte] => A): BodyCodec[A] =

@@ -34,6 +34,7 @@ trait Schema[A]:
 
   /** Wire schema of each case of a sum, indexed by `Mirror.SumOf[A].ordinal`. Empty for non-sums. */
   def cases: List[SchemaDoc] = Nil
+end Schema
 
 object Schema:
   def of[A](d: SchemaDoc, name: Option[String] = None): Schema[A] =
@@ -86,7 +87,6 @@ object Schema:
     }
     val required = fields.filterNot(_.optional).map(_.name)
     Schema.of(SchemaDoc.Object(Some(title), fields, required), Some(title))
-  end productSchema
 
   /** Matches zio-json's derived sum encoding: `{"Case": {...}}` per leaf case, or a bare `"Case"` string when every
     * leaf is a singleton. Nested sealed hierarchies flatten to their leaves, as zio-json does.
@@ -99,7 +99,6 @@ object Schema:
     else
       val perCase = wrappedOf[s.MirroredElemTypes, s.MirroredElemLabels]
       sum(SchemaDoc.OneOf(Some(title), perCase), title, perCase)
-  end sumSchema
 
   private inline def allSingletons[T <: Tuple]: Boolean =
     inline erasedValue[T] match

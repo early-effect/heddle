@@ -235,7 +235,6 @@ object H2Spec extends ZIOSpecDefault:
           H2Got(parts.groupMap(_._1)(_._2).map((id, ds) => id -> ds.toList), reset(fs))
         }
     }
-  end h2Exchange
 
   /** Opens an RFC 8441 WebSocket over stream 1, sends `text` once the server answers, and reads its echo. */
   private def h2WsEcho(port: Int, path: String, text: String): Task[String] =
@@ -259,5 +258,4 @@ object H2Spec extends ZIOSpecDefault:
         w.send(H2Frame.Data(1, framed, endStream = false)) *>
         w.until(fs => echoed(fs).contains(text)).map(echoed)
     }
-  end h2WsEcho
 end H2Spec

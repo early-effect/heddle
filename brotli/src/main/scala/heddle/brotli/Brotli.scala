@@ -33,7 +33,6 @@ object Brotli:
       w.writeBits(1, 1)
       w.writeBits(1, 1)
     w.finish()
-  end encodeArray
 end Brotli
 
 private object BrotliCompressor extends Compressor:
@@ -66,6 +65,7 @@ private object BrotliDecompressor extends Decompressor:
   def encoding: ContentEncoding = ContentEncoding.Brotli
 
   def decompress(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]] = Brotli.decode(bytes, limit)
+end BrotliDecompressor
 
 private def writeCompressed(w: BitWriter, data: Array[Byte]): Unit =
   val cmds = Lz77.compress(data)
@@ -111,7 +111,6 @@ private def writeCompressed(w: BitWriter, data: Array[Byte]): Unit =
       if dist.extraBits > 0 then w.writeBits(dist.extraBits, dist.extra.toLong)
       produced += c.copy
   }
-end writeCompressed
 
 private def writeHeader(w: BitWriter, len: Int): Unit =
   w.writeBits(1, 0)
@@ -134,4 +133,3 @@ private def writeHeader(w: BitWriter, len: Int): Unit =
   w.writeBits(2, 0)
   w.writeBits(1, 0)
   w.writeBits(1, 0)
-end writeHeader

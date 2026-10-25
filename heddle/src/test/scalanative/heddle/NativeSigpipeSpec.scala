@@ -26,4 +26,3 @@ object NativeSigpipeSpec extends ZIOSpecDefault:
       }
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(20.seconds)
-end NativeSigpipeSpec

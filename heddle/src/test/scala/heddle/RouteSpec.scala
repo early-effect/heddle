@@ -238,4 +238,3 @@ object RouteSpec extends ZIOSpecDefault:
           codec.matches(path).contains(()),
         ),
     ) @@ TestAspect.timeout(5.seconds)
-end RouteSpec

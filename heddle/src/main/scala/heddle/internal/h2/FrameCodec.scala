@@ -26,7 +26,6 @@ private[heddle] object FrameCodec:
     head(7) = ((streamId >>> 8) & 0xff).toByte
     head(8) = (streamId & 0xff).toByte
     Chunk.fromArray(head) ++ payload
-  end encode
 
   def decode(bytes: Chunk[Byte], maxFrame: Int): Either[WireError, (H2Frame, Chunk[Byte])] =
     if bytes.length < 9 then Left(WireError.TruncatedFrame)
@@ -120,8 +119,6 @@ private[heddle] object FrameCodec:
         Right(H2Frame.Continuation(id, payload, set(EndHeaders)))
       case other =>
         Right(H2Frame.Unknown(other, flags, id, payload))
-    end match
-  end body
 
   /** RFC 9113 §6.1: padding as long as the payload or longer is a connection error. */
   private def unpad(tpe: Int, flags: Int, payload: Chunk[Byte]): Either[WireError, (Chunk[Byte], Int)] =

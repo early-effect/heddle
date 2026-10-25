@@ -39,8 +39,6 @@ private[heddle] object ServerPlatform:
         .forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(listener.localPort, halt0)
-    end for
-  end install
 
   /** Connection fibers run on virtual threads; a JVM that cannot enable them still binds on the default executor. */
   private val enableLoom: URIO[Scope, Unit] =
@@ -78,8 +76,6 @@ private[heddle] object ServerPlatform:
             else Http1.serveConnection(routes, wire, config, life, originDate)
           work.ensuring(session.conn.close)
         }
-    end match
-  end runConnection
 
   /** Plain HTTP: HTTP/2 when the client opens with its preface (prior knowledge), HTTP/1.1 otherwise.
     *
@@ -138,7 +134,6 @@ private[heddle] object ServerPlatform:
         else read
 
       started.catchSome { case HttpError.Timeout => ZIO.succeed(PrefaceLook.NeedMore) }.flatMap(dispatch)
-    end if
   end serve
 
   private def consumePreface(src: ConnBuf): IO[HttpError, Unit] =

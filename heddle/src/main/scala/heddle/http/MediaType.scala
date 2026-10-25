@@ -56,7 +56,6 @@ object MediaType:
     val ps = params.collect:
       case (k, v) if !k.equalsIgnoreCase("charset") => HeaderParams.lower(k) -> v
     new MediaType(HeaderParams.lower(mainType), HeaderParams.lower(subType), cs, ps)
-  end apply
 
   def parse(raw: String): Option[MediaType] =
     val s         = raw.trim
@@ -68,7 +67,6 @@ object MediaType:
       val params = if restStart < 0 then Nil else HeaderParams.parse(s, restStart + 1)
       apply(main, sub, params.collectFirst { case ("charset", v) => v }, params)
     }
-  end parse
 
   def fromExtension(ext: String): MediaType =
     ext.toLowerCase match

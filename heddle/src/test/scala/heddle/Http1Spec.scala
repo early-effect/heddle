@@ -176,7 +176,6 @@ object Http1Spec extends ZIOSpecDefault:
             }
           }
         yield assertTrue(wire.startsWith("HTTP/1.1 200"), wire.endsWith("A"))
-        end for
       ,
       test("Host header is available without being interned"):
         val routes = Routes(
@@ -337,7 +336,6 @@ object Http1Spec extends ZIOSpecDefault:
             }
           }
         yield assertTrue(wire.startsWith("HTTP/1.1 408"))
-        end for
       @@ TestAspect.withLiveClock,
       test("idleTimeout ends keep-alive when the next request never arrives"):
         val taking = java.util.concurrent.atomic.AtomicBoolean(true)
@@ -362,7 +360,6 @@ object Http1Spec extends ZIOSpecDefault:
             )
           }
         yield assertTrue(done.isDefined)
-        end for
       @@ TestAspect.withLiveClock,
       test("short Content-Length stream does not keep the connection"):
         val routes = Routes(
@@ -438,9 +435,7 @@ object Http1Spec extends ZIOSpecDefault:
         _     <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy), originDate)
         bytes <- out.get
       yield String(bytes.toArray, StandardCharsets.US_ASCII)
-      end for
     }
-  end runWire
 
   private def hasImfDate(wire: String): Boolean =
     wire.split("\r\n").drop(1).filter(_.startsWith("Date: ")) match

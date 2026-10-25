@@ -69,6 +69,4 @@ private[brotli] final class BitReader(data: Array[Byte]):
         System.arraycopy(data, i, out, o, need)
         i += need
       out
-    end if
-  end copyBytes
 end BitReader

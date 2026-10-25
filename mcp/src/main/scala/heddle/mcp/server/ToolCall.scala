@@ -45,8 +45,6 @@ object ToolCall:
             annotations = annotations(doc.hints),
           )
           ToolCall(t)((args, headers) => runBound(op, args, headers, out, err))
-    end match
-  end bound
 
   def runBound[R, In, Err, Out](
       op: BoundOp[R, In, Err, Out],

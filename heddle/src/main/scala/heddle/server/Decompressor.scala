@@ -10,6 +10,7 @@ trait Decompressor:
 
   /** Inflates at most `limit` bytes. More than that is `BodyTooLarge`; corrupt input is `Malformed`. */
   def decompress(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]]
+end Decompressor
 
 object Decompressor:
   val gzip: Decompressor = GzipDecompressor
@@ -19,3 +20,4 @@ private object GzipDecompressor extends Decompressor:
 
   def decompress(bytes: Chunk[Byte], limit: BytesLength): Either[HttpError, Chunk[Byte]] =
     Compressor.gunzip(bytes, limit)
+end GzipDecompressor

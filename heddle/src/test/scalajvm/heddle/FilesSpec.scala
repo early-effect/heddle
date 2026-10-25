@@ -119,7 +119,6 @@ object FilesSpec extends ZIOSpecDefault:
               slash.body.text.is(_.some) == "fallback",
               direct.isEmpty,
             )
-            end for
           }
         }
       ,

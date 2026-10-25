@@ -81,7 +81,6 @@ object SetCookie:
           val base = SetCookie(first.substring(0, eq).trim, CookiePair.unquote(first.substring(eq + 1).trim))
           attrs.foldLeft(base)(attribute)
         }
-  end parse
 
   /** An unknown attribute is ignored, and a malformed date or age is absent, as RFC 6265 §5.2 asks. */
   private def attribute(cookie: SetCookie, attr: String): SetCookie =
@@ -99,8 +98,6 @@ object SetCookie:
       case "partitioned" => cookie.copy(flags = cookie.flags + CookieFlag.Partitioned)
       case "samesite"    => cookie.copy(sameSite = SameSite.parse(v))
       case _             => cookie
-    end match
-  end attribute
 
   def render(cookie: SetCookie): String =
     val b = StringBuilder(quotePair(cookie.name, cookie.value))
@@ -111,7 +108,6 @@ object SetCookie:
     CookieFlag.values.filter(cookie.flags).foreach(f => b.append("; ").append(f.attribute))
     cookie.sameSite.foreach(s => b.append("; SameSite=").append(s.render))
     b.toString
-  end render
 
   /** One `Set-Cookie` line each. A line `parse` rejects fails the codec. The bag method still drops it. */
   given setCookieHeader: TypedHeader[Chunk[SetCookie]] =

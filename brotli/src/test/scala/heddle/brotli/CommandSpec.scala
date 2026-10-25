@@ -51,4 +51,3 @@ object CommandSpec extends ZIOSpecDefault:
         val enc = Command.encode(1, 2047, emitDistance = true)
         assertTrue(enc.id == 398, enc.insert.code == 1, enc.copy.code == 22, enc.copy.extraBits == 10),
     ) @@ TestAspect.timeout(30.seconds)
-end CommandSpec

@@ -29,8 +29,6 @@ private[heddle] object ServerPlatform:
         .forkScoped
       _ <- ZIO.addFinalizer(halt0)
     yield Server(ZIO.succeed(port), halt0)
-    end for
-  end install
 
   private def runConnection[R](
       routes: Routes[R, Response],
@@ -57,6 +55,4 @@ private[heddle] object ServerPlatform:
           val wire = Wire(ConnBuf.fromConn(readBuf, session.conn), session.conn.write, secure = true)
           Http1.serveConnection(routes, wire, config, life, originDate).ensuring(session.conn.close)
         }
-    end match
-  end runConnection
 end ServerPlatform

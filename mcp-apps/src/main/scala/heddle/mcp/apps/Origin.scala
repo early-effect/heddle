@@ -55,7 +55,6 @@ object Origin:
         .filter(p => digits.forall(_.isDigit) && p >= 1 && p <= 65535)
         .toRight(OriginError.BadPort(digits))
       (rest.substring(0, colon), port.map(Some(_)))
-  end splitPort
 
   private def validHost(h: String): Boolean =
     if h.startsWith("[") then

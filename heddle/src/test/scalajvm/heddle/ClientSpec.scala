@@ -87,5 +87,3 @@ object ClientSpec extends ZIOSpecDefault:
         },
     )
     live @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds)
-  end spec
-end ClientSpec

@@ -22,4 +22,3 @@ object UrlEncodingJvmSpec extends ZIOSpecDefault:
           }
         ),
     ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
-end UrlEncodingJvmSpec

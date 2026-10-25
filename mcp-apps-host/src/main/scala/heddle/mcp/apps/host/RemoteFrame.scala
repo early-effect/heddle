@@ -51,7 +51,6 @@ final class RemoteFrame private (
         .serve(port, frame)
         .provideSome[Scope & Audit](ZLayer.succeed(mem.gate(ask)))
     yield served
-end RemoteFrame
 
 object RemoteFrame:
   /** `send` goes to the browser. `incoming` comes from it. An incoming failure or end closes the port and answers any
@@ -104,4 +103,3 @@ object RemoteFrame:
       frame,
       ask,
     )
-end RemoteFrame

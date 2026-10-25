@@ -67,4 +67,3 @@ object AuthSpec extends ZIOSpecDefault:
         val html = SwaggerUI.page("/docs/openapi.json")
         assertTrue(html.contains("persistAuthorization: true")),
     ) @@ TestAspect.timeout(5.seconds)
-end AuthSpec

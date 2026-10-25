@@ -76,8 +76,6 @@ object McpSession:
         result <- session.callTool(name, args).mapError(McpCallFailure.Session(_))
         out    <- ToolResults.decode(ep, result)
       yield out
-    end apply
-  end CallPartiallyApplied
 
   private[client] def as[A: JsonDecoder](result: Json.Obj): IO[McpError, A] =
     ZIO.fromEither(result.as[A]).mapError(McpError.Protocol(_))
@@ -93,5 +91,4 @@ object McpSession:
         case (items, Some(next))                    => go(Some(next), seen + next, acc ++ items)
       }
     go(None, Set.empty, Chunk.empty)
-  end pages
 end McpSession

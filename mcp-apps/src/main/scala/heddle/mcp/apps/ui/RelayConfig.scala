@@ -14,3 +14,4 @@ object RelayConfig:
 
   /** A relay runs under exactly the grant it was given, so one it cannot honor whole is not a config. */
   private given JsonCodec[SandboxGrant] = SandboxGrant.strict
+end RelayConfig

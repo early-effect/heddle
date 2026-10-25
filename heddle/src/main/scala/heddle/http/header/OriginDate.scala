@@ -20,8 +20,6 @@ private[heddle] object OriginDate:
       ref <- Ref.make(stampOf(now))
       _   <- (sleepToNextBoundary *> refresh(ref)).forever.forkScoped
     yield OriginDate(ref)
-    end for
-  end make
 
   private def refresh(ref: Ref[Stamp]): UIO[Unit] =
     Clock.instant.flatMap(now => ref.set(stampOf(now)))

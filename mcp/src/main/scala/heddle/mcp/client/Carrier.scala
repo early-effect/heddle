@@ -263,4 +263,3 @@ private[client] object PipeCarrier:
       carrier = PipeCarrier(pipe, pending, writes, sink)
       _ <- carrier.read.forkScoped
     yield carrier
-end PipeCarrier

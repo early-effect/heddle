@@ -17,7 +17,6 @@ private[heddle] object Base64:
       case -1 if !whole => Left(Base64Error.BadLength(raw.length))
       case -1           => Right(Chunk.fromArray(java.util.Base64.getDecoder.decode(raw)))
       case at           => Left(Base64Error.BadCharacter(body(at), at))
-  end decode
 
   def encode(bytes: Chunk[Byte]): String =
     java.util.Base64.getEncoder.encodeToString(bytes.toArray)

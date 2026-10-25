@@ -14,4 +14,3 @@ private[heddle] object Carrier:
       if Thread.currentThread.isVirtual then ZIO.attempt(effect)
       else ZIO.attemptBlocking(effect)
     }
-end Carrier

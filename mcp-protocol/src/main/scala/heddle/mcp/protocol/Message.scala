@@ -52,8 +52,6 @@ object Message:
             .fromJson(e)
             .fold(invalid("an error needs an integer code and a string message"))(err => Right(Error(id, err)))
         case _ => invalid("exactly one of method, result, error")
-    end if
-  end fromObj
 
   private def params(raw: Option[Json]): Option[Json.Obj] =
     raw match
