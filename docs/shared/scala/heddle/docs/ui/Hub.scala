@@ -588,7 +588,7 @@ object Hub:
         s"""stdin  → tools/call get_show {"id":${p.id}}
 stdout ← {"id":${p.id},"name":"${p.title}"}
 
-one JSON-RPC line in, one line out."""
+match the id. A later call can answer first."""
       case _ =>
         s"""GET /shows/${p.id} HTTP/1.1
 

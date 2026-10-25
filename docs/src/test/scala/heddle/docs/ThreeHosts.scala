@@ -52,7 +52,8 @@ The same endpoint answers 2025-11-25 `initialize` so older hosts can list and ca
     ),
     section("stdio")(
       md"""
-`mcp.stdio()` is the same engine on a pipe: one JSON-RPC line in, one line out. Native lines
+`mcp.stdio()` is the same engine on a pipe. The server keeps reading while a tool runs, and that
+tool can publish a notification before its result. Native lines
 carry `_meta`; a 2025 host may send `initialize` first. Local agent runtimes spawn
 `sbt "example/run -- --mcp-stdio"` (or a published main) and speak that framing.
 """

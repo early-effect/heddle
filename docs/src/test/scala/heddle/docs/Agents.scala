@@ -1,11 +1,24 @@
 package heddle.docs
 
-import heddle.Client
+import heddle.{Api, Body, Client, LinePipe, Request, Schema}
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
-import heddle.mcp.ServedResource
-import heddle.mcp.client.{McpCallFailure, McpClient}
-import heddle.mcp.protocol.{CallToolResult, ClientRequest, ExtensionId, Implementation, Resource, ToolName}
+import heddle.mcp.{Mcp, ServedResource, Session}
+import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
+import heddle.mcp.protocol.{
+  CallToolResult,
+  ClientRequest,
+  ContentBlock,
+  ExtensionId,
+  Implementation,
+  Message,
+  ProtocolVersion,
+  RequestId,
+  Resource,
+  ToolName,
+}
+import heddle.mcp.transport.{Http as McpHttp}
+import heddle.sse.SseCodec
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
@@ -156,6 +169,103 @@ error comes back as `McpCallFailure.Domain(e)`:
         assertTrue(show.title == "Evening bill", missing == Left(McpCallFailure.Domain(ShowNotFound("show 99"))))
       },
     ),
+    section("While a tool is running")(
+      md"""
+A tool calls `Session.publish` and does not name the pipe or HTTP. That notification is one whole
+message ahead of the tool's result: the next stdout line, or an SSE event on the POST when
+`Accept` contains `text/event-stream`. `McpClient.http` sends that Accept. Without the media type,
+and outside a request, `publish` succeeds and sends nothing.
+
+The next request runs while the tool is still waiting. Match answers by JSON-RPC id. A later call
+can finish first.
+
+`open` keeps the call. `notifications` on that call are what the reader recorded before `result`
+completed. `cancel` sends `notifications/cancelled` and fails `result` with `McpError.Cancelled`,
+so the waiter does not sit until the session timeout. The server writes no result for a call
+interrupted before that result. Another call on the same session keeps running. `request` is
+`open` plus the timeout.
+
+`initialize` is answered before the next line is read, and it cannot be cancelled. Interrupting
+`stdio` interrupts in-flight tools. End of stdin does not: the server finishes what it has already
+read and writes those results.
+
+GET, with a session id and `Accept: text/event-stream`, is that session's resource stream. Tool
+notifications do not travel on it. A stateless server has one request-id space, so two clients
+that both use id `1` can cancel each other. A session id keeps the ids in that session.
+""",
+      exampleZIO {
+        final case class Arg(name: String) derives Schema, JsonCodec
+        val tickNote: Message.Notification =
+          Message.Notification("notifications/progress", Json.Obj("token" -> Json.Str("tick")))
+        val settings = McpClient.Settings(Implementation("docs", "1"))
+        def textOf(result: Json.Obj): String =
+          result.as[CallToolResult] match
+            case Right(got) => got.content.collect { case ContentBlock.Text(text, _) => text }.mkString
+            case Left(_)    => ""
+
+        for
+          started <- Promise.make[Nothing, Unit]
+          stopped <- Promise.make[Nothing, Unit]
+          gate    <- Promise.make[Nothing, Unit]
+          mcp <- ZIO.fromEither(
+            Mcp
+              .from(Api("shop", "1"))
+              .flatMap(_.tool[Arg]("hold") { a =>
+                (started.succeed(()) *> gate.await).onInterrupt(stopped.succeed(())).as(a.name)
+              })
+              .flatMap(_.tool[Arg]("pass")(a => ZIO.succeed(a.name)))
+              .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
+          )
+          (client, remote) <- LinePipe.connected
+          _                <- mcp.stdio(remote).forkScoped
+          session          <- McpClient.pipe(client, settings)
+          held             <- session.open(ClientRequest.CallTool(ToolName("hold"), Json.Obj("name" -> Json.Str("ada"))))
+          _                <- started.await
+          passed           <- session.open(ClientRequest.CallTool(ToolName("pass"), Json.Obj("name" -> Json.Str("bea"))))
+          passText         <- passed.result.map(textOf)
+          _                <- held.cancel
+          _                <- stopped.await
+          cancelled        <- held.result.flip
+          ticked           <- session.open(ClientRequest.CallTool(ToolName("tick"), Json.Obj("name" -> Json.Str("ada"))))
+          tickText         <- ticked.result.map(textOf)
+          notes            <- ticked.notifications
+        yield (passText, cancelled, notes == Chunk(tickNote), tickText)
+      }.assert { case (passText, cancelled, sameNote, tickText) =>
+        val wasCancelled = cancelled match
+          case McpError.Cancelled(_) => true
+          case _                     => false
+        assertTrue(passText == "bea", wasCancelled, sameNote, tickText == "done")
+      },
+      exampleZIO {
+        final case class Arg(name: String) derives Schema, JsonCodec
+        val tickNote: Message.Notification =
+          Message.Notification("notifications/progress", Json.Obj("token" -> Json.Str("tick")))
+        val args = Json.Obj("name" -> Json.Str("ada"))
+        for
+          mcp <- ZIO.fromEither(
+            Mcp
+              .from(Api("shop", "1"))
+              .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
+          )
+          msg = Message.stateless(RequestId.Num(1), ClientRequest.CallTool(ToolName("tick"), args))
+          res <- mcp.routes(
+            Request
+              .post("/mcp", Body.json(msg.json.toJson))
+              .withHeader(McpHttp.ProtocolHeader, ProtocolVersion.Current.value)
+              .withHeader(McpHttp.MethodHeader, "tools/call")
+              .withHeader(McpHttp.NameHeader, "tick")
+              .withHeader("Accept", "application/json, text/event-stream"),
+          )
+          events <- SseCodec.stream(res.body.toStream).runCollect
+        yield events.map(_.data)
+      }.assert { data =>
+        assertTrue(
+          data.size == 2,
+          data.lift(0).exists(_.contains("notifications/progress")),
+          data.lift(1).exists(_.contains("done")),
+        )
+      },
+    ),
     section("Protocol eras")(
       md"""
 Native MCP is **2026-07-28**: `server/discover`, version in `_meta`, POST only, no session store.
@@ -165,22 +275,23 @@ so those hosts can list tools and call one. Authors do not opt in.
 | | Native (2026-07-28) | Compat (2025-11-25) |
 | --- | --- | --- |
 | Handshake | `server/discover` | `initialize` / `notifications/initialized` |
-| Session | none | HTTP mints an ephemeral `Mcp-Session-Id` and echoes it. It is not looked up. stdio has no session header. |
-| HTTP | POST | POST; GET 405; DELETE 200 |
-| stdio | `_meta` on every line | `initialize` then the rest of that process is 2025 |
+| Session | none. One request-id space for the process. | HTTP mints an `Mcp-Session-Id`. Cancel and GET use it. stdio is one pipe and has no session header. |
+| HTTP | POST. A tool call is an event stream when Accept includes `text/event-stream`. | POST the same way. GET with a session id and `text/event-stream` is the resource stream. DELETE closes the session. |
+| stdio | `_meta` on every line. Requests overlap. | `initialize`, then the rest of that process is 2025. Requests overlap. |
 
 `initialize` selects compat. `MCP-Protocol-Version: 2026-07-28`, `_meta` version `2026-07-28`, or
 `server/discover` selects native. Missing 2026 headers on a non-initialize POST is still an error.
 
-GET is 405 on purpose. A live SSE back-channel is how 2025 hosts asked the client for sampling
-and elicitation. 2026 replaced that with MRTR. Do not grow a GET stream as "the" notification path.
+Tool notifications travel on the request that started the tool. GET is the resource stream for
+that session, not a second path for those lines. Do not grow it into "the" notification channel.
 """
     ),
     section("HTTP and stdio")(
       md"""
 `mcp.routes` is Streamable HTTP at `/mcp` (`mcp.at("other")` to move it). `mcp.stdio()` reads
-JSON-RPC lines from stdin and writes lines to stdout. Both transports speak native 2026 and the
-2025 handshake.
+JSON-RPC lines from stdin and writes lines to stdout. Both keep reading while a tool runs. See
+"While a tool is running" for `Session.publish`, overlapping calls, and cancel. Both transports
+speak native 2026 and the 2025 handshake.
 
 Do not embed a second authorization server inside `heddle-mcp`. When the HTTP transport needs a
 bearer token, `Mcp.bearer` + `Mcp.protectedResource` advertise the resource metadata. JWT
