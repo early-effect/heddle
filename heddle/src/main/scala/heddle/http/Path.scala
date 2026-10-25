@@ -12,6 +12,7 @@ final case class Path(segments: Chunk[String]):
   def /(segment: String): Path = Path(segments :+ segment)
 
   def isEmpty: Boolean = segments.isEmpty
+end Path
 
 object Path:
   val root: Path = Path(Chunk.empty)
@@ -45,9 +46,6 @@ object Path:
         segmentAt(raw, begin, q).foreach(buf += _)
         val arr = buf.result()
         if arr.isEmpty then root else Path(Chunk.fromArray(arr))
-      end if
-    end if
-  end decode
 
   private def segmentAt(raw: Chunk[Byte], from: Int, until: Int): Option[String] =
     if until <= from then None

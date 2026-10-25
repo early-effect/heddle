@@ -21,7 +21,6 @@ private[heddle] object Hpack:
               encodeString(b, v)
     }
     Chunk.fromArray(b.result())
-  end encode
 
   /** Decodes one header block against the connection's dynamic table and returns the table the next block sees. */
   def decode(
@@ -57,9 +56,7 @@ private[heddle] object Hpack:
             case Left(e)              => Left(e)
             case Right((field, next)) =>
               loop(next, if indexing then t.add(field) else t, out :+ field, listSize + HpackTable.cost(field))
-        end if
     loop(0, table, Chunk.empty, 0L)
-  end decode
 
   /** A literal field: an indexed or literal name, then a literal value. */
   private def literal(
@@ -88,7 +85,6 @@ private[heddle] object Hpack:
         b += ((v % 128) | 0x80).toByte
         v = v / 128
       b += v.toByte
-  end encodeInt
 
   private def encodeString(b: scala.collection.mutable.ArrayBuilder[Byte], s: String): Unit =
     val bytes = s.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
@@ -114,7 +110,6 @@ private[heddle] object Hpack:
             else if (b & 0x80) != 0 then more(i + 1, shift + 7, value)
             else Right((value.toInt, i + 1))
         more(from + 1, 0, first.toLong)
-      end if
 
   private def decodeString(raw: Array[Byte], from: Int): Either[HpackError, (String, Int)] =
     if from >= raw.length then Left(HpackError.Truncated)
@@ -204,5 +199,4 @@ private[heddle] object Hpack:
     )
     val byIndex: Map[Int, (String, String)]  = entries.zipWithIndex.map { case (p, i) => (i + 1) -> p }.toMap
     val index: List[((String, String), Int)] = entries.zipWithIndex.map { case (p, i) => p -> (i + 1) }
-  end Table
 end Hpack

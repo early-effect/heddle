@@ -35,8 +35,6 @@ private[brotli] object Huffman:
         idx.foreach(i => len(i) = depth(i).max(1))
         limit(len, maxBits)
         len
-    end match
-  end lengths
 
   def prefixFree(len: Array[Int], code: Array[Int]): Boolean =
     val used = len.indices.filter(i => len(i) > 0)
@@ -67,7 +65,6 @@ private[brotli] object Huffman:
         next(l) += 1
       i += 1
     out
-  end codes
 
   def writePrefixCode(w: BitWriter, len: Array[Int], alphabetBits: Int): Unit =
     var used = len.indices.filter(i => len(i) > 0)
@@ -79,7 +76,6 @@ private[brotli] object Huffman:
       used = IndexedSeq(a, b).sorted
     if used.length <= 4 then writeSimple(w, len, used, alphabetBits)
     else writeComplex(w, len)
-  end writePrefixCode
 
   private def writeSimple(w: BitWriter, len: Array[Int], used: IndexedSeq[Int], alphabetBits: Int): Unit =
     val nsym = used.length.max(1)
@@ -92,7 +88,6 @@ private[brotli] object Huffman:
     if nsym == 4 then
       val lens = ordered.map(len)
       w.writeBits(1, if lens == IndexedSeq(2, 2, 2, 2) then 0 else 1)
-  end writeSimple
 
   private def writeComplex(w: BitWriter, len: Array[Int]): Unit =
     var end = len.length
@@ -125,7 +120,6 @@ private[brotli] object Huffman:
       val l = cl(t)
       if l > 0 then w.writePrefix(l, clCodes(t))
     }
-  end writeComplex
 
   private def writeCodeLengthLen(w: BitWriter, cl: Int): Unit =
     cl match
@@ -147,5 +141,4 @@ private[brotli] object Huffman:
           overflow = true
           len(i) = maxBits
         i += 1
-  end limit
 end Huffman

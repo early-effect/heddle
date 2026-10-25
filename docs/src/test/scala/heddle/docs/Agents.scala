@@ -203,35 +203,33 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
             case Right(got) => got.content.collect { case ContentBlock.Text(text, _) => text }.mkString
             case Left(_)    => ""
 
-        val observed =
-          for
-            started <- Promise.make[Nothing, Unit]
-            stopped <- Promise.make[Nothing, Unit]
-            gate    <- Promise.make[Nothing, Unit]
-            mcp     <- ZIO.fromEither(
-              Mcp
-                .from(Api("shop", "1"))
-                .flatMap(_.tool[Arg]("hold") { a =>
-                  (started.succeed(()) *> gate.await).onInterrupt(stopped.succeed(())).as(a.name)
-                })
-                .flatMap(_.tool[Arg]("pass")(a => ZIO.succeed(a.name)))
-                .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
-            )
-            (client, remote) <- LinePipe.connected
-            _                <- mcp.stdio(remote).forkScoped
-            session          <- McpClient.pipe(client, settings)
-            held      <- session.open(ClientRequest.CallTool(ToolName("hold"), Json.Obj("name" -> Json.Str("ada"))))
-            _         <- started.await
-            passed    <- session.open(ClientRequest.CallTool(ToolName("pass"), Json.Obj("name" -> Json.Str("bea"))))
-            passText  <- passed.result.map(textOf)
-            _         <- held.cancel
-            _         <- stopped.await
-            cancelled <- held.result.flip
-            ticked    <- session.open(ClientRequest.CallTool(ToolName("tick"), Json.Obj("name" -> Json.Str("ada"))))
-            tickText  <- ticked.result.map(textOf)
-            notes     <- ticked.notifications
-          yield (passText, cancelled, notes == Chunk(tickNote), tickText)
-        observed
+        for
+          started <- Promise.make[Nothing, Unit]
+          stopped <- Promise.make[Nothing, Unit]
+          gate    <- Promise.make[Nothing, Unit]
+          mcp     <- ZIO.fromEither(
+            Mcp
+              .from(Api("shop", "1"))
+              .flatMap(_.tool[Arg]("hold") { a =>
+                (started.succeed(()) *> gate.await).onInterrupt(stopped.succeed(())).as(a.name)
+              })
+              .flatMap(_.tool[Arg]("pass")(a => ZIO.succeed(a.name)))
+              .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
+          )
+          (client, remote) <- LinePipe.connected
+          _                <- mcp.stdio(remote).forkScoped
+          session          <- McpClient.pipe(client, settings)
+          held      <- session.open(ClientRequest.CallTool(ToolName("hold"), Json.Obj("name" -> Json.Str("ada"))))
+          _         <- started.await
+          passed    <- session.open(ClientRequest.CallTool(ToolName("pass"), Json.Obj("name" -> Json.Str("bea"))))
+          passText  <- passed.result.map(textOf)
+          _         <- held.cancel
+          _         <- stopped.await
+          cancelled <- held.result.flip
+          ticked    <- session.open(ClientRequest.CallTool(ToolName("tick"), Json.Obj("name" -> Json.Str("ada"))))
+          tickText  <- ticked.result.map(textOf)
+          notes     <- ticked.notifications
+        yield (passText, cancelled, notes == Chunk(tickNote), tickText)
       }.assert { case (passText, cancelled, sameNote, tickText) =>
         val wasCancelled = cancelled match
           case McpError.Cancelled(_) => true
@@ -242,26 +240,24 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
         final case class Arg(name: String) derives Schema, JsonCodec
         val tickNote: Message.Notification =
           Message.Notification("notifications/progress", Json.Obj("token" -> Json.Str("tick")))
-        val args   = Json.Obj("name" -> Json.Str("ada"))
-        val posted =
-          for
-            mcp <- ZIO.fromEither(
-              Mcp
-                .from(Api("shop", "1"))
-                .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
-            )
-            msg = Message.stateless(RequestId.Num(1), ClientRequest.CallTool(ToolName("tick"), args))
-            res <- mcp.routes(
-              Request
-                .post("/mcp", Body.json(msg.json.toJson))
-                .withHeader(McpHttp.ProtocolHeader, ProtocolVersion.Current.value)
-                .withHeader(McpHttp.MethodHeader, "tools/call")
-                .withHeader(McpHttp.NameHeader, "tick")
-                .withHeader("Accept", "application/json, text/event-stream")
-            )
-            events <- SseCodec.stream(res.body.toStream).runCollect
-          yield events.map(_.data)
-        posted
+        val args = Json.Obj("name" -> Json.Str("ada"))
+        for
+          mcp <- ZIO.fromEither(
+            Mcp
+              .from(Api("shop", "1"))
+              .flatMap(_.tool[Arg]("tick")(_ => Session.publish(tickNote) *> ZIO.succeed("done")))
+          )
+          msg = Message.stateless(RequestId.Num(1), ClientRequest.CallTool(ToolName("tick"), args))
+          res <- mcp.routes(
+            Request
+              .post("/mcp", Body.json(msg.json.toJson))
+              .withHeader(McpHttp.ProtocolHeader, ProtocolVersion.Current.value)
+              .withHeader(McpHttp.MethodHeader, "tools/call")
+              .withHeader(McpHttp.NameHeader, "tick")
+              .withHeader("Accept", "application/json, text/event-stream")
+          )
+          events <- SseCodec.stream(res.body.toStream).runCollect
+        yield events.map(_.data)
       }.assert { data =>
         assertTrue(
           data.size == 2,

@@ -221,7 +221,6 @@ object EndpointSpec extends ZIOSpecDefault:
           gone == Left(CallFailure.Undecodable(Status.Ok, OutputError.Header("ETag", ParamError.Missing))),
           called == (Text("hi"), tag),
         )
-        end for
       ,
       test("out after outHeader drops the response header"):
         val ep  = Endpoint.get("t").out[Text].outHeader[EntityTag].out[Text]

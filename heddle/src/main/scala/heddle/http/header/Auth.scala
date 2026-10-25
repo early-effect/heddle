@@ -11,6 +11,7 @@ enum AuthScheme:
       case Basic    => "Basic"
       case Bearer   => "Bearer"
       case Other(t) => t
+end AuthScheme
 
 object AuthScheme:
   def parse(raw: String): AuthScheme =
@@ -90,7 +91,6 @@ object BearerToken:
       ,
       token => s"Bearer ${token.token}",
     )
-end BearerToken
 
 final case class WwwAuthenticate(scheme: AuthScheme, params: List[(String, String)])
 
@@ -128,11 +128,7 @@ object WwwAuthenticate:
               (s.substring(i, end).trim, end)
           if k.nonEmpty then out += (k -> v)
           from = next
-        end if
-      end if
-    end while
     out.result()
-  end params
 
   given TypedHeader[WwwAuthenticate] =
     TypedHeader.single(HeaderName.WwwAuthenticate)(

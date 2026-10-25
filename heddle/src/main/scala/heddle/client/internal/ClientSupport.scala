@@ -30,6 +30,4 @@ private[heddle] object ClientSupport:
                   .withBody(Body.fromBytes(out, mediaType)),
             )
         case _ => ZIO.succeed(res)
-    end if
-  end inflate
 end ClientSupport

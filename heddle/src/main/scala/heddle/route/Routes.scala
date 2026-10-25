@@ -89,6 +89,7 @@ object Routes:
       decide(request).flatMap(Outcome.render)
 
     override private[heddle] def decide(request: Request): ZIO[R, E, Outcome] = run(request)
+  end Impl
 
   extension [R, E](self: Routes[R, E])
     /** Runs `extract` first and hands its `P` to the routes, which then need only `R0`. A failed extract is the
@@ -108,7 +109,6 @@ object Routes:
                 .provideSomeEnvironment[R0](env => covers.liftCo[ZEnvironment](env ++ ZEnvironment(p))),
           ),
       )
-  end extension
 end Routes
 
 private[heddle] object Dispatch:
@@ -124,7 +124,6 @@ private[heddle] object Dispatch:
           case None         =>
             if same.nonEmpty then ZIO.succeed(Outcome.miss)
             else ZIO.succeed(Outcome.notAllowed(allowList(found)))
-  end apply
 
   /** The first same-method route whose path codec matches. A codec miss is not a response, so the next candidate runs.
     */
@@ -157,8 +156,6 @@ private[heddle] object Dispatch:
             case (None, Some(vari))      => vari.lookup(parts, from + 1)
             case (None, None)            => Chunk.empty
       here ++ rest
-    end lookup
-  end Node
 
   private object Node:
     def build[R, E](routes: Chunk[Route[R, E]]): Node[R, E] =
@@ -175,7 +172,6 @@ private[heddle] object Dispatch:
         if !trailing then at.terminals += route
       }
       root.freeze
-    end build
 
     private final class MNode[R, E]:
       val literals: mutable.Map[String, MNode[R, E]]  = mutable.Map.empty

@@ -23,7 +23,6 @@ private[heddle] object Http1:
   ): ZIO[R, HttpError, Unit] =
     val buf = java.nio.ByteBuffer.allocate(math.max(config.chunkSize.toInt, config.maxHeaderBytes.toInt))
     serveConnection(routes, Wire(ConnBuf.fromPull(buf, pull), send, secure = false), config, life, originDate)
-  end serveConnection
 
   def serveConnection[R](
       routes: Routes[R, Response],
@@ -180,7 +179,6 @@ private[heddle] object Http1:
                 Some((Request(method, url, headers, body, version, secure), leftover))
               }
       }
-  end readRequest
 
   private def requestBody(
       src: ConnBuf,
@@ -203,8 +201,6 @@ private[heddle] object Http1:
         ZIO.fail(HttpError.Malformed(WireError.UnsupportedTransferCoding(raw)))
       case Some(_) => chunkedBody(src, headers, config)
       case None    => lengthBody(src, headers, config)
-    end match
-  end framedBody
 
   private def lengthBody(
       src: ConnBuf,
@@ -274,8 +270,6 @@ private[heddle] object Http1:
           send(headBytes(response, Some(n), persist, version, stamp)) *> sendExactly(send, stream, n)
         case Body.Stream(stream, _, None) =>
           send(headBytes(response, None, persist, version, stamp)) *> chunked(stream)
-    end if
-  end writeResponse
 
   private[heddle] def staticHttp11(response: Response, stamp: OriginDate.Stamp): Chunk[Byte] =
     val bodyBytes = response.body match
@@ -289,7 +283,6 @@ private[heddle] object Http1:
       java.lang.System.arraycopy(head, 0, out, 0, head.length)
       bodyBytes.copyToArray(out, head.length)
       Chunk.fromArray(out)
-  end staticHttp11
 
   /** A `Content-Length` body: exactly `n` bytes, or an I/O failure that closes the connection. */
   private def sendExactly(send: Sink, stream: ZStream[Any, Throwable, Byte], n: Long): IO[HttpError, Unit] =
@@ -332,7 +325,6 @@ private[heddle] object Http1:
           }
     val headers = withConnection(framed, persist, version)
     Chunk.fromArray(encodeHead(response.status, headers, stamp))
-  end headBytes
 
   private def encodeHead(status: Status, headers: Headers, stamp: OriginDate.Stamp): Array[Byte] =
     val b                            = Array.newBuilder[Byte]
@@ -371,7 +363,6 @@ private[heddle] object Http1:
     if !headers.has(HeaderName.Date) then putChunk(stamp.http1Line)
     crlf()
     b.result()
-  end encodeHead
 
   private def withConnection(headers: Headers, persist: Boolean, version: HttpVersion): Headers =
     if headers.has(Ascii.Connection) then headers
@@ -433,11 +424,6 @@ private[heddle] object Http1:
                     val (ns, ne) = Ascii.trim(raw, i, colon)
                     hdrs += Header.slice(HeaderName.intern(raw, ns, ne), raw, colon + 1, j)
                     i = j + 2
-                end if
-            end while
             err.map(HttpError.Malformed(_)).toLeft((method, url, version, Headers(Chunk.fromIterable(hdrs))))
-      end if
-    end if
-  end parseHead
 
 end Http1

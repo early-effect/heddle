@@ -22,4 +22,3 @@ object DistanceSpec extends ZIOSpecDefault:
           Distance.decode(15, 0).isEmpty,
         ),
     ) @@ TestAspect.timeout(30.seconds)
-end DistanceSpec

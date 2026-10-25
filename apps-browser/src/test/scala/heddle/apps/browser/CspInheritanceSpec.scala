@@ -128,7 +128,6 @@ object CspInheritanceSpec extends ZIOSpecDefault:
        |<iframe id="opaque" sandbox="allow-scripts" srcdoc="${srcdoc(Csp.Meta)}"></iframe>
        |<iframe id="control" sandbox="allow-scripts" srcdoc="${srcdoc(Csp.Absent)}"></iframe>
        |</body></html>""".stripMargin
-  end hostPage
 
   private val loopback = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
 

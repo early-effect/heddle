@@ -13,3 +13,4 @@ object Counter:
   val inc  = Endpoint.post("counter" / "inc").out[Count].name("inc")
 
   val shed = Shed(UiUri("ui://counter/view"), "Counter", Grant.launch(show))((inc = Grant.app(inc)))
+end Counter

@@ -39,7 +39,6 @@ enum RpcError(val code: Int):
       case Other(_, _, d) => d
       case _              => None
     Json.Obj(Chunk("code" -> Json.Num(code), "message" -> Json.Str(text)) ++ Chunk.fromIterable(data.map("data" -> _)))
-  end json
 end RpcError
 
 object RpcError:

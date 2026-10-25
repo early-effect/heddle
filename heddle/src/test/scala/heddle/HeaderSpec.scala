@@ -155,4 +155,3 @@ object HeaderSpec extends ZIOSpecDefault:
           assertTrue(ok.date.isDefined, bad.date.isEmpty),
       ),
     ) @@ TestAspect.timeout(zio.Duration.fromSeconds(60))
-end HeaderSpec

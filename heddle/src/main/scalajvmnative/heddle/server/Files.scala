@@ -115,7 +115,6 @@ object Files:
               EntityTag(s"$n-${mtime.toEpochMilli}", weak = true),
             )
           )
-        end if
       }
       .mapError(FileError.Unreadable(path.toString, _))
       .flatMap(ZIO.fromEither(_))

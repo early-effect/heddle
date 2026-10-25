@@ -25,8 +25,6 @@ object Host:
         val p = s.substring(colon + 1)
         if h.isEmpty then None
         else p.toIntOption.map(n => Host(h, Some(n))).orElse(Some(Host(s, None)))
-    end if
-  end parse
 
   given TypedHeader[Host] =
     TypedHeader.single(HeaderName.Host)(

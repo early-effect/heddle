@@ -8,6 +8,7 @@ enum Visibility:
 
   def model: Boolean = this != App
   def app: Boolean   = this != Model
+end Visibility
 
 /** A browser capability a view may ask for (Permission Policy features). */
 /** `wire` is the `_meta.ui.permissions` key; `feature` is the Permissions Policy name an iframe's `allow` delegates. */
@@ -65,6 +66,7 @@ enum Admit:
     this match
       case AnyOrigin => true
       case Only(os)  => os.contains(o)
+end Admit
 
 object Admit:
   val none: Admit = Only(Set.empty)

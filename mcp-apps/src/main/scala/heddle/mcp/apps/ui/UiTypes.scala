@@ -120,7 +120,6 @@ enum HostVar(val wire: String):
   case ShadowSm                 extends HostVar("--shadow-sm")
   case ShadowMd                 extends HostVar("--shadow-md")
   case ShadowLg                 extends HostVar("--shadow-lg")
-end HostVar
 
 object HostVar:
   def fromWire(s: String): Option[HostVar] = values.find(_.wire == s)
@@ -144,7 +143,6 @@ object Modality:
         case other       => Left(s"not a set of modalities: $other")
       },
     )
-end Modality
 
 /** A capability that is on when present: the wire's `{}`. */
 case object Present:
@@ -187,8 +185,6 @@ object ContainerDimensions:
         case other       => Left(s"not container dimensions: $other")
       },
     )
-  end given
-end ContainerDimensions
 
 final case class DeviceCapabilities(touch: Option[Boolean] = None, hover: Option[Boolean] = None) derives JsonCodec
 
@@ -222,7 +218,6 @@ object HostStyles:
         case other => Left(s"not host styles: $other")
       },
     )
-end HostStyles
 
 /** `McpUiHostContext`. Every field is optional because `host-context-changed` sends only what changed; `extra` keeps
   * the fields a newer host sends that this revision does not know.
@@ -259,7 +254,6 @@ final case class HostContext(
       patch.safeAreaInsets.orElse(safeAreaInsets),
       Json.Obj(extra.fields.filterNot((k, _) => patch.extra.get(k).isDefined) ++ patch.extra.fields),
     )
-end HostContext
 
 object HostContext:
   val empty: HostContext = HostContext()
@@ -330,7 +324,6 @@ object HostContext:
         case other => Left(s"not a host context: $other")
       },
     )
-  end given
 end HostContext
 
 /** `{ listChanged?: boolean }` on the tool and resource capabilities. */
@@ -422,3 +415,4 @@ object Outcome:
     o match
       case Done    => Json.Obj()
       case Refused => Json.Obj("isError" -> Json.Bool(true))
+end Outcome

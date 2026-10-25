@@ -17,6 +17,7 @@ object Generation:
   given JsonCodec[Generation] = JsonCodec.long
 
   extension (g: Generation) def value: Long = g
+end Generation
 
 /** What a view, its relay, or the host did. */
 enum Action derives JsonCodec:
@@ -46,7 +47,6 @@ enum Decision derives JsonCodec:
   case DroppedAfterNavigate
   case TornDown(reason: String)
   case Logged(level: LoggingLevel)
-end Decision
 
 final case class AuditEvent(
     at: Instant,
@@ -79,4 +79,3 @@ object Audit:
         log <- Ref.make(Chunk.empty[AuditEvent])
       yield Audit(hub, log, capacity)
     )
-end Audit

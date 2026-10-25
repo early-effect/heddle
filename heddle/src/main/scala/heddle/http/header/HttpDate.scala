@@ -23,7 +23,6 @@ private[heddle] object HttpDate:
       day <- found.day.filter(_ >= 1)
       if year >= 1601 && day <= LocalDate.of(year, mon, 1).lengthOfMonth
     yield LocalDate.of(year, mon, day).atTime(h, m, s).toInstant(ZoneOffset.UTC)
-  end parse
 
   def render(instant: Instant): String =
     DateStampPlatform.render(instant)

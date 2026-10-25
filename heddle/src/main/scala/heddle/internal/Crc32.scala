@@ -12,3 +12,4 @@ private[heddle] object Crc32:
   /** Continues `crc` (0 to start) over `bytes`. */
   def update(crc: Int, bytes: Chunk[Byte]): Int =
     ~bytes.foldLeft(~crc)((c, b) => table((c ^ b) & 0xff) ^ (c >>> 8))
+end Crc32

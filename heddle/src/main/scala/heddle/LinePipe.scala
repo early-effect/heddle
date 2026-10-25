@@ -33,6 +33,7 @@ object LinePipe:
       write.offer(Some(line)).unit
 
     def close: UIO[Unit] = write.offer(None).unit
+  end QueuePipe
 end LinePipe
 
 private final class StreamLinePipe(in: InputStream, out: OutputStream) extends LinePipe:

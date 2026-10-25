@@ -13,6 +13,7 @@ trait ViewPort:
 
   /** Every message from the other end, in order. It ends when the other end goes away. */
   def receive: ZStream[Any, McpError, Message]
+end ViewPort
 
 object ViewPort:
   /** Two connected ends: what one sends, the other receives. For tests, and for a host and view in one process. */

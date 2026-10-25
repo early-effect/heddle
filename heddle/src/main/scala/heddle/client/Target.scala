@@ -12,6 +12,7 @@ private[heddle] final case class Target(scheme: Scheme, authority: Authority, re
     if authority.port == scheme.defaultPort then host else s"$host:${authority.port}"
 
   def url: String = s"${scheme.render}://$hostHeader$requestTarget"
+end Target
 
 private[heddle] object Target:
   def of(req: Request): Either[ClientError, Target] =
@@ -34,5 +35,4 @@ private[heddle] object Target:
         val bare = host.stripPrefix("[").stripSuffix("]")
         val rt   = if url.query.isEmpty then url.path.render else s"${url.path.render}?${url.query.render}"
         Right(Target(scheme, Authority(bare, url.port.getOrElse(scheme.defaultPort)), rt))
-  end of
 end Target

@@ -39,7 +39,6 @@ object Server:
       http2Config: Http2Config = Http2Config(),
   ):
     def port(n: Port): Config = copy(port = n)
-  end Config
 
   object Config:
     val defaultHost: String                                        = "0.0.0.0"

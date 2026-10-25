@@ -15,6 +15,7 @@ object Grant:
   /** A tool only the view calls; the host keeps it from the model. */
   def app[In, Err, Out](endpoint: Endpoint[In, Err, Out]): Grant[In, Err, Out] =
     Grant(endpoint, Visibility.App)
+end Grant
 
 /** Evidence that every field of a named tuple is a `Grant`. */
 @scala.annotation.implicitNotFound("Every field of a shed's tools must be a Grant; ${V} has one that is not.")
@@ -27,6 +28,7 @@ object AllGrants:
 
   given cons[G <: Grant[?, ?, ?], T <: Tuple](using rest: AllGrants[T]): AllGrants[G *: T] with
     def list(v: G *: T): List[Grant[?, ?, ?]] = v.head :: rest.list(v.tail)
+end AllGrants
 
 /** The set of grants one `ui://` view may use, and the policy it asks its host for. The view calls a tool by picking it
   * from `tools` (`bridge.call(_.inc)`), so a grant from another shed is not reachable. `L` is the launch grant's own

@@ -30,7 +30,6 @@ object SchemaPicture:
     case McpBuild(errors: NonEmptyChunk[McpBuildError])
     case NoReply
     case NoInputSchema(name: String)
-  end Gap
 
   def load: IO[Gap, SchemaPicture] =
     for

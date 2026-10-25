@@ -93,7 +93,6 @@ object ErrorCodec:
     }
     // Endpoint.outErrors gives every case a status, so a miss here is a heddle bug and answers 500.
     ErrorCodec(e => table.lift(ordinal(e)).getOrElse(Status.InternalServerError), Some(codec), docs)
-  end cases
 
   private def doc(status: Status, schema: SchemaDoc, mediaType: heddle.http.MediaType): StatusDoc =
     StatusDoc(status, Some(schema), Some(mediaType), status.text)

@@ -43,7 +43,6 @@ object ExampleMcpSpec extends ZIOSpecDefault:
         .withHeader(Http.MethodHeader, method)
     val req = name.fold(req0)(n => req0.withHeader(Http.NameHeader, n))
     routes(req)
-  end postMcp
 
   def spec =
     suite("example MCP")(
@@ -128,7 +127,6 @@ object ExampleMcpSpec extends ZIOSpecDefault:
           call.status == Status.Ok,
           call.body.text.is(_.some).contains("Evening bill"),
         )
-        end for
       ,
       test("stdio 2025 initialize list and get_show"):
         def legacy(method: String, params: Json.Obj, id: Int): Json.Obj =
@@ -161,7 +159,6 @@ object ExampleMcpSpec extends ZIOSpecDefault:
             text.contains("Evening bill"),
             !text.contains("resultType"),
           )
-        end for
       ,
       test("stdio pipe discover list and get_show"):
         val lines =
@@ -222,7 +219,6 @@ object ExampleMcpSpec extends ZIOSpecDefault:
               val code = proc.waitFor()
               (text, code)
             finally proc.destroyForcibly()
-            end try
           }
           .map { (text, code) =>
             assertTrue(

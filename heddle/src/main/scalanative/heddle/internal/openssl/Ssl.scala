@@ -18,7 +18,6 @@ private[heddle] object Ssl:
         out.at(0).asInstanceOf[Ptr[CUnsignedChar]],
       )
     out
-  end sha256
 
   final class Ctx private[openssl] (
       private[openssl] val ptr: Ptr[Byte],
@@ -72,7 +71,6 @@ private[heddle] object Ssl:
             case Transfer.Blocked(on) => Right(Some(on))
             case _                    => Left(SslError.PeerClosed(function))
           }
-    end handshake
 
     private def outcome(n: Int, function: String): Either[SslError, Transfer] =
       ssl.SSL_get_error(ptr, n) match
@@ -92,7 +90,6 @@ private[heddle] object Ssl:
           ssl.SSL_CTX_free(ctx)
           Left(e)
         case Right(pinned) => Right(Ctx(ctx, pinned))
-  end serverCtx
 
   /** Verifies the peer against `trustPem` when given, otherwise against the system's default trust store. */
   def clientCtx(trustPem: Option[String]): Either[SslError, Ctx] =
@@ -111,8 +108,6 @@ private[heddle] object Ssl:
           ssl.SSL_CTX_free(ctx)
           Left(e)
         case Right(_) => Right(Ctx(ctx, Array.empty))
-    end if
-  end clientCtx
 
   def accept(ctx: Ctx, fd: Int): Either[SslError, Session] = attach(ctx, fd, host = None)
 
@@ -146,7 +141,6 @@ private[heddle] object Ssl:
       crypto.ERR_clear_error()
       if added == 0 then Left(SslError.NoTrustedCertificates) else Right(())
     }
-  end trust
 
   def handshake(session: Session, accept: Boolean): Either[SslError, Option[Interest]] = session.handshake(accept)
 
@@ -164,8 +158,6 @@ private[heddle] object Ssl:
         }
       }
       Right(Session(s, ctx))
-    end if
-  end attach
 
   private[openssl] def init(): Unit =
     val _ = ssl.OPENSSL_init_ssl(0.toUSize.asInstanceOf[CUnsignedLong], null)
@@ -197,7 +189,6 @@ private[heddle] object Ssl:
         used
       }
     }
-  end loadPem
 
   /** Copies `bytes` into an OpenSSL memory BIO for `use`, and frees it after. `BIO_new_mem_buf` does not copy. */
   private def withBio[A](bytes: Array[Byte])(use: Ptr[Byte] => Either[SslError, A]): Either[SslError, A] =
@@ -210,7 +201,6 @@ private[heddle] object Ssl:
         else use(bio)
       val _ = crypto.BIO_free(bio)
       result
-  end withBio
 
   /** Reads OpenSSL's error queue now, before a cleanup call can change it. */
   private[openssl] def failed(function: String): SslError =
@@ -248,7 +238,6 @@ private[heddle] object Ssl:
     def SSL_CTX_get_cert_store(ctx: Ptr[Byte]): Ptr[Byte]                        = extern
     def SSL_set1_host(ssl: Ptr[Byte], hostname: CString): CInt                   = extern
     def SSL_get0_param(ssl: Ptr[Byte]): Ptr[Byte]                                = extern
-  end ssl
 
   private val VerifyPeer = 1
 
@@ -321,5 +310,4 @@ private[heddle] object Ssl:
     def ERR_clear_error(): Unit                                              = extern
     def ERR_get_error(): CUnsignedLong                                       = extern
     def ERR_error_string_n(e: CUnsignedLong, buf: CString, len: CSize): Unit = extern
-  end crypto
 end Ssl

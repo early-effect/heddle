@@ -12,6 +12,7 @@ private object NativeTls:
 
     def accept: IO[AcceptError | HttpError, ByteConn] =
       plain.accept.flatMap(tls.server).map(_.conn)
+  end Listener
 
   def listener(config: Server.Config): ZIO[Scope, ServerError | TlsError, Listener] =
     for

@@ -74,4 +74,3 @@ object NativeListener:
       // Close the listen fd first so a blocked accept returns, then interrupt.
       _ <- ZIO.addFinalizer(listener.close *> fiber.interrupt)
     yield listener
-end NativeListener

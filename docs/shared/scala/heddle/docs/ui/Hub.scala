@@ -558,7 +558,6 @@ object Hub:
       E.pre(Payload, hostBody(host)),
       E.p(Hint, "Hosts are interpreters. Do not grow a second tool DSL."),
     )
-  end posterAt
 
   def hostTile(host: Source[String], pinned: Source[Boolean], label: String, body: String): UI[Any] =
     E.button(
@@ -692,7 +691,6 @@ content-type: application/json
         )
       }.toList,
     )
-  end opAnatomy
 
   def opAnatomyLive(selected: Source[String]): UI[Any] =
     val field = selected.map(id => getShowFields.find(_.id == id).getOrElse(getShowFields.head))
@@ -715,7 +713,6 @@ content-type: application/json
       ),
       E.div(CardOn, kicker("read by"), E.p(Fine, field.map(_.readers))),
     )
-  end opAnatomyLive
 
   private def opAnatomyView(field: OpField, fields: List[UI[Any]]): UI[Any] =
     E.div(
@@ -756,7 +753,6 @@ content-type: application/json
       E.p(Fine, traceSteps(i)._2),
       E.pre(Mono, traceSnippet(i)),
     )
-  end effectTrace
 
   def effectTraceLive(step: Source[Int]): UI[Any] =
     E.div(
@@ -780,7 +776,6 @@ content-type: application/json
         E.div(Stack, E.p(Fine, traceSteps(i)._2), E.pre(Mono, traceSnippet(i)))
       },
     )
-  end effectTraceLive
 
   def hostFanout(host: String): UI[Any] =
     E.div(
@@ -861,7 +856,6 @@ content-type: application/json
         case None =>
           E.p(Hint, "pick a bill. GET /shows/{id} is get_show."),
     )
-  end desk
 
   def deskLive(selected: Source[Int], host: Source[String]): UI[Any] =
     E.div(
@@ -900,7 +894,6 @@ content-type: application/json
         )
       },
     )
-  end deskLive
 
   def pathPlay(path: String): UI[Any] =
     val (ok, note) = path match
@@ -916,7 +909,6 @@ content-type: application/json
       E.pre(Mono, s"$path\n$note"),
       E.p(if ok then Ok else Hint, if ok then "handler runs" else "unmatched. 404."),
     )
-  end pathPlay
 
   def middleware(order: String): UI[Any] =
     val (code, walk) = order match
@@ -931,7 +923,6 @@ content-type: application/json
           "request → cors → requestId → handler\ncors is outer. requestId still stamps X-Request-Id.",
         )
     E.div(Shell, kicker("Middleware @@"), E.pre(Mono, s"$code\n\n$walk"))
-  end middleware
 
   def catalog(mode: String): UI[Any] =
     val body = if mode == "catalog" then HarnessTranscript.catalogFull else HarnessTranscript.catalogPromoted
@@ -944,6 +935,7 @@ content-type: application/json
       this match
         case Request  => "request"
         case Response => "response"
+  end RpcView
 
   def rpc(side: RpcView): UI[Any] =
     val body = side match
@@ -967,6 +959,7 @@ content-type: application/json
       this match
         case Elements => "elements"
         case Signals  => "signals"
+  end DatastarPatch
 
   def datastar(kind: DatastarPatch): UI[Any] =
     val body = kind match
@@ -1000,7 +993,6 @@ content-type: application/json
       kicker("OpenAPI is a projection"),
       E.pre(Mono, yaml),
     )
-  end openApi
 
   def posterLive(host: Source[String], pinned: Source[Boolean]): UI[Any] =
     E.div(
@@ -1042,8 +1034,6 @@ content-type: application/json
               }
           }).forever.forkScoped
       yield posterLive(host, pinned)
-      end for
-    end landingPoster
 
     def hostFanout: URIO[Scope, UI[Any]] =
       for host <- sq("HTTP")

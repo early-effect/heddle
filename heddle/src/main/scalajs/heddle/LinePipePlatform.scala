@@ -65,7 +65,6 @@ private[heddle] object LinePipePlatform:
           if raw.lastOption.contains('\r') then String(raw, 0, raw.length - 1, StandardCharsets.UTF_8)
           else String(raw, StandardCharsets.UTF_8)
         Some(line)
-    end takeLine
 
     private def wake(): Unit =
       waiter.foreach { cb =>

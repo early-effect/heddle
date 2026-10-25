@@ -50,7 +50,6 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
-          end for
         }
       ,
       test("idle keep-alive then client close returns TCP to baseline"):
@@ -75,7 +74,6 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
-          end for
         }
       ,
       test("client disconnect on a streaming response does not leak"):
@@ -106,7 +104,6 @@ object LeakSpec extends ZIOSpecDefault:
             heap1 <- ZIO.succeed(Resources.heapUsed)
             fd1   <- ZIO.succeed(Resources.openFiles)
           yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
-          end for
         }
       ,
       test("three load cycles do not stair-step heap or TCP"):
@@ -135,7 +132,6 @@ object LeakSpec extends ZIOSpecDefault:
               case _             => true
             }
             assertTrue(stair, tcpOk, heaps.forall(_ <= heap0 + 16L * 1024 * 1024))
-          end for
         },
     ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds) @@ TestAspect.sequential
 
@@ -167,7 +163,6 @@ object LeakSpec extends ZIOSpecDefault:
         fd1   <- ZIO.succeed(Resources.openFiles)
         pt1   <- ZIO.succeed(Resources.platformThreads)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1) && assertTrue(pt1 <= pt0 + 8)
-      end for
     }
   end cycle
 
@@ -196,7 +191,6 @@ object LeakSpec extends ZIOSpecDefault:
         heap1 <- ZIO.succeed(Resources.heapUsed)
         fd1   <- ZIO.succeed(Resources.openFiles)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
-      end for
     }
   end soakKeepAlive
 

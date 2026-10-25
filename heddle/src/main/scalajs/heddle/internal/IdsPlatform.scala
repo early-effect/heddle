@@ -27,5 +27,4 @@ private[heddle] object IdsPlatform:
         i += 1
       offset += buf.length
     true
-  end fill
 end IdsPlatform

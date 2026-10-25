@@ -32,12 +32,9 @@ private[heddle] object OpenSslRsa:
             yield (n, e, d)
           crypto.EVP_PKEY_free(pkey)
           parts
-        end if
       }
       crypto.EVP_PKEY_CTX_free(ctx)
       made
-    end if
-  end generate
 
   def sign(n: Array[Byte], e: Array[Byte], d: Array[Byte], payload: Array[Byte]): Either[SslError, Array[Byte]] =
     Ssl.init()
@@ -88,9 +85,6 @@ private[heddle] object OpenSslRsa:
         crypto.RSA_free(rsa)
         Left(err)
       else Right(pkey)
-      end if
-    end if
-  end fromRsa
 
   private def digestSign(pkey: Ptr[Byte], payload: Array[Byte]): Either[SslError, Array[Byte]] =
     val ctx = crypto.EVP_MD_CTX_new()
@@ -109,12 +103,9 @@ private[heddle] object OpenSslRsa:
           if crypto.EVP_DigestSign(ctx, sig.at(0), siglen, data, payload.length.toUSize) != 1 then
             Left(Ssl.failed("EVP_DigestSign"))
           else Right(sig.take((!siglen).toInt))
-        end if
       }
       crypto.EVP_MD_CTX_free(ctx)
       signed
-    end if
-  end digestSign
 
   private def digestVerify(pkey: Ptr[Byte], payload: Array[Byte], sig: Array[Byte]): Either[SslError, Boolean] =
     val ctx = crypto.EVP_MD_CTX_new()
@@ -132,8 +123,6 @@ private[heddle] object OpenSslRsa:
           Right(rc == 1)
       crypto.EVP_MD_CTX_free(ctx)
       verified
-    end if
-  end digestVerify
 
   private def bnParam(pkey: Ptr[Byte], name: CString): Either[SslError, Array[Byte]] =
     Zone {

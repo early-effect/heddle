@@ -78,7 +78,6 @@ private[heddle] object Ascii:
         arr(k) = raw(from + k)
         k += 1
       String(arr, StandardCharsets.US_ASCII)
-  end string
 
   def string(raw: Array[Byte], from: Int, until: Int): String =
     val len = until - from
@@ -115,7 +114,6 @@ private[heddle] object Ascii:
       if ok then n = n * radix + d
       i += 1
     Option.when(ok)(n)
-  end unsigned
 
   private def digit(c: Char): Int =
     if c >= '0' && c <= '9' then c - '0'

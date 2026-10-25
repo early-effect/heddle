@@ -54,7 +54,6 @@ object ReferenceHostSpec extends ZIOSpecDefault:
       .timeout(20.seconds)
       .someOrElseZIO(read)
       .flatMap(r => ZIO.fromEither(r).filterOrElseWith(ok)(a => ZIO.fail(s"window.$name never settled: $a")))
-  end poll
 
   /** A selector inside the view: past the relay's iframe, then the view's. */
   private def inView(server: ServerName, selector: String): String =

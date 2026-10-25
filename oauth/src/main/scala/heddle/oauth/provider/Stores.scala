@@ -91,4 +91,3 @@ object MemoryStores:
       val sessions = new SessionStore:
         def put(rec: SessionRec) = s.update(_ + (rec.id -> rec))
         def get(id: String)      = s.get.map(_.get(id))
-end MemoryStores

@@ -119,11 +119,8 @@ private[heddle] final class ConnBuf(
               case false => ZIO.fail(HttpError.Malformed(WireError.TruncatedHeaders))
               case true  => go
             }
-          end if
       }
-    end go
     go
-  end takeHeaders
 
   private def nextHeaderByte(headerTimeout: Duration): IO[HttpError, Boolean] =
     if socketDeadline && headerTimeout.toNanos > 0L then fillHeader(headerTimeout)
@@ -142,7 +139,6 @@ private[heddle] final class ConnBuf(
           }
       }
     go
-  end fillUntil
 
   def hasPrefix(bytes: Array[Byte]): Boolean =
     val n = bytes.length
@@ -156,8 +152,6 @@ private[heddle] final class ConnBuf(
         eq = a(off + i) == bytes(i)
         i += 1
       eq
-    end if
-  end hasPrefix
 
   def peek(n: Int): Chunk[Byte] =
     val take = n.min(buf.remaining()).max(0)
@@ -179,7 +173,6 @@ private[heddle] final class ConnBuf(
           case true  => go(acc)
         }
     if n <= 0 then ZIO.succeed(Chunk.empty) else go(Chunk.empty)
-  end takeExact
 
   def takeUpTo(n: Long): IO[HttpError, Chunk[Byte]] =
     ZIO.suspendSucceed {
@@ -230,11 +223,8 @@ private[heddle] final class ConnBuf(
                 case false                 => ZIO.fail(HttpError.Malformed(WireError.TruncatedChunk))
                 case true                  => go(next)
               }
-          end if
       }
-    end go
     go(Chunk.empty)
-  end takeLine
 
   def expectCrlf: IO[HttpError, Unit] =
     ZIO.suspendSucceed {
@@ -302,7 +292,6 @@ private[heddle] final class ConnBuf(
               case Some(size) =>
                 if size > maxBody - total then ZIO.fail(HttpError.BodyTooLarge)
                 else state.set(ChunkedState.Payload(total + size, size)) *> readChunkedPiece(state, maxBody, maxLine)
-            end match
         }
     }
 
@@ -396,5 +385,4 @@ private[heddle] object ConnBuf:
             ZIO.succeed(n)
         }
     ConnBuf(buf, fill, applyTimeout)
-  end fromPull
 end ConnBuf

@@ -132,8 +132,6 @@ object HeaderName:
       else
         val render = Ascii.string(raw, from, until)
         new HeaderName(render, asciiLower(render))
-    end if
-  end intern
 
   private def asciiLower(s: String): String =
     val arr = s.toCharArray

@@ -10,3 +10,4 @@ object Digest:
     ZIO.serviceWithZIO(_.sha256(bytes))
 
   def live: ULayer[Digest] = DigestPlatform.live
+end Digest

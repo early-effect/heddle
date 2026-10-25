@@ -46,5 +46,4 @@ object Resources:
         proc.waitFor()
         out.linesIterator.drop(1).count(_.nonEmpty)
       }.toOption
-  end lsofEstablished
 end Resources

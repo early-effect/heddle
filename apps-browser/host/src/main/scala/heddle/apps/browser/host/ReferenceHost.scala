@@ -144,7 +144,6 @@ object Dialog:
     }
     val _ = body.appendChild(box)
     box
-  end render
 
   /** One element per click; the listener comes off when the stream ends. */
   def clicks(target: dom.EventTarget): ZStream[Any, Nothing, Unit] =

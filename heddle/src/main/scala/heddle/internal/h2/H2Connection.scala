@@ -48,7 +48,6 @@ private[heddle] object H2Connection:
           .ensuring(conn.fibers.get.flatMap(fs => ZIO.foreachParDiscard(fs.values)(_.interrupt)))
       yield ()
     }
-  end serve
 
   /** What every stream fiber shares. `fibers` holds the running handlers, each removed when it ends. */
   private final class Conn(
@@ -81,7 +80,6 @@ private[heddle] object H2Connection:
         last   <- Ref.make(0)
         fibers <- Ref.make(Map.empty[Int, Fiber[Nothing, Unit]])
       yield Conn(out, flow, config, busy, secure, originDate, frame, last, fibers)
-  end Conn
 
   /** The reader's own state: an unfinished header block, the peer's HPACK table, and each open request body. */
   private final case class ReaderState(
@@ -132,7 +130,6 @@ private[heddle] object H2Connection:
             case None        => ZIO.unit
           }
     loop(ReaderState(None, HpackTable.empty, Map.empty))
-  end reader
 
   /** The next frame, or `None` when the peer goes idle or the read is interrupted. A socket deadline already unblocks
     * the read, so that path does not also race a ZIO timeout.
@@ -149,7 +146,6 @@ private[heddle] object H2Connection:
     bounded.catchSome {
       case HttpError.Io(e) if IoKind.socketTimeout(e) || IoKind.closedByInterrupt(e) => ZIO.succeed(None)
     }
-  end nextFrame
 
   private def handle[R](
       routes: Routes[R, Response],
@@ -189,8 +185,6 @@ private[heddle] object H2Connection:
         conn.fibers.get.flatMap(fs => ZIO.foreachDiscard(fs.get(id))(_.interruptFork)) *> close(conn, state, id)
       case (None, _) =>
         ZIO.succeed(state)
-    end match
-  end handle
 
   private def frameType(f: H2Frame): Int =
     f match
@@ -219,7 +213,6 @@ private[heddle] object H2Connection:
         violation(H2Violation.BadSetting(id, value))
       case 5 => conn.peerMaxFrame.set(value.toInt)
       case _ => ZIO.unit
-  end setting
 
   /** A whole header block: a new request, or the trailers that end an open one. Either way it updates the HPACK table.
     */
@@ -295,8 +288,6 @@ private[heddle] object H2Connection:
         .forkDaemon
       _ <- conn.fibers.update(_ + (id -> fiber)) *> conn.flow.open(id) *> gate.succeed(())
     yield ()
-    end for
-  end start
 
   private def inbound(
       conn: Conn,
@@ -324,7 +315,6 @@ private[heddle] object H2Connection:
             (if end then in.queue.offer(None).as(state.copy(bodies = state.bodies - id))
              else ZIO.succeed(state.copy(bodies = state.bodies.updated(id, in.copy(received = in.received + n)))))
     }
-  end inbound
 
   private def close(conn: Conn, state: ReaderState, id: Int): UIO[ReaderState] =
     conn.flow.close(id) *>
@@ -351,8 +341,6 @@ private[heddle] object H2Connection:
         HttpVersion.Http2,
         secure,
       )
-    end for
-  end requestOf
 
   private def respond(conn: Conn, id: Int, res: Response, q: Queue[Option[Chunk[Byte]]]): IO[HttpError, Unit] =
     conn.originDate.get.flatMap { stamp =>
@@ -364,7 +352,6 @@ private[heddle] object H2Connection:
       )
       respondEncoded(conn, id, res, q, block)
     }
-  end respond
 
   private def respondEncoded(
       conn: Conn,
@@ -387,8 +374,6 @@ private[heddle] object H2Connection:
           case Body.Bytes(bytes, _) =>
             headers(conn, id, block, endStream = false) *> dataFrames(conn, id, ZStream.fromChunk(bytes))
           case Body.Stream(s, _, _) => headers(conn, id, block, endStream = false) *> dataFrames(conn, id, s)
-    end match
-  end respondEncoded
 
   /** One batch: HEADERS, then CONTINUATIONs cut to the peer's SETTINGS_MAX_FRAME_SIZE (RFC 9113 §6.10). */
   private def headers(conn: Conn, id: Int, block: Chunk[Byte], endStream: Boolean): UIO[Unit] =

@@ -41,9 +41,7 @@ extension [R](mcp: Mcp[R])
       }
       withView <- marked.withResources(served).left.map(_.map(AppBuildError.Mcp(_)))
     yield withView.withExtension(ExtensionId.Ui, Json.Obj("mimeTypes" -> Json.Arr(Json.Str(UiMeta.MimeType))))
-    end for
   end withApp
-end extension
 
 private def named(
     grants: List[Grant[?, ?, ?]]

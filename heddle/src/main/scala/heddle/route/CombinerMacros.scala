@@ -23,8 +23,6 @@ private[route] object CombinerMacros:
             def combine(a: T, b: B): o   = ${ combined('a, 'b) }
             def separate(out: o): (T, B) = ${ separated('out) }
         }
-    end match
-  end append
 
   private def elementsOf(using Quotes)(tuple: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
     import quotes.reflect.*

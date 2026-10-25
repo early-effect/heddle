@@ -77,7 +77,6 @@ private[heddle] object ClientPlatform:
           ZIO.attempt(other.close()).ignore *>
             ZIO.fail(IllegalStateException(s"an SSLSocketFactory made a ${other.getClass.getName}"))
       }
-    end handshake
   end JvmConnector
 
   private def isIpLiteral(host: String): Boolean =

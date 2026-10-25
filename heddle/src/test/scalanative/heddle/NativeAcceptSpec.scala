@@ -86,5 +86,4 @@ object NativeAcceptSpec extends ZIOSpecDefault:
         conn.write(Chunk.fromArray(res.getBytes(StandardCharsets.US_ASCII)))
       }
       .ensuring(conn.close)
-  end serveConn
 end NativeAcceptSpec

@@ -59,13 +59,11 @@ A loopback OpenID provider is `sbt oauth/run`
 same process. Seed user `ada` / `ada`. Machine client `machine` / `secret`.
 """,
       exampleZIO {
-        val signedAndChecked =
-          for
-            key   <- SigningKey.generateRsa("k1")
-            token <- Jose.sign(key, TokenClaims("ada", "http://iss", "api", Set("openid"), 5.minutes))
-            claim <- JwtVerifier.static(key.publicJwksJson, "http://iss", "api").flatMap(_.verify(token))
-          yield (claim.subject, claim.scopes.contains("openid"))
-        signedAndChecked.provide(Rsa.live)
+        (for
+          key   <- SigningKey.generateRsa("k1")
+          token <- Jose.sign(key, TokenClaims("ada", "http://iss", "api", Set("openid"), 5.minutes))
+          claim <- JwtVerifier.static(key.publicJwksJson, "http://iss", "api").flatMap(_.verify(token))
+        yield (claim.subject, claim.scopes.contains("openid"))).provide(Rsa.live)
       }.assert { case (sub, openid) =>
         assertTrue(sub == "ada", openid)
       },

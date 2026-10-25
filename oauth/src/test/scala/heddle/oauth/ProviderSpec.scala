@@ -61,7 +61,6 @@ object ProviderSpec extends ZIOSpecDefault:
             claim.subject == "u1",
             claim.scopes.contains("openid"),
           )
-          end for
         }
       ,
       test("client credentials grant, and a wrong secret is refused with the server's own error"):
@@ -82,7 +81,6 @@ object ProviderSpec extends ZIOSpecDefault:
               case _                                                                  => false
             },
           )
-          end for
         }
       ,
       test("login refuses to resume anywhere but this server"):
@@ -152,7 +150,6 @@ object ProviderSpec extends ZIOSpecDefault:
         .toList
         .map(_.split("=", 2))
         .collectFirst { case Array(`name`, v) => java.net.URLDecoder.decode(v, "UTF-8") }
-  end queryParam
 
   private def withOp[E, A](f: (String, SigningKey, ProviderStores) => ZIO[Rsa, E, A]): ZIO[SigningKey & Rsa, Any, A] =
     val issuer = "http://127.0.0.1"
@@ -176,5 +173,4 @@ object ProviderSpec extends ZIOSpecDefault:
         a    <- f(s"$issuer:$port", key, stores)
       yield a
     }
-  end withOp
 end ProviderSpec

@@ -22,7 +22,6 @@ object SwaggerUI:
       Method.GET / base                  -> Handler.html(html),
       Method.GET / base / "index.html"   -> Handler.html(html),
     )
-  end routes
 
   def page(
       specPath: String,

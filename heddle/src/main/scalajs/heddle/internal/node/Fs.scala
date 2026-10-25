@@ -10,7 +10,6 @@ trait FsStats extends js.Object:
   def isDirectory(): Boolean = js.native
   val size: Double           = js.native
   val mtimeMs: Double        = js.native
-end FsStats
 
 /** `throwIfNoEntry = false` makes `statSync` return `undefined` for a missing path instead of throwing. */
 class StatOptions(val throwIfNoEntry: Boolean) extends js.Object
@@ -33,7 +32,6 @@ private[heddle] object Fs extends js.Object:
   def statSync(path: String, options: StatOptions): js.UndefOr[FsStats]      = js.native
   def writeFileSync(path: String, data: Uint8Array): Unit                    = js.native
   def createReadStream(path: String, options: ReadStreamOptions): ReadStream = js.native
-end Fs
 
 @js.native
 @JSImport("node:path", JSImport.Namespace)
@@ -41,4 +39,3 @@ private[heddle] object NodePath extends js.Object:
   def join(a: String, b: String): String = js.native
   def normalize(p: String): String       = js.native
   def resolve(p: String): String         = js.native
-end NodePath

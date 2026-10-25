@@ -51,7 +51,6 @@ private[heddle] object Http1Client:
       head <- Http1Exchange.readHead(c, target, limits, connector.io)
       framing <- ZIO.fromEither(Http1Exchange.framing(req.method, head)).mapError(Http1Exchange.malformed(target))
     yield Http1Exchange.response(head, Http1Exchange.streamBody(c, framing, head.headers.contentType, limits))
-  end streaming
 
   def strict(
       cfg: Client.Config,
@@ -71,8 +70,6 @@ private[heddle] object Http1Client:
       Http1Exchange.response(head, Body.fromBytes(bytes, head.headers.contentType)),
       Http1Exchange.reuse(req.headers, head, framing),
     )
-    end for
-  end strict
 
   /** Idempotent methods with a body that can be sent twice (RFC 9110 §9.2.2). */
   def replay(req: Request): Replay =

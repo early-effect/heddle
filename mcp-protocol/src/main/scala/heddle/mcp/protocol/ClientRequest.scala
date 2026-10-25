@@ -46,8 +46,6 @@ enum ClientRequest:
       case ReadResource(uri)        => Json.Obj("uri" -> Json.Str(uri))
       case SubscribeResource(uri)   => Json.Obj("uri" -> Json.Str(uri))
       case UnsubscribeResource(uri) => Json.Obj("uri" -> Json.Str(uri))
-    end match
-  end params
 end ClientRequest
 
 /** Wire notification names. */
@@ -117,7 +115,6 @@ object ClientRequest:
         case None    => Right(None)
         case Some(j) => j.as[Implementation].map(Some(_)).left.map(e => RpcError.InvalidParams(s"clientInfo: $e"))
     yield Initialize(version, c, info)
-  end initialize
 
   private def callTool(p: Json.Obj): Either[RpcError, ClientRequest] =
     for

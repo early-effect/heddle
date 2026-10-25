@@ -23,6 +23,7 @@ trait Rsa:
 
   /** `false` for a signature that does not match; a failure only when the key itself is unusable. */
   def verifySha256(pub: RsaPublic, payload: Chunk[Byte], sig: Chunk[Byte]): IO[RsaError, Boolean]
+end Rsa
 
 object Rsa:
   def generate(bits: Int): ZIO[Rsa, RsaError, RsaKey] =

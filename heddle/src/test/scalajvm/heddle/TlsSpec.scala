@@ -84,7 +84,6 @@ object TlsSpec extends ZIOSpecDefault:
           yield assertTrue(clear == 403, tls == "sec")
         got,
     ) @@ TestAspect.sequential @@ TestAspect.timeout(15.seconds) @@ TestAspect.withLiveClock
-end TlsSpec
 
 /** The JDK's view of [[TestTls]]: a trust context that accepts only it, and an `HttpClient` over that context. */
 object TlsFixture:

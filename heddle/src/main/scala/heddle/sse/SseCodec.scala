@@ -59,7 +59,6 @@ object SseCodec:
         start = i
         lastComplete = i
     (events.result(), bytes.drop(lastComplete))
-  end decode
 
   private def splitData(data: String): List[String] =
     if data.isEmpty then List("")
@@ -79,8 +78,6 @@ object SseCodec:
           i += 1
           start = i
         else i += 1
-        end if
-      end while
       buf += data.substring(start)
       buf.result()
 
@@ -126,14 +123,10 @@ object SseCodec:
           case "retry" =>
             value.toLongOption.filter(_ >= 0).foreach(ms => retry = Some(Duration.fromMillis(ms)))
           case _ => ()
-        end match
-      end if
       i = eol
-    end while
     // A parsed value ends at the first CR or LF, so it is always a valid field.
     if data.isEmpty && event.isEmpty && id.isEmpty && retry.isEmpty then None
     else Some(ServerSentEvent(data.getOrElse(""), event.map(new SseField(_)), id.map(new SseField(_)), retry))
-  end parseEvent
 
   private def putAscii(b: scala.collection.mutable.ArrayBuilder[Byte], s: String): Unit =
     var i = 0

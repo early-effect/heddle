@@ -10,7 +10,6 @@ trait ProcessStream extends js.Object:
   def write(buffer: Uint8Array): Boolean                  = js.native
   def pause(): this.type                                  = js.native
   def resume(): this.type                                 = js.native
-end ProcessStream
 
 @js.native
 trait ProcessEnv extends js.Object:
@@ -27,4 +26,3 @@ private[heddle] object Process extends js.Object:
   val stdin: ProcessStream  = js.native
   val stdout: ProcessStream = js.native
   val env: ProcessEnv       = js.native
-end Process
