@@ -4,7 +4,7 @@ import heddle.endpoint.Endpoint
 import heddle.server.{BodyBytes, Configured, HeaderBytes}
 import heddle.http.{Body, Method, Request, Response, Url}
 import heddle.http.header.Headers
-import heddle.route.Routes
+import heddle.route.{Around, Exchange, Routes, Side}
 import heddle.sse.{ServerSentEvent, SseCodec}
 import zio.*
 import zio.stream.ZStream
@@ -21,6 +21,25 @@ end Client
 object Client:
   def batched(req: Request): ZIO[Client, ClientError, Response] =
     ZIO.serviceWithZIO(_.batched(req))
+
+  extension (client: Client)
+    /** `around` on each request this client sends, with the environment it needs captured now. It is the same
+      * middleware a server takes through `Middleware.around`.
+      */
+    def @@[R: EnvironmentTag](around: Around[R]): URIO[R, Client] =
+      ZIO.environmentWith[R] { env =>
+        new Client:
+          def batched(req: Request): IO[ClientError, Response] =
+            around(Exchange(Side.Client, req, None))(client.batched).provideEnvironment(env)
+
+          def streaming(req: Request): ZIO[Scope, ClientError, Response] =
+            around(Exchange(Side.Client, req, None))(client.streaming).provideSomeEnvironment[Scope](_ ++ env)
+      }
+  end extension
+
+  /** The `Client` in the environment, with `around` on each request it sends. */
+  def around[R: EnvironmentTag](around: Around[R]): ZLayer[Client & R, Nothing, Client] =
+    ZLayer(ZIO.serviceWithZIO[Client](_ @@ around))
 
   def streaming(req: Request): ZIO[Client & Scope, ClientError, Response] =
     ZIO.serviceWithZIO[Client](_.streaming(req))

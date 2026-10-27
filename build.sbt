@@ -100,7 +100,7 @@ lazy val root = project
   .disablePlugins(chekhov.sbt.ChekhovPlugin)
   .aggregate(
     (heddle.projectRefs ++ brotli.projectRefs ++ oauth.projectRefs ++ mcpProtocol.projectRefs ++ mcp.projectRefs ++
-      mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++
+      mcpApps.projectRefs ++ mcpAppsHost.projectRefs ++ opentelemetry.projectRefs ++
       appsBrowserShared.projectRefs ++
       Seq[sbt.ProjectReference](
         mcpAppsRelay,
@@ -223,6 +223,22 @@ lazy val mcp = (projectMatrix in file("mcp"))
     ),
   )
   .nativePlatform(scalaVersions = scalaVersions, MyVersions.javaTime ++ nativeThreads ++ nativeOpenssl)
+
+lazy val opentelemetry = (projectMatrix in file("opentelemetry"))
+  .disablePlugins(chekhov.sbt.ChekhovPlugin)
+  .dependsOn(heddle % "compile->compile;test->test")
+  .settings(commonSettings)
+  .settings(MyVersions.coreLib)
+  .settings(MyVersions.coreTest)
+  .settings(MyVersions.opentelemetryLib)
+  .settings(MyVersions.opentelemetryTest)
+  .settings(
+    name                 := "heddle-opentelemetry",
+    description          := "OpenTelemetry spans for heddle servers and clients",
+    publishMavenStyle    := true,
+    pomIncludeRepository := { _ => false },
+  )
+  .jvmPlatform(scalaVersions = scalaVersions)
 
 lazy val example = project
   .in(file("example"))
@@ -469,6 +485,7 @@ lazy val docs = project
     oauth.jvm(scala3Version),
     mcp.jvm(scala3Version),
     mcpApps.jvm(scala3Version),
+    opentelemetry.jvm(scala3Version),
   )
   .enablePlugins(SpecularPlugin)
   .settings(commonSettings)
@@ -481,6 +498,7 @@ lazy val docs = project
     Test / unmanagedSourceDirectories += baseDirectory.value / "shared" / "scala",
     MyVersions.docsTest,
     MyVersions.coreTest,
+    MyVersions.opentelemetryTest,
     Test / mainClass       := None,
     specularBuildMain      := "heddle.docs.BuildSite",
     specularMetaProject    := Some(LocalProject("heddle")),

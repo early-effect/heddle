@@ -75,7 +75,8 @@ Gzip, decompress, CORS, auth, and `Middleware.timeout` attach to whoever you wra
 Global gzip is `all @@ Middleware.compress()`, which is still wrapping routes, not a
 server flag. Partial gzip is `(api ++ files) @@ Middleware.compress() ++ sse`.
 
-Why that split exists is on [What stays open](what-stays-open.html).
+Why that split exists is on [What stays open](what-stays-open.html). Metrics and traces are
+middleware that runs on a client too: [Observability](observability.html).
 """,
       exampleZIO {
         val routes =
