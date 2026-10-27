@@ -14,6 +14,10 @@ object MyVersions extends ZipxVersions:
   val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
+  val zioOpentelemetry = Lib("dev.zio", "zio-opentelemetry", "3.1.18")
+  val otelSdk          = Lib("io.opentelemetry", "opentelemetry-sdk", "1.63.0").java.test
+  val otelSdkTesting   = Lib("io.opentelemetry", "opentelemetry-sdk-testing", "1.63.0").java.test
+
   val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.8.0")
 
   val specular        = Lib("rocks.earlyeffect", "specular-core", "0.21.1")
@@ -48,6 +52,7 @@ object MyVersions extends ZipxVersions:
     "mcpApps",
     "mcpAppsHost",
     "mcpAppsFrame",
+    "opentelemetry",
   )
 
   def coreLib     = library(zio, zioStreams, zioJson)
@@ -57,6 +62,10 @@ object MyVersions extends ZipxVersions:
   def docsTest    = library(specularZioTest, specularTheme, mermoidAscent.test, ascentCss)
   def docsJs      = library(specular, mermoidAscent, ascentJs, ascentCss, zio)
   def browserTest = library(chekhov, chekhovDriver)
+
+  /** OpenTelemetry is JVM-only, so `heddle-opentelemetry` is too. */
+  def opentelemetryLib  = library(zioOpentelemetry)
+  def opentelemetryTest = library(otelSdk, otelSdkTesting)
 
   /** The browser DOM, as ascent's WebIDL-generated facade types it: what an MCP App's relay, frame, and view touch. */
   def domFacade = library(ascentDomFacade)

@@ -125,6 +125,16 @@ private[heddle] object Dispatch:
             if same.nonEmpty then ZIO.succeed(Outcome.miss)
             else ZIO.succeed(Outcome.notAllowed(allowList(found)))
 
+  /** The route `apply` would run for a request, without running it. */
+  def matcher[R, E](routes: Chunk[Route[R, E]]): Request => Option[Route[R, E]] =
+    val tree = Node.build(routes)
+    (req: Request) =>
+      tree
+        .lookup(req.path.segments, 0)
+        .find(route =>
+          route.method == req.method && route.path.literalMatch.orElse(route.path.matches(req.path)).isDefined
+        )
+
   /** The first same-method route whose path codec matches. A codec miss is not a response, so the next candidate runs.
     */
   private def firstDecoded[R, E](routes: Chunk[Route[R, E]], req: Request): Option[ZIO[R, E, Response]] =

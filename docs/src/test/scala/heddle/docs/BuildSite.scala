@@ -28,7 +28,12 @@ object BuildSite extends DocsSite:
   final case class Compiler(ast: TheAst.type, effects: Effects.type)
 
   @navLabel("HTTP")
-  final case class HttpNav(http: Http.type, stays: WhatStaysOpen.type, endpoints: Endpoints.type)
+  final case class HttpNav(
+      http: Http.type,
+      stays: WhatStaysOpen.type,
+      endpoints: Endpoints.type,
+      observability: Observability.type,
+  )
 
   @navLabel("Agents")
   final case class AgentsNav(agents: Agents.type, apps: McpAppsPage.type)
