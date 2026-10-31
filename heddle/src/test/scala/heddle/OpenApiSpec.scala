@@ -84,6 +84,22 @@ object OpenApiSpec extends ZIOSpecDefault:
           light("410").contains(Json.Obj("type" -> Json.Str("string"), "enum" -> Json.Arr(Json.Str("Green")))),
         )
       ,
+      test("a recursive body publishes its component and its ref"):
+        val node   = OpenApi.from("Tree", "1", Endpoint.post("n").in[ApiNode]).toJson
+        val mutual = OpenApi.from("Cycle", "1", Endpoint.post("a").in[ApiA]).toJson
+        val kids   = OpenApi.from("Kids", "1", Endpoint.post("k").in[ApiKids]).toJson
+        assertTrue(
+          component(node, "ApiNode").isDefined,
+          node.contains("\"#/components/schemas/ApiNode\""),
+          component(mutual, "ApiA").isDefined,
+          component(mutual, "ApiB").isDefined,
+          mutual.contains("\"#/components/schemas/ApiA\""),
+          mutual.contains("\"#/components/schemas/ApiB\""),
+          component(kids, "ApiKids").isDefined,
+          component(kids, "ApiNode").isDefined,
+          kids.contains("\"#/components/schemas/ApiNode\""),
+        )
+      ,
       test("a response header is documented on the success status only"):
         val ep   = Endpoint.get("t").out[Text].outError[String](Status.BadRequest).outHeader[EntityTag]
         val root = OpenApi.from("T", "1", ep).toJson.fromJson[Json].toOption
@@ -91,6 +107,9 @@ object OpenApiSpec extends ZIOSpecDefault:
         val bad  = root.flatMap(at(_, "paths", "/t", "get", "responses", "400", "headers"))
         assertTrue(etag.contains(Json.Bool(true)), bad.isEmpty),
     ) @@ TestAspect.timeout(5.seconds)
+
+  private def component(json: String, name: String): Option[Json] =
+    json.fromJson[Json].toOption.flatMap(at(_, "components", "schemas", name))
 
   private def errorSchema(ep: Endpoint[?, ?, ?], path: String, method: String): Map[String, Option[Json]] =
     val root      = OpenApi.from("Errors", "1", ep).toJson.fromJson[Json].toOption
@@ -108,4 +127,15 @@ object OpenApiSpec extends ZIOSpecDefault:
       case Some(List((label, inner))) if at(schema, "required").contains(Json.Arr(Json.Str(label))) =>
         Some(label -> inner)
       case _ => None
+  enum ApiNode derives Schema, JsonCodec:
+    case Tip
+    case Branch(child: ApiNode)
+
+  enum ApiA derives Schema, JsonCodec:
+    case ToB(b: ApiB)
+
+  enum ApiB derives Schema, JsonCodec:
+    case ToA(a: ApiA)
+
+  final case class ApiKids(xs: List[ApiNode]) derives Schema, JsonCodec
 end OpenApiSpec

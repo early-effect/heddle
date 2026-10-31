@@ -1,6 +1,16 @@
 package heddle.internal.openapi
 
-import heddle.endpoint.{ApiKeyIn, EndpointDoc, OAuthFlow, OpenApi, SchemaDoc, SchemaJson, SecurityScheme, StatusDoc}
+import heddle.endpoint.{
+  ApiKeyIn,
+  EndpointDoc,
+  OAuthFlow,
+  OpenApi,
+  Schema,
+  SchemaDoc,
+  SchemaJson,
+  SecurityScheme,
+  StatusDoc,
+}
 import scala.collection.mutable
 import zio.Chunk
 import zio.json.*
@@ -60,27 +70,48 @@ private[heddle] object OpenApiJson:
     )
 
   private def register(doc: SchemaDoc, components: mutable.LinkedHashMap[String, SchemaDoc]): SchemaDoc =
+    register(doc, components, Set.empty)
+
+  private def register(
+      doc: SchemaDoc,
+      components: mutable.LinkedHashMap[String, SchemaDoc],
+      stack: Set[String],
+  ): SchemaDoc =
     doc match
       case _ @SchemaDoc.Object(Some(title), fields, required) =>
-        val rewritten =
-          SchemaDoc.Object(Some(title), fields.map(f => f.copy(doc = register(f.doc, components))), required)
-        components.getOrElseUpdate(title, rewritten)
-        SchemaDoc.Ref(title)
+        if stack.contains(title) then SchemaDoc.Ref(title)
+        else
+          val rewritten =
+            SchemaDoc.Object(
+              Some(title),
+              fields.map(f => f.copy(doc = register(f.doc, components, stack + title))),
+              required,
+            )
+          components.getOrElseUpdate(title, rewritten)
+          SchemaDoc.Ref(title)
       case _ @SchemaDoc.OneOf(Some(title), variants) =>
-        val rewritten = SchemaDoc.OneOf(Some(title), variants.map(register(_, components)))
-        components.getOrElseUpdate(title, rewritten)
-        SchemaDoc.Ref(title)
+        if stack.contains(title) then SchemaDoc.Ref(title)
+        else
+          val rewritten = SchemaDoc.OneOf(Some(title), variants.map(register(_, components, stack + title)))
+          components.getOrElseUpdate(title, rewritten)
+          SchemaDoc.Ref(title)
       case e @ SchemaDoc.Enum(Some(title), _) =>
         components.getOrElseUpdate(title, e)
         SchemaDoc.Ref(title)
       case SchemaDoc.OneOf(None, variants) =>
-        SchemaDoc.OneOf(None, variants.map(register(_, components)))
+        SchemaDoc.OneOf(None, variants.map(register(_, components, stack)))
       case SchemaDoc.Object(None, fields, required) =>
-        SchemaDoc.Object(None, fields.map(f => f.copy(doc = register(f.doc, components))), required)
+        SchemaDoc.Object(None, fields.map(f => f.copy(doc = register(f.doc, components, stack))), required)
       case SchemaDoc.Array(items) =>
-        SchemaDoc.Array(register(items, components))
+        SchemaDoc.Array(register(items, components, stack))
       case SchemaDoc.Optional(inner) =>
-        register(inner, components)
+        register(inner, components, stack)
+      case SchemaDoc.Ref(name) =>
+        if stack.contains(name) || components.contains(name) then SchemaDoc.Ref(name)
+        else
+          Schema.published(name) match
+            case Some(body) => register(body, components, stack)
+            case None       => SchemaDoc.Ref(name)
       case other => other
 
   private def operationJson(ep: EndpointDoc): Json =
