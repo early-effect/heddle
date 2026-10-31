@@ -2,7 +2,7 @@ package heddle.endpoint
 
 import java.util.UUID
 import scala.annotation.unused
-import scala.collection.concurrent.TrieMap
+import scala.collection.mutable
 import scala.compiletime.{constValue, erasedValue, summonFrom}
 import scala.deriving.Mirror
 import zio.Chunk
@@ -180,15 +180,16 @@ object Schema:
 
   private type Slice = (SchemaDoc, List[Schema[?]])
 
-  private val componentBodies = TrieMap.empty[String, SchemaDoc]
+  private val componentBodies = mutable.Map.empty[String, SchemaDoc]
 
   private def publish(name: String, doc: SchemaDoc): Unit =
-    componentBodies.putIfAbsent(name, doc) match
-      case _ => ()
+    componentBodies.synchronized {
+      if !componentBodies.contains(name) then componentBodies.update(name, doc)
+    }
 
   /** Body of a named schema whose use site is only a [[SchemaDoc.Ref]]. */
   private[heddle] def published(name: String): Option[SchemaDoc] =
-    componentBodies.get(name)
+    componentBodies.synchronized(componentBodies.get(name))
 
   private def arrayOf[C](schema: Schema[?]): Schema[C] =
     defer(schema)(SchemaDoc.Array(_))
