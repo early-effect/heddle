@@ -1,6 +1,8 @@
 package heddle.endpoint
 
 import java.util.UUID
+import scala.annotation.unused
+import scala.collection.mutable
 import scala.compiletime.{constValue, erasedValue, summonFrom}
 import scala.deriving.Mirror
 import zio.Chunk
@@ -57,20 +59,24 @@ object Schema:
   given Schema[UUID]    = of(SchemaDoc.Str(Some("uuid")))
   given Schema[Unit]    = of(SchemaDoc.Null)
 
-  given [A: Schema]: Schema[Option[A]] =
-    of(SchemaDoc.Optional(summon[Schema[A]].doc))
+  given [A](using schema: Schema[A]): Schema[Option[A]] =
+    defer(schema)(SchemaDoc.Optional(_))
 
-  given [A: Schema]: Schema[List[A]] =
-    of(SchemaDoc.Array(summon[Schema[A]].doc))
+  given [A](using schema: Schema[A]): Schema[List[A]] =
+    arrayOf(schema)
 
-  given [A: Schema]: Schema[Vector[A]] =
-    of(SchemaDoc.Array(summon[Schema[A]].doc))
+  given [A](using schema: Schema[A]): Schema[Vector[A]] =
+    arrayOf(schema)
 
-  given [A: Schema]: Schema[Chunk[A]] =
-    of(SchemaDoc.Array(summon[Schema[A]].doc))
+  given [A](using schema: Schema[A]): Schema[Chunk[A]] =
+    arrayOf(schema)
 
-  given [A: Schema, B: Schema]: Schema[Either[A, B]] =
-    of(SchemaDoc.OneOf(None, List(summon[Schema[A]].doc, summon[Schema[B]].doc)))
+  given [A, B](using left: Schema[A], right: Schema[B]): Schema[Either[A, B]] =
+    new Deferred[Either[A, B]](None):
+      def build(forcing: List[Schema[?]]): Slice =
+        val (l, lh) = readSchema(left, forcing)
+        val (r, rh) = readSchema(right, forcing)
+        (SchemaDoc.OneOf(None, List(l, r)), lh ::: rh)
 
   inline def derived[A](using m: Mirror.Of[A]): Schema[A] =
     inline m match
@@ -78,15 +84,11 @@ object Schema:
       case s: Mirror.SumOf[A]     => sumSchema[A](s)
 
   inline def productSchema[A](p: Mirror.ProductOf[A]): Schema[A] =
-    val title   = constValue[p.MirroredLabel]
-    val labels  = labelsOf[p.MirroredElemLabels]
-    val schemas = schemasOf[p.MirroredElemTypes]
-    val fields  = labels.zip(schemas).map { (name, schema) =>
-      val (doc, optional) = schema.doc.unwrapOptional
-      SchemaField(name, doc, optional)
-    }
-    val required = fields.filterNot(_.optional).map(_.name)
-    Schema.of(SchemaDoc.Object(Some(title), fields, required), Some(title))
+    val title = constValue[p.MirroredLabel]
+    // Visible only while this type is being described, so a recursive field is a Ref instead of another copy.
+    // summonFrom inlines the given, which is why -Wunused cannot see the use.
+    @unused given Schema[A] = of(SchemaDoc.Ref(title), Some(title))
+    linked[A](title, isSum = false, forcing => productBody[A](p, forcing))
 
   /** Matches zio-json's derived sum encoding: `{"Case": {...}}` per leaf case, or a bare `"Case"` string when every
     * leaf is a singleton. Nested sealed hierarchies flatten to their leaves, as zio-json does.
@@ -97,8 +99,14 @@ object Schema:
       val labels = leafLabelsOf[s.MirroredElemTypes, s.MirroredElemLabels]
       sum(SchemaDoc.Enum(Some(title), labels.flatten), title, labels.map(SchemaDoc.Enum(None, _)))
     else
-      val perCase = wrappedOf[s.MirroredElemTypes, s.MirroredElemLabels]
-      sum(SchemaDoc.OneOf(Some(title), perCase), title, perCase)
+      @unused given Schema[A] = of(SchemaDoc.Ref(title), Some(title))
+      linked[A](
+        title,
+        isSum = true,
+        forcing =>
+          val (cases, hits) = wrappedOf[s.MirroredElemTypes, s.MirroredElemLabels](forcing)
+          (SchemaDoc.OneOf(Some(title), cases), hits),
+      )
 
   private inline def allSingletons[T <: Tuple]: Boolean =
     inline erasedValue[T] match
@@ -123,33 +131,123 @@ object Schema:
       case _                  => List(constValue[L].toString)
     }
 
-  private inline def wrappedOf[T <: Tuple, L <: Tuple]: List[SchemaDoc] =
+  private inline def wrappedOf[T <: Tuple, L <: Tuple](
+      forcing: List[Schema[?]]
+  ): (List[SchemaDoc], List[Schema[?]]) =
     inline erasedValue[(T, L)] match
-      case _: (EmptyTuple, EmptyTuple) => Nil
-      case _: ((h *: t), (l *: ls))    => wrapped[h, l] :: wrappedOf[t, ls]
+      case _: (EmptyTuple, EmptyTuple) => (Nil, Nil)
+      case _: ((h *: t), (l *: ls))    =>
+        val (doc, hits)      = wrapped[h, l](forcing)
+        val (rest, restHits) = wrappedOf[t, ls](forcing)
+        (doc :: rest, hits ::: restHits)
 
-  private inline def wrapped[H, L]: SchemaDoc =
+  private inline def wrapped[H, L](forcing: List[Schema[?]]): (SchemaDoc, List[Schema[?]]) =
     summonFrom {
-      case m: Mirror.SumOf[H] => SchemaDoc.OneOf(None, wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels])
-      case _                  =>
-        val label = constValue[L].toString
-        SchemaDoc.Object(None, List(SchemaField(label, schemaOf[H].doc, optional = false)), List(label))
+      case m: Mirror.SumOf[H] =>
+        val (cases, hits) = wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels](forcing)
+        (SchemaDoc.OneOf(None, cases), hits)
+      case _ =>
+        val label         = constValue[L].toString
+        val (inner, hits) = read[H](forcing)
+        (SchemaDoc.Object(None, List(SchemaField(label, inner, optional = false)), List(label)), hits)
     }
 
-  private inline def labelsOf[T <: Tuple]: List[String] =
-    inline erasedValue[T] match
-      case _: EmptyTuple => Nil
-      case _: (h *: t)   => constValue[h].toString :: labelsOf[t]
+  private inline def productBody[A](p: Mirror.ProductOf[A], forcing: List[Schema[?]]): Slice =
+    val title          = constValue[p.MirroredLabel]
+    val (fields, hits) = fieldsOf[p.MirroredElemLabels, p.MirroredElemTypes](forcing)
+    val required       = fields.filterNot(_.optional).map(_.name)
+    (SchemaDoc.Object(Some(title), fields, required), hits)
 
-  private inline def schemasOf[T <: Tuple]: List[Schema[?]] =
-    inline erasedValue[T] match
-      case _: EmptyTuple => Nil
-      case _: (h *: t)   => schemaOf[h] :: schemasOf[t]
+  private inline def fieldsOf[L <: Tuple, T <: Tuple](forcing: List[Schema[?]]): (List[SchemaField], List[Schema[?]]) =
+    inline erasedValue[(L, T)] match
+      case _: (EmptyTuple, EmptyTuple) => (Nil, Nil)
+      case _: ((l *: ls), (h *: hs))   =>
+        val name              = constValue[l].toString
+        val (doc, hits)       = read[h](forcing)
+        val (inner, optional) = doc.unwrapOptional
+        val (rest, restHits)  = fieldsOf[ls, hs](forcing)
+        (SchemaField(name, inner, optional) :: rest, hits ::: restHits)
 
-  private inline def schemaOf[H]: Schema[H] =
+  /** Summon a finished schema, or describe a product or sum in place. A schema already on `forcing` is a `Ref`. */
+  private inline def read[H](forcing: List[Schema[?]]): Slice =
     summonFrom {
-      case s: Schema[H]           => s
-      case m: Mirror.ProductOf[H] => productSchema[H](m)
-      case m: Mirror.SumOf[H]     => sumSchema[H](m)
+      case s: Schema[H]           => readSchema(s, forcing)
+      case m: Mirror.ProductOf[H] => productBody[H](m, forcing)
+      case m: Mirror.SumOf[H]     =>
+        val (cases, hits) = wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels](forcing)
+        (SchemaDoc.OneOf(None, cases), hits)
     }
+
+  private type Slice = (SchemaDoc, List[Schema[?]])
+
+  private val componentBodies = mutable.Map.empty[String, SchemaDoc]
+
+  private def publish(name: String, doc: SchemaDoc): Unit =
+    componentBodies.synchronized {
+      if !componentBodies.contains(name) then componentBodies.update(name, doc)
+    }
+
+  /** Body of a named schema whose use site is only a [[SchemaDoc.Ref]]. */
+  private[heddle] def published(name: String): Option[SchemaDoc] =
+    componentBodies.synchronized(componentBodies.get(name))
+
+  private def arrayOf[C](schema: Schema[?]): Schema[C] =
+    defer(schema)(SchemaDoc.Array(_))
+
+  private def defer[C](schema: Schema[?])(wrap: SchemaDoc => SchemaDoc): Schema[C] =
+    new Deferred[C](None):
+      def build(forcing: List[Schema[?]]): Slice =
+        val (inner, hits) = readSchema(schema, forcing)
+        (wrap(inner), hits)
+
+  private def linked[A](title: String, isSum: Boolean, describe: List[Schema[?]] => Slice): Schema[A] =
+    new Deferred[A](Some(title)):
+      def build(forcing: List[Schema[?]]): Slice = describe(forcing)
+      override def cases: List[SchemaDoc]        =
+        if isSum then
+          doc match
+            case SchemaDoc.OneOf(_, variants) => variants
+            case _                            => Nil
+        else Nil
+
+  private def readSchema(schema: Schema[?], forcing: List[Schema[?]]): Slice =
+    schema match
+      case deferred: Deferred[?] =>
+        val (doc, hits) = deferred.force(forcing)
+        val reentered   = hits.exists(hit => forcing.exists(_ eq hit))
+        deferred.componentName match
+          case Some(name) if reentered && isComponent(doc) => (SchemaDoc.Ref(name), hits)
+          case _                                           => (doc, hits)
+      case other => (other.doc, Nil)
+
+  private def isComponent(doc: SchemaDoc): Boolean =
+    doc match
+      case SchemaDoc.Object(Some(_), _, _) => true
+      case SchemaDoc.OneOf(Some(_), _)     => true
+      case SchemaDoc.Enum(Some(_), _)      => true
+      case _                               => false
+
+  /** `doc` is lazy so a mutual pair can finish initializing. Forcing a schema already on the stack yields `Ref`, not
+    * another copy of its document.
+    */
+  private sealed abstract class Deferred[A](name: Option[String]) extends Schema[A]:
+    lazy val doc: SchemaDoc            = force(Nil)._1
+    override def named: Option[String] = name
+    def componentName: Option[String]  = name
+
+    def build(forcing: List[Schema[?]]): Slice
+
+    private[Schema] def force(forcing: List[Schema[?]]): Slice =
+      if forcing.exists(_ eq this) then
+        name match
+          case Some(value) => (SchemaDoc.Ref(value), this :: Nil)
+          case None        => build(forcing)
+      else
+        val next          = if name.isDefined then this :: forcing else forcing
+        val (built, hits) = build(next)
+        name match
+          case Some(value) if isComponent(built) => publish(value, built)
+          case _                                 => ()
+        (built, hits)
+  end Deferred
 end Schema
