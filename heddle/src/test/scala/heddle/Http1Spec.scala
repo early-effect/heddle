@@ -132,10 +132,10 @@ object Http1Spec extends ZIOSpecDefault:
         }
       ,
       test("read I/O failures are HttpError.Io"):
-        val boom   = ZIO.fail(HttpError.Io(IOException("boom")))
-        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
-        for err <- ZIO.scoped {
+        val boom = ZIO.fail(HttpError.Io(IOException("boom")))
+        for
+          life <- Lifecycle.detached
+          err  <- ZIO.scoped {
             OriginDate.make.flatMap(originDate =>
               Http1
                 .serveConnection(
@@ -143,7 +143,7 @@ object Http1Spec extends ZIOSpecDefault:
                   boom,
                   _ => ZIO.unit,
                   Server.Config.default,
-                  Lifecycle(taking, busy),
+                  life,
                   originDate,
                 )
                 .flip
@@ -157,9 +157,8 @@ object Http1Spec extends ZIOSpecDefault:
         val routes = Routes(Method.GET / "a" -> Handler.text("A"))
         val raw    = get("/a")
         val mid    = raw.indexOf("Host:")
-        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
         for
+          life      <- Lifecycle.detached
           remaining <- Ref.make(
             Chunk(
               Chunk.fromArray(raw.take(mid).getBytes(StandardCharsets.US_ASCII)),
@@ -171,7 +170,7 @@ object Http1Spec extends ZIOSpecDefault:
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
           wire <- ZIO.scoped {
             OriginDate.make.flatMap { originDate =>
-              Http1.serveConnection(routes, pull, send, Server.Config.default, Lifecycle(taking, busy), originDate) *>
+              Http1.serveConnection(routes, pull, send, Server.Config.default, life, originDate) *>
                 out.get.map(bytes => String(bytes.toArray, StandardCharsets.US_ASCII))
             }
           }
@@ -315,8 +314,6 @@ object Http1Spec extends ZIOSpecDefault:
         }
       ,
       test("headerTimeout of a stalled header block is 408"):
-        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
         val config = Server.Config.default.copy(headerTimeout = 10.millis)
         for
           remaining <- Ref.make(
@@ -329,17 +326,16 @@ object Http1Spec extends ZIOSpecDefault:
             }
             .delay(1.hour)
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
+          life <- Lifecycle.detached
           wire <- ZIO.scoped {
             OriginDate.make.flatMap { originDate =>
-              Http1.serveConnection(Routes.empty, pull, send, config, Lifecycle(taking, busy), originDate) *>
+              Http1.serveConnection(Routes.empty, pull, send, config, life, originDate) *>
                 out.get.map(bytes => String(bytes.toArray, StandardCharsets.US_ASCII))
             }
           }
         yield assertTrue(wire.startsWith("HTTP/1.1 408"))
       @@ TestAspect.withLiveClock,
       test("idleTimeout ends keep-alive when the next request never arrives"):
-        val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-        val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
         val config = Server.Config.default.copy(idleTimeout = 20.millis)
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
         for
@@ -354,9 +350,10 @@ object Http1Spec extends ZIOSpecDefault:
               case Some(c) => ZIO.succeed(Some(c))
             }
           send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
+          life <- Lifecycle.detached
           done <- ZIO.scoped {
             OriginDate.make.flatMap(originDate =>
-              Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy), originDate).timeout(2.seconds)
+              Http1.serveConnection(routes, pull, send, config, life, originDate).timeout(2.seconds)
             )
           }
         yield assertTrue(done.isDefined)
@@ -422,9 +419,8 @@ object Http1Spec extends ZIOSpecDefault:
       config: Server.Config = Server.Config.default,
   ): ZIO[R, HttpError, String] =
     ZIO.scoped {
-      val taking = java.util.concurrent.atomic.AtomicBoolean(true)
-      val busy   = java.util.concurrent.atomic.AtomicBoolean(false)
       for
+        life       <- Lifecycle.detached
         originDate <- OriginDate.make
         remaining  <- Ref.make(Chunk.fromArray(raw.getBytes(StandardCharsets.US_ASCII)))
         out        <- Ref.make(Chunk.empty[Byte])
@@ -432,7 +428,7 @@ object Http1Spec extends ZIOSpecDefault:
           if c.isEmpty then (None, c) else (Some(c), Chunk.empty)
         }
         send = (c: Chunk[Byte]) => out.update(_ ++ c).unit
-        _     <- Http1.serveConnection(routes, pull, send, config, Lifecycle(taking, busy), originDate)
+        _     <- Http1.serveConnection(routes, pull, send, config, life, originDate)
         bytes <- out.get
       yield String(bytes.toArray, StandardCharsets.US_ASCII)
     }

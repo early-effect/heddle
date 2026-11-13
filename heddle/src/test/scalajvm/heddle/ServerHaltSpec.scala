@@ -4,7 +4,9 @@ import heddle.server.Port
 import zio.*
 import zio.test.*
 
-/** Halt's idle poll uses `ZIO.sleep`. Suites must not `.provide` in the test body (that drops Clock). */
+/** A connection that stays busy waits out the grace period on the server's clock. An idle halt does not sleep. Suites
+  * must not `.provide` in the test body (that drops Clock).
+  */
 object ServerHaltSpec extends ZIOSpecDefault:
 
   private val ping = Routes(Method.GET / "ping" -> Handler.text("pong"))
@@ -65,6 +67,17 @@ object ServerHaltSpec extends ZIOSpecDefault:
         5.seconds
       ),
       suite("TestClock")(
+        test("a finished request shuts down without advancing the clock"):
+          val config = Server.Config.default.copy(port = Port(0))
+          ZIO.scoped(
+            for
+              server <- Server.install(ping, config).mapError(e => RuntimeException(e.message))
+              port   <- server.port
+              res    <- Client.get(s"http://127.0.0.1:${port}/ping")
+              body   <- res.body.utf8
+            yield assertTrue(body == "pong")
+          )
+        ,
         test("open SSE shutdown joins only after TestClock.adjust of the grace period"):
           val config = Server.Config.default.copy(port = Port(0), gracefulShutdownTimeout = 1.second)
           ZIO.scoped(
@@ -86,7 +99,7 @@ object ServerHaltSpec extends ZIOSpecDefault:
               _        <- shutting.join
               _        <- ZIO.succeed(sock.close())
             yield assertTrue(early.isEmpty)
-          )
+          ),
       ) @@ TestAspect.timeout(5.seconds),
     ) @@ TestAspect.sequential
 end ServerHaltSpec

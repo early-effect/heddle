@@ -39,45 +39,46 @@ private[heddle] object Http1:
         underCap: => Boolean,
         continue: => ZIO[R, HttpError, Unit],
     ): ZIO[R, HttpError, Unit] =
-      if !takingWork.get() then ZIO.unit
-      else
-        nextRequest(src, config, secure, first).foldZIO(
-          err =>
-            err.toResponse match
-              case None      => ZIO.fail(err)
-              case Some(res) =>
-                originDate.get.flatMap(stamp =>
-                  writeResponse(send, res, persist = false, version = HttpVersion.Http11, stamp)
-                )
-          ,
-          {
-            case None                  => ZIO.unit
-            case Some((req, leftover)) =>
-              busy.set(true)
-              dispatch(routes, req).flatMap { res =>
-                res.ws match
-                  case Some(run) =>
-                    originDate.get.flatMap(stamp =>
-                      writeResponse(send, res, persist = false, req.version, stamp) *>
-                        leftover.orElse(ZIO.unit) *>
-                        run(src, send).mapError(HttpError.Io(_))
-                    )
-                  case None =>
-                    val keep = persist(req) && !connectionClose(res) && underCap
-                    originDate.get.flatMap(stamp => writeResponse(send, res, keep, req.version, stamp)).flatMap { _ =>
-                      leftover.foldZIO(
-                        _ =>
-                          busy.set(false)
-                          ZIO.unit
-                        ,
-                        _ =>
-                          busy.set(false)
-                          if keep && takingWork.get() then continue else ZIO.unit,
-                      )
-                    }
-              }
-          },
-        )
+      takingWork.get.flatMap {
+        case false => ZIO.unit
+        case true  =>
+          nextRequest(src, config, secure, first).foldZIO(
+            err =>
+              err.toResponse match
+                case None      => ZIO.fail(err)
+                case Some(res) =>
+                  originDate.get.flatMap(stamp =>
+                    writeResponse(send, res, persist = false, version = HttpVersion.Http11, stamp)
+                  )
+            ,
+            {
+              case None                  => ZIO.unit
+              case Some((req, leftover)) =>
+                busy(true) *>
+                  dispatch(routes, req).flatMap { res =>
+                    res.ws match
+                      case Some(run) =>
+                        originDate.get.flatMap(stamp =>
+                          writeResponse(send, res, persist = false, req.version, stamp) *>
+                            leftover.orElse(ZIO.unit) *>
+                            run(src, send).mapError(HttpError.Io(_))
+                        )
+                      case None =>
+                        val keep = persist(req) && !connectionClose(res) && underCap
+                        originDate.get.flatMap(stamp => writeResponse(send, res, keep, req.version, stamp)).flatMap {
+                          _ =>
+                            leftover.foldZIO(
+                              _ => busy(false),
+                              _ =>
+                                busy(false) *> takingWork.get.flatMap { still =>
+                                  if keep && still then continue else ZIO.unit
+                                },
+                            )
+                        }
+                  }
+            },
+          )
+      }
 
     // Unlimited does not count. The limited path stops before `served` reaches `max`, so `served + 1` cannot overflow.
     def unlimited(first: Boolean): ZIO[R, HttpError, Unit] =
