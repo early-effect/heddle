@@ -54,7 +54,7 @@ private[heddle] object H2Connection:
       val out: Queue[Chunk[H2Frame]],
       val flow: H2Flow,
       val config: Server.Config,
-      val busy: java.util.concurrent.atomic.AtomicBoolean,
+      val busy: Boolean => UIO[Unit],
       val secure: Boolean,
       val originDate: OriginDate,
       val peerMaxFrame: Ref[Int],
@@ -69,7 +69,7 @@ private[heddle] object H2Connection:
   private object Conn:
     def make(
         config: Server.Config,
-        busy: java.util.concurrent.atomic.AtomicBoolean,
+        busy: Boolean => UIO[Unit],
         secure: Boolean,
         originDate: OriginDate,
     ): UIO[Conn] =
@@ -119,16 +119,18 @@ private[heddle] object H2Connection:
       routes: Routes[R, Response],
       src: ConnBuf,
       conn: Conn,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
+      takingWork: Ref[Boolean],
   ): ZIO[R, HttpError, Unit] =
     def loop(state: ReaderState): ZIO[R, HttpError, Unit] =
-      if !takingWork.get() then ZIO.unit
-      else
-        src.setReadTimeout(conn.config.idleTimeout) *>
-          nextFrame(src, conn).flatMap {
-            case Some(frame) => handle(routes, conn, state, frame).flatMap(loop)
-            case None        => ZIO.unit
-          }
+      takingWork.get.flatMap {
+        case false => ZIO.unit
+        case true  =>
+          src.setReadTimeout(conn.config.idleTimeout) *>
+            nextFrame(src, conn).flatMap {
+              case Some(frame) => handle(routes, conn, state, frame).flatMap(loop)
+              case None        => ZIO.unit
+            }
+      }
     loop(ReaderState(None, HpackTable.empty, Map.empty))
 
   /** The next frame, or `None` when the peer goes idle or the read is interrupted. A socket deadline already unblocks
@@ -279,11 +281,12 @@ private[heddle] object H2Connection:
         .catchAll(_ => conn.offer(H2Frame.RstStream(id, 0x2)))
     for
       gate  <- Promise.make[Nothing, Unit]
-      _     <- ZIO.succeed(conn.busy.set(true))
+      _     <- conn.busy(true)
       fiber <- (gate.await *> run)
         .ensuring(
-          conn.flow
-            .close(id) *> conn.fibers.updateAndGet(_ - id).flatMap(left => ZIO.succeed(conn.busy.set(left.nonEmpty)))
+          conn.flow.close(id) *> conn.fibers.updateAndGet(_ - id).flatMap { left =>
+            if left.isEmpty then conn.busy(false) else ZIO.unit
+          }
         )
         .forkDaemon
       _ <- conn.fibers.update(_ + (id -> fiber)) *> conn.flow.open(id) *> gate.succeed(())

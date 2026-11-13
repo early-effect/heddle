@@ -34,8 +34,8 @@ private[heddle] object ServerPlatform:
       routes: Routes[R, Response],
       conn: NativeConn,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
+      takingWork: Ref[Boolean],
+      busy: Boolean => UIO[Unit],
       tls: Option[Tls],
       originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =

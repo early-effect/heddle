@@ -39,8 +39,8 @@ private[heddle] object ServerPlatform:
       routes: Routes[R, Response],
       conn: NodeConn,
       config: Server.Config,
-      takingWork: java.util.concurrent.atomic.AtomicBoolean,
-      busy: java.util.concurrent.atomic.AtomicBoolean,
+      takingWork: Ref[Boolean],
+      busy: Boolean => UIO[Unit],
       secure: Boolean,
       originDate: OriginDate,
   ): ZIO[R, HttpError, Unit] =

@@ -10,7 +10,6 @@ import heddle.internal.engine.{ConnBuf, Http1, Lifecycle}
 import heddle.server.{ChunkSize, HeaderBytes}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.atomic.AtomicBoolean
 import zio.*
 import zio.test.*
 
@@ -268,12 +267,13 @@ object ChunkedFramingSpec extends ZIOSpecDefault:
         remaining <- Ref.make(input)
         out       <- Ref.make(Chunk.empty[Byte])
         date      <- OriginDate.make
+        life      <- Lifecycle.detached
         _         <- Http1.serveConnection(
           routes,
           remaining.modify(c => (c.headOption, c.drop(1))),
           c => out.update(_ ++ c),
           config,
-          Lifecycle(AtomicBoolean(true), AtomicBoolean(false)),
+          life,
           date,
         )
         result <- out.get
