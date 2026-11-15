@@ -12,8 +12,9 @@ import zio.json.ast.Json
 import zio.stream.ZStream
 import zio.{Exit, Fiber, Promise, Queue, Ref, Scope, ZIO, ZNothing}
 
-/** Streamable HTTP. 2026-07-28 requests carry their method, tool name, and version in headers too, and the two must
-  * agree. A request that says `initialize`, or names 2025-11-25, is a session request.
+/** Streamable HTTP. Current-revision requests carry their method, tool name, and version in headers too, and the two
+  * must agree. A request is a session request when it says `initialize`, names the legacy revision, or carries a
+  * session id and omits the protocol header. A protocol header that names any other revision does not select a session.
   */
 object Http:
   val ProtocolHeader = "MCP-Protocol-Version"
@@ -86,7 +87,10 @@ object Http:
     }
 
   private def session(req: Request, msg: Message): Boolean =
-    method(msg).contains(Methods.Initialize) || req.headers.get(ProtocolHeader).contains(ProtocolVersion.Legacy.value)
+    val header = req.headers.get(ProtocolHeader)
+    method(msg).contains(Methods.Initialize) ||
+    header.contains(ProtocolVersion.Legacy.value) ||
+    (header.isEmpty && req.headers.get(SessionHeader).isDefined)
 
   private def sessionPost[R](
       engine: Engine[R],
