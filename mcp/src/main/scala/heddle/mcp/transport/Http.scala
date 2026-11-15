@@ -14,8 +14,7 @@ import zio.{Exit, Fiber, Promise, Queue, Ref, Scope, ZIO, ZNothing}
 
 /** Streamable HTTP. Current-revision requests carry their method, tool name, and version in headers too, and the two
   * must agree. A request is a session request when it says `initialize`, names the legacy revision, or carries a
-  * session id and omits the protocol header. A protocol header that names any other revision does not select a
-  * session.
+  * session id and omits the protocol header. A protocol header that names any other revision does not select a session.
   */
 object Http:
   val ProtocolHeader = "MCP-Protocol-Version"
