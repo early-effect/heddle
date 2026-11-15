@@ -9,18 +9,18 @@ object MyVersions extends ZipxVersions:
   val zioStreams = zio.mod("zio-streams")
   val zioTest    = zio.mod("zio-test").test
   val zioTestSbt = zio.mod("zio-test-sbt").test
-  val zioJson    = Lib("dev.zio", "zio-json", "1.1.1")
+  val zioJson    = Lib("dev.zio", "zio-json", "1.1.2")
   val neotype    = Lib("io.github.kitlangton", "neotype", "0.7.2")
   val zioHttp    = Lib("dev.zio", "zio-http", "3.11.6")
   val brotliDec  = Lib("org.brotli", "dec", "0.1.2").java.test
 
-  val zioOpentelemetry = Lib("dev.zio", "zio-opentelemetry", "3.1.18")
-  val otelSdk          = Lib("io.opentelemetry", "opentelemetry-sdk", "1.63.0").java.test
-  val otelSdkTesting   = Lib("io.opentelemetry", "opentelemetry-sdk-testing", "1.63.0").java.test
+  val zioOpentelemetry = Lib("dev.zio", "zio-opentelemetry", "3.1.21")
+  val otelSdk          = Lib("io.opentelemetry", "opentelemetry-sdk", "1.68.0").java.test
+  val otelSdkTesting   = Lib("io.opentelemetry", "opentelemetry-sdk-testing", "1.68.0").java.test
 
-  val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.8.0")
+  val scalaJavaTime = Lib("io.github.cquiroz", "scala-java-time", "2.10.0")
 
-  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.21.1")
+  val specular        = Lib("rocks.earlyeffect", "specular-core", "0.21.4")
   val specularZioTest = specular.mod("specular-zio-test").test
   val specularTheme   = specular.mod("early-effect-docs-theme").test
 
@@ -39,7 +39,7 @@ object MyVersions extends ZipxVersions:
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
   val scalajs        = Plugin("org.scala-js", "sbt-scalajs", "1.22.0")
   val scalaNative    = Plugin("org.scala-native", "sbt-scala-native", "0.5.12")
-  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.21.1")
+  val specularPlugin = Plugin("rocks.earlyeffect", "sbt-specular", "0.21.4")
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 
