@@ -280,7 +280,9 @@ so those hosts can list tools and call one. Authors do not opt in.
 | stdio | `_meta` on every line. Requests overlap. | `initialize`, then the rest of that process is 2025. Requests overlap. |
 
 `initialize` selects compat. `MCP-Protocol-Version: 2026-07-28`, `_meta` version `2026-07-28`, or
-`server/discover` selects native. Missing 2026 headers on a non-initialize POST is still an error.
+`server/discover` selects native. A later POST that carries a live session id and omits
+`MCP-Protocol-Version` stays on that session. A POST with neither a session id nor the protocol
+header is still an error, and a protocol header that names any other revision is rejected.
 
 Tool notifications travel on the request that started the tool. GET is the resource stream for
 that session, not a second path for those lines. Do not grow it into "the" notification channel.
