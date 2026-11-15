@@ -724,6 +724,110 @@ object McpSpec extends ZIOSpecDefault:
             list.header(Legacy.SessionHeader) == sid,
           )
       ,
+      test("initialize answers the legacy revision when the client asked for an older one"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          mcp   <- mcpOf(store)
+          res   <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str("2025-06-18"), "capabilities" -> obj()),
+            1,
+            protocol = Some("2025-06-18"),
+          )
+        yield
+          val body = res.body.text
+          assertTrue(
+            res.status == Status.Ok,
+            body.is(_.some).contains(Legacy.ProtocolVersion),
+            !body.is(_.some).contains("2025-06-18"),
+            res.header(Legacy.SessionHeader).exists(_.nonEmpty),
+          )
+      ,
+      test("a live session serves a POST that omits the protocol header"):
+        for
+          store <- Ref.make(Map(1 -> Item(1, "ada")))
+          mcp   <- mcpOf(store)
+          init  <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          sid = init.header(Legacy.SessionHeader)
+          ack  <- postLegacyJson(mcp, legacyNote("notifications/initialized"), session = sid, protocol = None)
+          list <- postLegacy(mcp, "tools/list", obj(), 3, session = sid, protocol = None)
+          call <- postLegacy(
+            mcp,
+            "tools/call",
+            obj("name" -> Json.Str("get_items_id"), "arguments" -> obj("id" -> Json.Num(1))),
+            4,
+            session = sid,
+            protocol = None,
+          )
+        yield
+          val listed = list.body.text
+          val called = call.body.text
+          assertTrue(
+            sid.isDefined,
+            ack.status == Status.Accepted,
+            list.status == Status.Ok,
+            listed.is(_.some).contains("get_items_id"),
+            !listed.is(_.some).contains("resultType"),
+            call.status == Status.Ok,
+            called.is(_.some).contains("ada"),
+            !called.is(_.some).contains("resultType"),
+            list.header(Legacy.SessionHeader) == sid,
+          )
+      ,
+      test("a POST with no session and no protocol header is rejected"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          mcp   <- mcpOf(store)
+          res   <- postLegacy(mcp, "tools/list", obj(), 1, protocol = None)
+        yield
+          val body = res.body.text
+          assertTrue(
+            res.status == Status.BadRequest,
+            body.is(_.some).contains("-32020"),
+            body.is(_.some).contains(s"missing ${Http.ProtocolHeader} header"),
+          )
+      ,
+      test("a protocol header naming an older revision is rejected on a live session"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          mcp   <- mcpOf(store)
+          init  <- postLegacy(
+            mcp,
+            "initialize",
+            obj("protocolVersion" -> Json.Str(Legacy.ProtocolVersion), "capabilities" -> obj()),
+            1,
+            protocol = None,
+          )
+          sid = init.header(Legacy.SessionHeader)
+          res <- postLegacy(mcp, "tools/list", obj(), 2, session = sid, protocol = Some("2025-06-18"))
+        yield
+          val body = res.body.text
+          assertTrue(
+            sid.isDefined,
+            res.status == Status.BadRequest,
+            !body.is(_.some).contains("get_items_id"),
+          )
+      ,
+      test("an unknown session id with no protocol header is an unknown session"):
+        for
+          store <- Ref.make(Map.empty[Int, Item])
+          mcp   <- mcpOf(store)
+          res   <- postLegacy(mcp, "tools/list", obj(), 1, session = Some("dead"), protocol = None)
+        yield
+          val body = res.body.text
+          assertTrue(
+            res.status == Status.BadRequest,
+            body.is(_.some).contains("unknown session"),
+            !body.is(_.some).contains(s"missing ${Http.ProtocolHeader}"),
+          )
+      ,
       test("DELETE /mcp is 200"):
         for
           store <- Ref.make(Map.empty[Int, Item])
