@@ -1,10 +1,9 @@
 package heddle.endpoint
 
 import java.util.UUID
-import scala.annotation.unused
 import scala.collection.mutable
-import scala.compiletime.{constValue, erasedValue, summonFrom}
 import scala.deriving.Mirror
+import scala.quoted.*
 import zio.Chunk
 
 final case class SchemaField(name: String, doc: SchemaDoc, optional: Boolean)
@@ -79,104 +78,100 @@ object Schema:
         (SchemaDoc.OneOf(None, List(l, r)), lh ::: rh)
 
   inline def derived[A](using m: Mirror.Of[A]): Schema[A] =
-    inline m match
-      case p: Mirror.ProductOf[A] => productSchema[A](p)
-      case s: Mirror.SumOf[A]     => sumSchema[A](s)
+    ${ deriveMacro[A]('m) }
 
-  inline def productSchema[A](p: Mirror.ProductOf[A]): Schema[A] =
-    val title = constValue[p.MirroredLabel]
-    // Visible only while this type is being described, so a recursive field is a Ref instead of another copy.
-    // summonFrom inlines the given, which is why -Wunused cannot see the use.
-    @unused given Schema[A] = of(SchemaDoc.Ref(title), Some(title))
-    linked[A](title, isSum = false, forcing => productBody[A](p, forcing))
-
-  /** Matches zio-json's derived sum encoding: `{"Case": {...}}` per leaf case, or a bare `"Case"` string when every
-    * leaf is a singleton. Nested sealed hierarchies flatten to their leaves, as zio-json does.
+  /** zio-json writes an all-singleton sum as a bare case name and every other sum as `{"Case": ...}`. Nested sums
+    * flatten. The macro builds one plan, so a sum derived in place matches `Schema.derived` on that sum.
     */
-  inline def sumSchema[A](s: Mirror.SumOf[A]): Schema[A] =
-    val title = constValue[s.MirroredLabel]
-    if allSingletons[s.MirroredElemTypes] then
-      val labels = leafLabelsOf[s.MirroredElemTypes, s.MirroredElemLabels]
-      sum(SchemaDoc.Enum(Some(title), labels.flatten), title, labels.map(SchemaDoc.Enum(None, _)))
-    else
-      @unused given Schema[A] = of(SchemaDoc.Ref(title), Some(title))
-      linked[A](
-        title,
-        isSum = true,
-        forcing =>
-          val (cases, hits) = wrappedOf[s.MirroredElemTypes, s.MirroredElemLabels](forcing)
-          (SchemaDoc.OneOf(Some(title), cases), hits),
-      )
+  private enum Plan:
+    case Use(schema: Schema[?])
+    // Read a summoned schema when the document is forced. An eager read deadlocks two `derives` givens that name each other.
+    case Delay(load: () => Schema[?])
+    case Self(title: String)
+    case Product(title: String, fields: List[FieldPlan])
+    case EnumSum(title: String, groups: List[List[String]])
+    case WrappedSum(title: String, cases: List[CasePlan])
 
-  private inline def allSingletons[T <: Tuple]: Boolean =
-    inline erasedValue[T] match
-      case _: EmptyTuple => true
-      case _: (h *: t)   => leafSingletons[h] && allSingletons[t]
+  private final case class FieldPlan(name: String, plan: Plan)
 
-  private inline def leafSingletons[H]: Boolean =
-    summonFrom {
-      case m: Mirror.SumOf[H] => allSingletons[m.MirroredElemTypes]
-      case _: ValueOf[H]      => true
-      case _                  => false
-    }
+  private enum CasePlan:
+    case Leaf(label: String, inner: Plan)
+    case Nested(cases: List[CasePlan])
 
-  private inline def leafLabelsOf[T <: Tuple, L <: Tuple]: List[List[String]] =
-    inline erasedValue[(T, L)] match
-      case _: (EmptyTuple, EmptyTuple) => Nil
-      case _: ((h *: t), (l *: ls))    => leafLabels[h, l] :: leafLabelsOf[t, ls]
+  private def borrowed[A](schema: Schema[?]): Schema[A] =
+    new Schema[A]:
+      def doc: SchemaDoc                  = readSchema(schema, Nil)._1
+      override def cases: List[SchemaDoc] = schema.cases
 
-  private inline def leafLabels[H, L]: List[String] =
-    summonFrom {
-      case m: Mirror.SumOf[H] => leafLabelsOf[m.MirroredElemTypes, m.MirroredElemLabels].flatten
-      case _                  => List(constValue[L].toString)
-    }
+  private def interpret[A](plan: Plan): Schema[A] =
+    plan match
+      case Plan.EnumSum(title, groups) =>
+        sum(SchemaDoc.Enum(Some(title), groups.flatten), title, groups.map(group => SchemaDoc.Enum(None, group)))
+      case Plan.Product(title, fields) =>
+        linked(
+          title,
+          isSum = false,
+          forcing =>
+            val (shaped, hits) = evalFields(fields, forcing)
+            val required       = shaped.filterNot(_.optional).map(_.name)
+            (SchemaDoc.Object(Some(title), shaped, required), hits),
+        )
+      case Plan.WrappedSum(title, cases) =>
+        linked(
+          title,
+          isSum = true,
+          forcing =>
+            val (docs, hits) = evalCases(cases, forcing)
+            (SchemaDoc.OneOf(Some(title), docs), hits),
+        )
+      case Plan.Use(schema) =>
+        borrowed(schema)
+      case Plan.Delay(load) =>
+        new Schema[A]:
+          private lazy val schema             = load()
+          def doc: SchemaDoc                  = readSchema(schema, Nil)._1
+          override def cases: List[SchemaDoc] = schema.cases
+      case Plan.Self(title) =>
+        of(SchemaDoc.Ref(title), Some(title))
 
-  private inline def wrappedOf[T <: Tuple, L <: Tuple](
-      forcing: List[Schema[?]]
-  ): (List[SchemaDoc], List[Schema[?]]) =
-    inline erasedValue[(T, L)] match
-      case _: (EmptyTuple, EmptyTuple) => (Nil, Nil)
-      case _: ((h *: t), (l *: ls))    =>
-        val (doc, hits)      = wrapped[h, l](forcing)
-        val (rest, restHits) = wrappedOf[t, ls](forcing)
-        (doc :: rest, hits ::: restHits)
+  private def eval(plan: Plan, forcing: List[Schema[?]]): Slice =
+    plan match
+      case Plan.Use(schema)            => readSchema(schema, forcing)
+      case Plan.Delay(load)            => readSchema(load(), forcing)
+      case Plan.Self(title)            => (SchemaDoc.Ref(title), Nil)
+      case Plan.EnumSum(title, groups) => (SchemaDoc.Enum(Some(title), groups.flatten), Nil)
+      case Plan.Product(title, fields) =>
+        val (shaped, hits) = evalFields(fields, forcing)
+        val required       = shaped.filterNot(_.optional).map(_.name)
+        (SchemaDoc.Object(Some(title), shaped, required), hits)
+      case Plan.WrappedSum(title, cases) =>
+        val (docs, hits) = evalCases(cases, forcing)
+        (SchemaDoc.OneOf(Some(title), docs), hits)
 
-  private inline def wrapped[H, L](forcing: List[Schema[?]]): (SchemaDoc, List[Schema[?]]) =
-    summonFrom {
-      case m: Mirror.SumOf[H] =>
-        val (cases, hits) = wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels](forcing)
-        (SchemaDoc.OneOf(None, cases), hits)
-      case _ =>
-        val label         = constValue[L].toString
-        val (inner, hits) = read[H](forcing)
-        (SchemaDoc.Object(None, List(SchemaField(label, inner, optional = false)), List(label)), hits)
-    }
-
-  private inline def productBody[A](p: Mirror.ProductOf[A], forcing: List[Schema[?]]): Slice =
-    val title          = constValue[p.MirroredLabel]
-    val (fields, hits) = fieldsOf[p.MirroredElemLabels, p.MirroredElemTypes](forcing)
-    val required       = fields.filterNot(_.optional).map(_.name)
-    (SchemaDoc.Object(Some(title), fields, required), hits)
-
-  private inline def fieldsOf[L <: Tuple, T <: Tuple](forcing: List[Schema[?]]): (List[SchemaField], List[Schema[?]]) =
-    inline erasedValue[(L, T)] match
-      case _: (EmptyTuple, EmptyTuple) => (Nil, Nil)
-      case _: ((l *: ls), (h *: hs))   =>
-        val name              = constValue[l].toString
-        val (doc, hits)       = read[h](forcing)
+  private def evalFields(
+      fields: List[FieldPlan],
+      forcing: List[Schema[?]],
+  ): (List[SchemaField], List[Schema[?]]) =
+    fields match
+      case Nil                                => (Nil, Nil)
+      case FieldPlan(name, plan) :: remaining =>
+        val (doc, hits)       = eval(plan, forcing)
         val (inner, optional) = doc.unwrapOptional
-        val (rest, restHits)  = fieldsOf[ls, hs](forcing)
+        val (rest, restHits)  = evalFields(remaining, forcing)
         (SchemaField(name, inner, optional) :: rest, hits ::: restHits)
 
-  /** Summon a finished schema, or describe a product or sum in place. A schema already on `forcing` is a `Ref`. */
-  private inline def read[H](forcing: List[Schema[?]]): Slice =
-    summonFrom {
-      case s: Schema[H]           => readSchema(s, forcing)
-      case m: Mirror.ProductOf[H] => productBody[H](m, forcing)
-      case m: Mirror.SumOf[H]     =>
-        val (cases, hits) = wrappedOf[m.MirroredElemTypes, m.MirroredElemLabels](forcing)
-        (SchemaDoc.OneOf(None, cases), hits)
-    }
+  private def evalCases(cases: List[CasePlan], forcing: List[Schema[?]]): (List[SchemaDoc], List[Schema[?]]) =
+    cases match
+      case Nil                                     => (Nil, Nil)
+      case CasePlan.Leaf(label, plan) :: remaining =>
+        val (doc, hits)      = eval(plan, forcing)
+        val wrapped          = SchemaDoc.Object(None, List(SchemaField(label, doc, optional = false)), List(label))
+        val (rest, restHits) = evalCases(remaining, forcing)
+        (wrapped :: rest, hits ::: restHits)
+      case CasePlan.Nested(nested) :: remaining =>
+        val (docs, hits)     = evalCases(nested, forcing)
+        val (rest, restHits) = evalCases(remaining, forcing)
+        (SchemaDoc.OneOf(None, docs) :: rest, hits ::: restHits)
 
   private type Slice = (SchemaDoc, List[Schema[?]])
 
@@ -250,4 +245,197 @@ object Schema:
           case _                                 => ()
         (built, hits)
   end Deferred
+
+  /** Picks a summoned schema over a mirror. Call-site givens, including the stubs around a recursive type, are visible
+    * here. `summonFrom` has to live in an inline method: a quote typechecks too early to see those givens.
+    */
+  private inline def pickPlan[T](inline mirrored: Plan): Plan =
+    scala.compiletime.summonFrom {
+      case schema: Schema[T] => Plan.Use(schema)
+      case _: Mirror.Of[T]   => mirrored
+    }
+
+  private inline def summonedPlan[T]: Plan =
+    scala.compiletime.summonFrom { case schema: Schema[T] =>
+      Plan.Use(schema)
+    }
+
+  private def deriveMacro[A: Type](mirror: Expr[Mirror.Of[A]])(using Quotes): Expr[Schema[A]] =
+    import quotes.reflect.*
+
+    final case class Frame(tpe: TypeRepr, title: String)
+    final case class Info(
+        label: String,
+        elems: List[TypeRepr],
+        labels: List[String],
+        isSum: Boolean,
+        singleton: Boolean,
+    )
+
+    def unwrap(tpe: TypeRepr): TypeRepr =
+      tpe.dealias match
+        case TypeBounds(_, hi) => unwrap(hi)
+        case other             => other
+
+    def member(tpe: TypeRepr, name: String): Option[TypeRepr] =
+      def loop(current: TypeRepr, fuel: Int): Option[TypeRepr] =
+        if fuel == 0 then None
+        else
+          current match
+            case Refinement(_, `name`, info) => Some(info)
+            case Refinement(parent, _, _)    => loop(parent, fuel - 1)
+            case AndType(left, right)        => loop(left, fuel - 1).orElse(loop(right, fuel - 1))
+            case AnnotatedType(inner, _)     => loop(inner, fuel - 1)
+            case _                           => None
+      loop(tpe.widen, 64)
+
+    def tupleElems(tpe: TypeRepr): List[TypeRepr] =
+      val current = unwrap(tpe)
+      current match
+        case AppliedType(cons, List(head, tail)) if cons.typeSymbol == Symbol.requiredClass("scala.*:") =>
+          unwrap(head) :: tupleElems(tail)
+        case AppliedType(fn, args) if defn.isTupleClass(fn.typeSymbol) =>
+          args.map(unwrap)
+        case empty if empty =:= TypeRepr.of[EmptyTuple] => Nil
+        case other                                      =>
+          report.errorAndAbort(s"expected a mirror tuple, found ${other.show}")
+
+    def constString(tpe: TypeRepr): String =
+      unwrap(tpe) match
+        case ConstantType(StringConstant(value)) => value
+        case other => report.errorAndAbort(s"expected a constant string, found ${other.show}")
+
+    def bases(tpe: TypeRepr): List[String] =
+      tpe.widen.baseClasses.map(_.fullName)
+
+    def readMirror(mirrorTpe: TypeRepr): Info =
+      val label =
+        member(mirrorTpe, "MirroredLabel").map(constString).getOrElse {
+          report.errorAndAbort(s"mirror ${mirrorTpe.widen.show} has no MirroredLabel")
+        }
+      val elems  = member(mirrorTpe, "MirroredElemTypes").map(tupleElems).getOrElse(Nil)
+      val labels = member(mirrorTpe, "MirroredElemLabels").map(tpe => tupleElems(tpe).map(constString)).getOrElse(Nil)
+      if elems.length != labels.length then
+        report.errorAndAbort(
+          s"mirror ${mirrorTpe.widen.show} has ${elems.length} element types and ${labels.length} labels"
+        )
+      val names = bases(mirrorTpe)
+      Info(
+        label,
+        elems,
+        labels,
+        names.contains("scala.deriving.Mirror$.Sum"),
+        names.contains("scala.deriving.Mirror$.Singleton"),
+      )
+
+    def mirrorInfo(tpe: TypeRepr): Option[Info] =
+      tpe.dealias.asType match
+        case '[t] => Expr.summon[Mirror.Of[t]].map(expr => readMirror(expr.asTerm.tpe))
+
+    def leafSingleton(tpe: TypeRepr): Boolean =
+      mirrorInfo(tpe) match
+        case Some(info) if info.isSum     => info.elems.forall(leafSingleton)
+        case Some(info) if info.singleton => true
+        case Some(_)                      => false
+        case None                         =>
+          tpe.asType match
+            case '[t] => Expr.summon[ValueOf[t]].isDefined
+
+    def leafGroup(tpe: TypeRepr, label: String): List[String] =
+      mirrorInfo(tpe) match
+        case Some(info) if info.isSum =>
+          info.elems.zip(info.labels).flatMap((child, childLabel) => leafGroup(child, childLabel))
+        case _ => List(label)
+
+    def frameOf(tpe: TypeRepr, stack: List[Frame]): Option[Frame] =
+      val current = tpe.dealias
+      stack.find(_.tpe =:= current)
+
+    def mentions(tpe: TypeRepr, stack: List[Frame]): Boolean =
+      val current = tpe.dealias
+      stack.exists(_.tpe =:= current) || (current match
+        case AppliedType(_, args)    => args.exists(mentions(_, stack))
+        case AndType(left, right)    => mentions(left, stack) || mentions(right, stack)
+        case OrType(left, right)     => mentions(left, stack) || mentions(right, stack)
+        case AnnotatedType(inner, _) => mentions(inner, stack)
+        case ByNameType(inner)       => mentions(inner, stack)
+        case _                       => false)
+
+    def summonSchema(tpe: TypeRepr): Option[Expr[Schema[?]]] =
+      tpe.asType match
+        case '[t] => Expr.summon[Schema[t]].map(_.asExprOf[Schema[?]])
+
+    def withStubs(stack: List[Frame], body: Expr[Plan]): Expr[Plan] =
+      stack.foldRight(body) { (frame, acc) =>
+        frame.tpe.asType match
+          case '[t] =>
+            '{
+              @scala.annotation.unused
+              given Schema[t] =
+                Schema.of[t](SchemaDoc.Ref(${ Expr(frame.title) }), Some(${ Expr(frame.title) }))
+              $acc
+            }
+      }
+
+    def choose[T: Type](stack: List[Frame], mirrored: Expr[Plan]): Expr[Plan] =
+      withStubs(stack, '{ Schema.pickPlan[T]($mirrored) })
+
+    def summonWrapped[T: Type](stack: List[Frame]): Expr[Plan] =
+      withStubs(stack, '{ Schema.summonedPlan[T] })
+
+    def missing(tpe: TypeRepr, stack: List[Frame], field: String): Nothing =
+      val parent = stack.headOption.fold("derived type")(_.title)
+      report.errorAndAbort(s"Cannot derive Schema for field $field of $parent: ${tpe.show}")
+
+    def planType(tpe: TypeRepr, stack: List[Frame], field: String): Expr[Plan] =
+      frameOf(tpe, stack) match
+        case Some(frame) => '{ Schema.Plan.Self(${ Expr(frame.title) }) }
+        case None        =>
+          val current = tpe.dealias
+          if mentions(current, stack) then
+            current.asType match
+              case '[t] =>
+                mirrorInfo(current) match
+                  case Some(info) => choose[t](stack, structure(info, stack, current))
+                  case None       => summonWrapped[t](stack)
+          else
+            summonSchema(current) match
+              case Some(schema) => '{ Schema.Plan.Delay(() => $schema) }
+              case None         =>
+                mirrorInfo(current) match
+                  case Some(info) => structure(info, stack, current)
+                  case None       => missing(current, stack, field)
+
+    def casePlans(elems: List[TypeRepr], labels: List[String], stack: List[Frame]): List[Expr[CasePlan]] =
+      elems.zip(labels).map { (tpe, label) =>
+        (mirrorInfo(tpe), frameOf(tpe, stack)) match
+          case (Some(info), None) if info.isSum =>
+            '{ Schema.CasePlan.Nested(${ Expr.ofList(casePlans(info.elems, info.labels, stack)) }) }
+          case (_, Some(frame)) =>
+            '{ Schema.CasePlan.Leaf(${ Expr(label) }, Schema.Plan.Self(${ Expr(frame.title) })) }
+          case _ =>
+            '{ Schema.CasePlan.Leaf(${ Expr(label) }, ${ planType(tpe, stack, label) }) }
+      }
+
+    def fieldPlans(names: List[String], types: List[TypeRepr], stack: List[Frame]): List[Expr[FieldPlan]] =
+      names.zip(types).map { (name, tpe) =>
+        '{ Schema.FieldPlan(${ Expr(name) }, ${ planType(tpe, stack, name) }) }
+      }
+
+    def enumSum(title: String, groups: List[List[String]]): Expr[Plan] =
+      val groupExprs = groups.map(group => Expr.ofList(group.map(Expr(_))))
+      '{ Schema.Plan.EnumSum(${ Expr(title) }, ${ Expr.ofList(groupExprs) }) }
+
+    def structure(info: Info, stack: List[Frame], self: TypeRepr): Expr[Plan] =
+      val next = Frame(self.dealias, info.label) :: stack
+      if info.isSum && info.elems.forall(leafSingleton) then
+        enumSum(info.label, info.elems.zip(info.labels).map((tpe, label) => leafGroup(tpe, label)))
+      else if info.isSum then
+        '{ Schema.Plan.WrappedSum(${ Expr(info.label) }, ${ Expr.ofList(casePlans(info.elems, info.labels, next)) }) }
+      else '{ Schema.Plan.Product(${ Expr(info.label) }, ${ Expr.ofList(fieldPlans(info.labels, info.elems, next)) }) }
+
+    val self = TypeRepr.of[A].dealias
+    val plan = structure(readMirror(mirror.asTerm.tpe), Nil, self)
+    '{ Schema.interpret[A]($plan) }
+  end deriveMacro
 end Schema

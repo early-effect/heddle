@@ -8,6 +8,11 @@ import zio.json.ast.Json
 
 final case class Book(title: String, pages: Int) derives Schema, JsonCodec
 
+enum Hue:
+  case Red, Green
+
+final case class Swatch(color: Hue) derives Schema, JsonCodec
+
 object OpenApiSpec extends ZIOSpecDefault:
 
   def spec =
@@ -98,6 +103,21 @@ object OpenApiSpec extends ZIOSpecDefault:
           component(kids, "ApiKids").isDefined,
           component(kids, "ApiNode").isDefined,
           kids.contains("\"#/components/schemas/ApiNode\""),
+        )
+      ,
+      test("an in-place all-singleton enum is a string-enum component"):
+        val json  = OpenApi.from("Swatches", "1", Endpoint.post("swatch").in[Swatch]).toJson
+        val hue   = component(json, "Hue")
+        val color = component(json, "Swatch").flatMap(at(_, "properties", "color"))
+        val kind  = hue.collect { case Json.Obj(fields) =>
+          fields.collectFirst { case ("type", value) => value }
+        }.flatten
+        val values =
+          hue.collect { case Json.Obj(fields) => fields.collectFirst { case ("enum", value) => value } }.flatten
+        assertTrue(
+          kind.contains(Json.Str("string")),
+          values.contains(Json.Arr(Json.Str("Red"), Json.Str("Green"))),
+          color.contains(Json.Obj("$ref" -> Json.Str("#/components/schemas/Hue"))),
         )
       ,
       test("a response header is documented on the success status only"):
