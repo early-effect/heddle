@@ -1,9 +1,9 @@
 package heddle.docs
 
-import heddle.{Api, Body, Client, LinePipe, Request, Schema}
+import heddle.{Api, Body, Client, Endpoint, LinePipe, Observed, OpArgsError, Request, Schema, SseField}
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
-import heddle.mcp.{Mcp, ServedResource, Session}
+import heddle.mcp.{Mcp, McpBuildError, ServedResource, Session}
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
 import heddle.mcp.protocol.{
   CallToolResult,
@@ -24,6 +24,7 @@ import specular.ziotest.DocSpecSuite
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+import zio.stream.ZStream
 import zio.test.*
 
 object Agents extends DocSpecSuite:
@@ -263,6 +264,68 @@ that both use id `1` can cancel each other. A session id keeps the ids in that s
           data.size == 2,
           data.lift(0).exists(_.contains("notifications/progress")),
           data.lift(1).exists(_.contains("done")),
+        )
+      },
+    ),
+    section("A stream is not a tool")(
+      md"""
+`.stream` is a subscription. `tools/list` does not name it, and `tools/call` cannot run it.
+`server/discover` lists it under `subscriptions`, with the operation's input schema and the element
+schema. `subscriptions/listen` is one pull. The acknowledgement comes first, then one
+`notifications/operation/event` per element, then a complete result. The request id is the
+subscription id. The element's id is the application's resume id.
+
+`.mcp` marks an operation as a tool. `.mcp.stream` still carries that mark, and `Mcp.from` refuses
+it (`OpArgsError.Subscription`). An HTTP-only stream stays off the `Api` passed to `Mcp.from`.
+Closing the listen body, or `notifications/cancelled` for that request id, interrupts that pull
+only. The operation keeps running for everyone else.
+""",
+      exampleZIO {
+        final case class Tick(n: Int) derives Schema, JsonCodec
+        val ticks     = Endpoint.get("ticks").stream[Tick]
+        val promoted  = Endpoint.get("ticks").mcp.stream[Tick]
+        val arguments = Json.Obj()
+        val listen    = Message.stateless(RequestId.Num(3), ClientRequest.Listen(ToolName("get_ticks"), arguments))
+        for
+          server <- ZIO.fromEither(
+            Mcp.from(
+              Api("ticks", "1").stream(ticks)(_ => ZIO.succeed(ZStream.succeed(Observed(SseField.of(7), Tick(7)))))
+            )
+          )
+          listed <- server.handle(Message.stateless(RequestId.Num(1), ClientRequest.ListTools(None)).json)
+          found  <- server.handle(Message.stateless(RequestId.Num(2), ClientRequest.Discover).json)
+          res    <- server.routes(
+            Request
+              .post("/mcp", Body.json(listen.json.toJson))
+              .withHeader(McpHttp.ProtocolHeader, ProtocolVersion.Current.value)
+              .withHeader(McpHttp.MethodHeader, "subscriptions/listen")
+              .withHeader("Accept", "text/event-stream")
+          )
+          events <- SseCodec.stream(res.body.toStream).runCollect
+        yield
+          val tools    = listed.fold("")(_.toJson)
+          val discover = found.fold("")(_.toJson)
+          val wire     = events.map(_.data).mkString("\n")
+          val refused  = Mcp.from(Api("ticks", "1").stream(promoted)(_ => ZIO.succeed(ZStream.empty))) match
+            case Left(errors) =>
+              errors.exists {
+                case McpBuildError.NotPromotable("get_ticks", OpArgsError.Subscription) => true
+                case _                                                                  => false
+              }
+            case Right(_) => false
+          (tools.contains("get_ticks"), discover, wire, refused)
+      }.assert { case (inTools, discover, wire, refused) =>
+        assertTrue(
+          !inTools,
+          discover.contains("\"subscriptions\""),
+          discover.contains("get_ticks"),
+          discover.contains("elementSchema"),
+          wire.contains("notifications/subscriptions/acknowledged"),
+          wire.contains("notifications/operation/event"),
+          wire.contains(""""id":"7""""),
+          wire.contains(""""n":7"""),
+          wire.contains("\"resultType\":\"complete\""),
+          refused,
         )
       },
     ),

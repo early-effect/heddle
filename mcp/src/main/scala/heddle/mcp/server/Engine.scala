@@ -5,6 +5,7 @@ import heddle.mcp.ServedResource
 import heddle.mcp.protocol.*
 import zio.json.*
 import zio.json.ast.Json
+import zio.stream.ZStream
 import zio.{Chunk, UIO, ZIO}
 
 /** What a server offers: tools, resources, and the extensions it advertises with their settings. */
@@ -12,6 +13,7 @@ final case class Offer[-R](
     tools: Chunk[ToolCall[R]],
     resources: Chunk[ServedResource[R]],
     extensions: Map[ExtensionId, Json.Obj],
+    streams: Chunk[OperationStream[R]] = Chunk.empty,
 )
 
 /** Answers MCP requests from typed messages. Transports parse bytes and pick the [[Era]]; this decides everything else,
@@ -24,8 +26,9 @@ final class Engine[-R](
     val listTtlMs: Long,
     hub: SessionHub,
 ):
-  private val byName: Map[ToolName, ToolCall[R]]    = offer.tools.map(t => t.tool.name -> t).toMap
-  private val byUri: Map[String, ServedResource[R]] = offer.resources.map(r => r.resource.uri -> r).toMap
+  private val byName: Map[ToolName, ToolCall[R]]          = offer.tools.map(t => t.tool.name -> t).toMap
+  private val byStream: Map[ToolName, OperationStream[R]] = offer.streams.map(s => s.name -> s).toMap
+  private val byUri: Map[String, ServedResource[R]]       = offer.resources.map(r => r.resource.uri -> r).toMap
 
   /** `tools` always; `resources` when there are any; `extensions` as `server/discover` and `initialize` send them. */
   val capabilities: Json.Obj =
@@ -35,7 +38,49 @@ final class Engine[-R](
     val extensions = Option.when(offer.extensions.nonEmpty)(
       "extensions" -> Json.Obj(Chunk.fromIterable(offer.extensions.map((id, settings) => id.value -> settings)))
     )
-    Json.Obj(Chunk("tools" -> Json.Obj()) ++ Chunk.fromIterable(resources) ++ Chunk.fromIterable(extensions))
+    val subscriptions = Option.when(offer.streams.nonEmpty)(
+      "subscriptions" -> Json.Arr(offer.streams.map { stream =>
+        Json.Obj(
+          "name"          -> Json.Str(stream.name.value),
+          "inputSchema"   -> stream.inputSchema,
+          "elementSchema" -> stream.elementSchema,
+        )
+      })
+    )
+    Json.Obj(
+      Chunk("tools" -> Json.Obj()) ++
+        Chunk.fromIterable(resources) ++
+        Chunk.fromIterable(subscriptions) ++
+        Chunk.fromIterable(extensions)
+    )
+
+  /** One `subscriptions/listen`. `Left` is a JSON-RPC error and no acknowledgement. `Right` starts with the
+    * acknowledgement, then one message per fact, and ends with the complete result when the pull ends.
+    */
+  def openListen(
+      id: RequestId,
+      params: Json.Obj,
+      headers: Headers,
+      era: Era,
+  ): ZIO[R, Nothing, Either[Message, ZStream[R, Nothing, Message]]] =
+    admit(params, era) match
+      case Left(e)  => ZIO.left(Message.Error(Some(id), e))
+      case Right(_) =>
+        ClientRequest.decode(Methods.Listen, params) match
+          case Left(e)                                 => ZIO.left(Message.Error(Some(id), e))
+          case Right(ClientRequest.Listen(name, args)) =>
+            byStream.get(name) match
+              case None =>
+                ZIO.left(Message.Error(Some(id), RpcError.InvalidParams(s"Unknown operation: ${name.value}")))
+              case Some(stream) =>
+                stream
+                  .pull(args, headers)
+                  .foldZIO(
+                    e => ZIO.left(Message.Error(Some(id), e)),
+                    facts => ZIO.right(frames(id, era, facts)),
+                  )
+          case Right(_) =>
+            ZIO.left(Message.Error(Some(id), RpcError.InvalidRequest("subscriptions/listen is a stream")))
 
   /** Parses and answers one JSON value. Notifications and stray responses get no reply. */
   def handle(raw: Json, headers: Headers, era: Era, session: Option[String]): ZIO[R, Nothing, Option[Message]] =
@@ -117,6 +162,8 @@ final class Engine[-R](
         ZIO.left(RpcError.InvalidRequest("resources/subscribe needs a session"))
       case (ClientRequest.UnsubscribeResource(_), Era.Stateless) =>
         ZIO.left(RpcError.InvalidRequest("resources/unsubscribe needs a session"))
+      case (ClientRequest.Listen(_, _), _) =>
+        ZIO.left(RpcError.InvalidRequest("subscriptions/listen is a stream"))
       case (other, _) => ZIO.left(RpcError.methodNotFound(other.method))
 
   private def read(uri: String): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
@@ -145,6 +192,41 @@ final class Engine[-R](
             case false => Left(RpcError.InvalidRequest("unknown session"))
             case true  => Right(Envelope.complete())
           }
+
+  private def frames(id: RequestId, era: Era, facts: ZStream[R, Nothing, StreamFact]): ZStream[R, Nothing, Message] =
+    ZStream.succeed(acknowledged(id)) ++
+      facts.map {
+        case StreamFact.Event(appId, data) => operationEvent(id, appId, data)
+        case StreamFact.Failed(data)       => operationError(id, data)
+      } ++
+      ZStream.succeed(listenResult(id, era))
+
+  private def acknowledged(id: RequestId): Message =
+    Message.Notification(Notifications.SubscriptionsAcknowledged, Json.Obj("_meta" -> subscriptionMeta(id)))
+
+  private def operationEvent(id: RequestId, appId: String, data: Json): Message =
+    Message.Notification(
+      Notifications.OperationEvent,
+      Json.Obj("_meta" -> subscriptionMeta(id), "id" -> Json.Str(appId), "data" -> data),
+    )
+
+  private def operationError(id: RequestId, data: Option[Json]): Message =
+    Message.Notification(
+      Notifications.OperationError,
+      Json.Obj(Chunk("_meta" -> subscriptionMeta(id)) ++ Chunk.fromIterable(data.map("data" -> _))),
+    )
+
+  /** Keeps `subscriptionId` on the result for both eras. A session result otherwise strips `_meta`. */
+  private def listenResult(id: RequestId, era: Era): Message =
+    val info = era match
+      case Era.Stateless =>
+        Chunk(RequestMeta.ServerInfoKey -> server.toJsonAST.getOrElse(Json.Obj()))
+      case Era.Session => Chunk.empty
+    val meta = Json.Obj(Chunk(RequestMeta.SubscriptionIdKey -> id.json) ++ info)
+    Message.Result(id, Json.Obj("resultType" -> Json.Str("complete"), "_meta" -> meta))
+
+  private def subscriptionMeta(id: RequestId): Json.Obj =
+    Json.Obj(RequestMeta.SubscriptionIdKey -> id.json)
 
   private def discover: Json.Obj =
     Envelope.complete(

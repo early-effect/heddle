@@ -1,6 +1,6 @@
 package heddle.client
 
-import heddle.endpoint.Endpoint
+import heddle.endpoint.{Endpoint, Observed, Subscription}
 import heddle.server.{BodyBytes, Configured, HeaderBytes}
 import heddle.http.{Body, Method, Request, Response, Url}
 import heddle.http.header.Headers
@@ -186,6 +186,20 @@ object Client:
         yield events.mapError(e => CallFailure.Transport(ClientError.BodyFailed(e)))
       }
   end SubscribePartiallyApplied
+
+  /** Pins a subscription. `apply` pulls one listener. The caller passes the last id back in the next input. */
+  def listen[In, Err, A](sub: Subscription[In, Err, A]): ListenPartiallyApplied[In, Err, A] =
+    ListenPartiallyApplied(sub)
+
+  final class ListenPartiallyApplied[In, Err, A](sub: Subscription[In, Err, A]):
+    def apply(in: In): ZStream[Client, CallFailure[Err], Observed[A]] =
+      at(Url.root, in)
+
+    def at(base: Url, in: In): ZStream[Client, CallFailure[Err], Observed[A]] =
+      ZStream.unwrapScoped {
+        Client.streaming(sub.toRequest(in, base)).mapError(CallFailure.Transport(_)).flatMap(sub.read)
+      }
+  end ListenPartiallyApplied
 
   /** Evidence that `A` is read whole. Streams have none, so `Client.call` on an `EventStream` endpoint does not
     * compile.

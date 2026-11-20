@@ -6,6 +6,7 @@ import heddle.error.HeddleError
 enum OpArgsError(val message: String) extends HeddleError:
   case NonJsonBody    extends OpArgsError("a body that is not JSON has no argument form")
   case NonJsonSuccess extends OpArgsError("a tool result has to be a JSON document, and this body is not")
+  case Subscription   extends OpArgsError("a subscription is not a tool")
   case StreamedBody   extends OpArgsError("a streamed body has no argument form")
   case NameCollision(names: List[String])
       extends OpArgsError(s"path, query, and body argument names collide: ${names.mkString(", ")}")

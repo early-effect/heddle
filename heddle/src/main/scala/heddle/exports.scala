@@ -99,6 +99,9 @@ export heddle.endpoint.{
   OAuthFlows,
   Hint,
   BoundOp,
+  BoundSubscription,
+  Observed,
+  Subscription,
   Api,
   OpArgs,
   OpArgsError,
@@ -114,6 +117,7 @@ export heddle.endpoint.{
   Octet,
   EventStream,
 }
+export heddle.sse.{SseField, SseFieldError}
 export heddle.auth.Auth
 export heddle.crypto.{Digest, Rsa, RsaKey, RsaPublic}
 export BytesLength.*
