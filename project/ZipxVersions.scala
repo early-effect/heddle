@@ -2,7 +2,7 @@ import zipx.*
 
 /** Typed catalog. `zipxDepUpdate` rewrites constructors here. sbt-zipx and sbt-pgp are not rows. */
 object MyVersions extends ZipxVersions:
-  val sbt: SbtVersion     = SbtVersion("2.1.0-RC1")
+  val sbt: SbtVersion     = SbtVersion("2.1.0")
   val scala: ScalaVersion = ScalaVersion("3.9.0")
 
   val zio        = Lib("dev.zio", "zio", "2.1.27")
@@ -43,7 +43,7 @@ object MyVersions extends ZipxVersions:
   val chekhovPlugin  = Plugin("rocks.earlyeffect", "sbt-chekhov", "0.1.3")
   val splicePlugin   = Plugin("rocks.earlyeffect", "sbt-splice", "0.3.2")
 
-  val release = ShipGroup("heddle", "0.15.2")(
+  val release = ShipGroup("heddle", "0.16.0")(
     "heddle",
     "brotli",
     "oauth",

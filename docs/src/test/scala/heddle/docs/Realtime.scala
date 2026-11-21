@@ -16,6 +16,8 @@ object Realtime extends DocSpecSuite:
     md"""
 SSE, WebSocket, and Datastar are public subpackages. They are **not** on `import heddle.*`.
 They are HTTP hosts for streams. They are not MCP tools. `OpArgs.promotable` will refuse them.
+A typed operation that streams is `.stream` on the endpoint:
+[Endpoints and OpenAPI](endpoints-and-openapi.html).
 """,
     section("Server-Sent Events")(
       md"""

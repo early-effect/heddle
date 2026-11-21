@@ -3,10 +3,12 @@ package heddle.docs
 import heddle.*
 import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
+import heddle.sse.SseCodec
 import specular.*
 import specular.ziotest.DocSpecSuite
 import zio.*
 import zio.json.*
+import zio.stream.ZStream
 import zio.test.*
 
 object Endpoints extends DocSpecSuite:
@@ -147,6 +149,74 @@ is false for an endpoint that declares one, so `Mcp.from` leaves it on HTTP.
           !onError,
           !promotable,
         )
+      },
+    ),
+    section("A stream is a subscription")(
+      md"""
+`.stream[A]` ends the operation as a subscription of `A`. It is not an `.out`. The handler is a
+gate. It refuses with the operation's error, or it returns one listener's `ZStream` of
+`Observed[A]`. `Observed` keeps the application's resume id, an `SseField`, beside the value.
+Heddle does not invent that id and does not store a cursor. The next request passes the id back
+through ordinary input.
+
+A failed gate is the error status, and the body is not `text/event-stream`. An open stream is
+already `200`, `text/event-stream`, and `cache-control: no-cache` before the first element. Each
+element is one SSE event: `id` is that resume id, `data` is `A` as JSON. A failure after the gate
+is one `event: error`, then the body ends. Comment heartbeats (`: ping`) run every 15 seconds.
+Closing the body interrupts that pull only. A second request runs the gate again.
+
+`Client.call` does not accept a subscription. `Client.listen` yields `Observed[A]` and drops the
+heartbeat comments. `Client.subscribe` remains the reader for a raw `out[EventStream]`. MCP lists
+the operation under `subscriptions`, not as a tool: [Agents](agents.html).
+""",
+      exampleZIO {
+        final case class Tick(n: Int) derives Schema, JsonCodec
+        val ticks = Endpoint.get("ticks").outError[String](Status.NotFound).stream[Tick]
+        val open  = Api("ticks", "1")
+          .stream(ticks) { _ =>
+            ZIO.succeed(ZStream.succeed(Observed(SseField.of(4), Tick(4))))
+          }
+          .routes
+        val closed = Api("ticks", "1").stream(ticks)(_ => ZIO.fail("Gone")).routes
+        for
+          refused     <- closed(Request.get("/ticks"))
+          refusedBody <- refused.body.utf8
+          res         <- open(Request.get("/ticks"))
+          bytes       <- res.body.collect
+          heard       <- Client.listen(ticks)(()).runCollect.provideLayer(Client.inMemory(open))
+        yield
+          val (events, rest) = SseCodec.decode(bytes)
+          val fact           = events.lift(0)
+          (
+            refused.status,
+            refused.headers.contentType.exists(_.isEventStream),
+            refusedBody.contains("Gone"),
+            res.status,
+            res.headers.contentType.exists(_.isEventStream),
+            res.header("Cache-Control").contains("no-cache"),
+            rest.isEmpty,
+            events.length == 1,
+            fact.flatMap(_.id.map(_.value)).contains("4"),
+            fact.map(_.data).contains("""{"n":4}"""),
+            heard.map(item => (item.id.value, item.value.n)),
+          )
+      }.assert { case (status, streamed, gone, ok, sse, cache, drained, one, id, data, heard) =>
+        assertTrue(
+          status == Status.NotFound,
+          !streamed,
+          gone,
+          ok == Status.Ok,
+          sse,
+          cache,
+          drained,
+          one,
+          id,
+          data,
+          heard == Chunk(("4", 4)),
+        )
+      },
+      expectFail("""Client.call(Endpoint.get("ticks").stream[String])(())""").assert { errors =>
+        assertTrue(errors.exists(_.message.contains("Subscription")))
       },
     ),
     section("OpenAPI is a projection")(

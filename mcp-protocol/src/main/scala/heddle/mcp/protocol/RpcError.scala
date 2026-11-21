@@ -13,7 +13,10 @@ enum RpcError(val code: Int):
   case HeaderMismatch(message: String)                                          extends RpcError(-32020)
   case ResourceNotFound(message: String)                                        extends RpcError(-32002)
   case UnsupportedVersion(requested: String, supported: Chunk[ProtocolVersion]) extends RpcError(-32022)
-  case Other(override val code: Int, message: String, data: Option[Json])       extends RpcError(code)
+
+  /** A subscription's gate refused. `data` is the operation error's JSON, when it has one. */
+  case OperationFailed(data: Option[Json])                                extends RpcError(-32023)
+  case Other(override val code: Int, message: String, data: Option[Json]) extends RpcError(code)
 
   def text: String =
     this match
@@ -25,6 +28,7 @@ enum RpcError(val code: Int):
       case HeaderMismatch(m)        => m
       case ResourceNotFound(m)      => m
       case UnsupportedVersion(_, _) => RpcError.UnsupportedText
+      case OperationFailed(_)       => RpcError.OperationText
       case Other(_, m, _)           => m
 
   def json: Json.Obj =
@@ -36,13 +40,15 @@ enum RpcError(val code: Int):
             "requested" -> Json.Str(requested),
           )
         )
-      case Other(_, _, d) => d
-      case _              => None
+      case OperationFailed(d) => d
+      case Other(_, _, d)     => d
+      case _                  => None
     Json.Obj(Chunk("code" -> Json.Num(code), "message" -> Json.Str(text)) ++ Chunk.fromIterable(data.map("data" -> _)))
 end RpcError
 
 object RpcError:
   private val UnsupportedText = "Unsupported protocol version"
+  private val OperationText   = "operation failed"
 
   def methodNotFound(method: String): RpcError = MethodNotFound(s"Method not found: $method")
 
@@ -63,7 +69,8 @@ object RpcError:
       case (-32002, None)                                            => ResourceNotFound(message)
       case (-32022, Some(d: Json.Obj)) if message == UnsupportedText =>
         unsupported(d).getOrElse(Other(code, message, data))
-      case _ => Other(code, message, data)
+      case (-32023, _) if message == OperationText => OperationFailed(data)
+      case _                                       => Other(code, message, data)
 
   private def unsupported(d: Json.Obj): Option[RpcError] =
     for

@@ -52,6 +52,12 @@ object Stdio:
     def answer(msg: Message, era: Era): ZIO[R, Nothing, Option[Message]] =
       engine.respond(msg, Headers.empty, era, Some(SessionId))
 
+    def openListen(id: RequestId, params: Json.Obj, era: Era): ZIO[R, Throwable, Unit] =
+      engine.openListen(id, params, Headers.empty, era).flatMap {
+        case Left(err)       => write(Some(err))
+        case Right(messages) => messages.foreach(message => write(Some(message)))
+      }
+
     def release(id: RequestId, self: Promise[Nothing, Fiber[Throwable, Unit]]): UIO[Unit] =
       self.await.flatMap { fiber =>
         hub.untrack(Some(SessionId), id, fiber) *>
@@ -78,6 +84,9 @@ object Stdio:
       msg match
         case Message.Request(_, Methods.Initialize, _) =>
           answer(msg, era).flatMap(write)
+        case Message.Request(id, Methods.Listen, params) =>
+          // Not Session.bind: facts are lines of this request, not tool notifications.
+          forkRequest(id, openListen(id, params, era))
         case Message.Request(id, _, _) =>
           forkRequest(id, Session.bind(send)(answer(msg, era)).flatMap(write))
         case _ =>

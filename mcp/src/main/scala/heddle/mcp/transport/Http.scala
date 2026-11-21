@@ -126,6 +126,8 @@ object Http:
       session: Option[String],
   ): ZIO[R, Nothing, Response] =
     msg match
+      case request: Message.Request if request.method == Methods.Listen =>
+        listen(engine, hub, req, request, era, session)
       case request: Message.Request if acceptsEvents(req) => streamed(engine, hub, req, request, era, session)
       case request: Message.Request                       => joined(engine, hub, req, request, era, session)
       case _ => engine.respond(msg, req.headers, era, session).map(accepted)
@@ -151,6 +153,50 @@ object Http:
           if cause.isInterrupted then ZIO.succeed(accepted(None)) else ZIO.failCause(cause)
       }
     }
+
+  /** `subscriptions/listen` is one pull. It does not bind `Session.publish`: a fact is a message on this request, not a
+    * tool notification. The gate's refusal is one JSON-RPC error and no acknowledgement.
+    */
+  private def listen[R](
+      engine: Engine[R],
+      hub: SessionHub,
+      req: Request,
+      msg: Message.Request,
+      era: Era,
+      session: Option[String],
+  ): ZIO[R, Nothing, Response] =
+    if !acceptsEvents(req) then
+      ZIO.succeed(
+        reply(
+          Message.Error(Some(msg.id), RpcError.InvalidRequest("subscriptions/listen needs Accept: text/event-stream"))
+        )
+      )
+    else
+      ZIO.environmentWith[R] { env =>
+        val events =
+          ZStream.unwrapScoped {
+            ZIO.scopeWith { scope =>
+              for
+                queue <- Queue.unbounded[Option[ServerSentEvent]]
+                effect =
+                  engine
+                    .openListen(msg.id, msg.params, req.headers, era)
+                    .flatMap {
+                      case Left(err) =>
+                        queue.offer(Some(ServerSentEvent(err.json.toJson))) *> queue.offer(None).unit
+                      case Right(messages) =>
+                        messages.foreach { message =>
+                          queue.offer(Some(ServerSentEvent(message.json.toJson))).unit
+                        } *> queue.offer(None).unit
+                    }
+                    .provideEnvironment(env)
+                    .onInterrupt(queue.offer(None).unit)
+                _ <- forkTracked(hub, session, msg.id, effect, Some(scope))
+              yield ZStream.fromQueue(queue).collectWhileSome
+            }
+          }
+        Sse.response(events)
+      }
 
   /** Notifications on this POST, then the result. The fiber is a child of the stream scope: when the pull stops, it is
     * interrupted. `send` finishes when the event is queued, not when the client reads it.

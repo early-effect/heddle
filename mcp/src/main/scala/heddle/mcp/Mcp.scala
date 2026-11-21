@@ -7,7 +7,7 @@ import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
 import heddle.mcp.protocol.{Era, ExtensionId, Implementation, Message, Notifications, Structured, Tool, ToolName}
-import heddle.mcp.server.{Engine, Offer, SessionHub, ToolCall}
+import heddle.mcp.server.{Engine, Offer, OperationStream, SessionHub, ToolCall}
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
 import zio.json.*
@@ -137,21 +137,30 @@ final class Mcp[-R] private (
 end Mcp
 
 object Mcp:
-  /** Every promoted operation becomes a tool, or every reason it cannot is returned. */
+  /** Every promoted operation becomes a tool, or every reason it cannot is returned. A stream operation is not a tool:
+    * a promoted one, a non-JSON input, or a name already taken is a build error, and the rest are listed for
+    * `subscriptions/listen`.
+    */
   def from[R](apis: Api[R]*): Either[NonEmptyChunk[McpBuildError], Mcp[R]] =
-    val ops      = Chunk.fromIterable(apis).flatMap(_.ops)
+    val all      = Chunk.fromIterable(apis)
+    val ops      = all.flatMap(_.ops)
     val promoted = ops.filter(o => o.endpoint.doc.promoted && OpArgs.promotable(o.endpoint.doc))
     val catalog  = ops.filter(o => OpArgs.promotable(o.endpoint.doc))
     val built    = promoted.map(ToolCall.bound)
     val tools    = built.collect { case Right(t) => t }
-    val names    = tools.map(_.tool.name)
+    val streamed = all.flatMap(_.subscriptions).map(OperationStream.from)
+    val streams  = streamed.collect { case Right(s) => s }
+    val names    = tools.map(_.tool.name) ++ streams.map(_.name)
     val dupes    = names.diff(names.distinct).distinct.map(McpBuildError.DuplicateTool(_))
-    NonEmptyChunk.fromChunk(built.collect { case Left(e) => e } ++ dupes) match
-      case Some(errors) => Left(errors)
-      case None         =>
+    val errors   = built.collect { case Left(e) => e } ++ streamed.collect { case Left(e) => e } ++ dupes
+    NonEmptyChunk.fromChunk(errors) match
+      case Some(found) => Left(found)
+      case None        =>
         val title   = apis.headOption.map(_.title).getOrElse("heddle")
         val version = apis.headOption.map(_.version).getOrElse("0.0.0")
-        Right(new Mcp(Implementation(title, version), Offer(tools, Chunk.empty, Map.empty), catalog, None, "mcp"))
+        Right(
+          new Mcp(Implementation(title, version), Offer(tools, Chunk.empty, Map.empty, streams), catalog, None, "mcp")
+        )
 
   def unauthorized(resourceMetadata: String, scopes: List[String] = Nil): Response =
     ProtectedResource.unauthorized(resourceMetadata, scopes)

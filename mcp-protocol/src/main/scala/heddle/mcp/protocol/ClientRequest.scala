@@ -16,6 +16,7 @@ enum ClientRequest:
   case ReadResource(uri: String)
   case SubscribeResource(uri: String)
   case UnsubscribeResource(uri: String)
+  case Listen(operation: ToolName, arguments: Json.Obj)
 
   def method: String =
     this match
@@ -29,6 +30,7 @@ enum ClientRequest:
       case ReadResource(_)          => Methods.ReadResource
       case SubscribeResource(_)     => Methods.SubscribeResource
       case UnsubscribeResource(_)   => Methods.UnsubscribeResource
+      case Listen(_, _)             => Methods.Listen
 
   def params: Json.Obj =
     def cursor(c: Option[String]) = Json.Obj(Chunk.fromIterable(c.map("cursor" -> Json.Str(_))))
@@ -46,15 +48,19 @@ enum ClientRequest:
       case ReadResource(uri)        => Json.Obj("uri" -> Json.Str(uri))
       case SubscribeResource(uri)   => Json.Obj("uri" -> Json.Str(uri))
       case UnsubscribeResource(uri) => Json.Obj("uri" -> Json.Str(uri))
+      case Listen(operation, args)  => Json.Obj("operation" -> Json.Str(operation.value), "arguments" -> args)
 end ClientRequest
 
 /** Wire notification names. */
 object Notifications:
-  val Initialized          = "notifications/initialized"
-  val Cancelled            = "notifications/cancelled"
-  val ResourceUpdated      = "notifications/resources/updated"
-  val ToolsListChanged     = "notifications/tools/list_changed"
-  val ResourcesListChanged = "notifications/resources/list_changed"
+  val Initialized               = "notifications/initialized"
+  val Cancelled                 = "notifications/cancelled"
+  val ResourceUpdated           = "notifications/resources/updated"
+  val ToolsListChanged          = "notifications/tools/list_changed"
+  val ResourcesListChanged      = "notifications/resources/list_changed"
+  val SubscriptionsAcknowledged = "notifications/subscriptions/acknowledged"
+  val OperationEvent            = "notifications/operation/event"
+  val OperationError            = "notifications/operation/error"
 
 /** Wire method names. */
 object Methods:
@@ -68,6 +74,7 @@ object Methods:
   val ReadResource          = "resources/read"
   val SubscribeResource     = "resources/subscribe"
   val UnsubscribeResource   = "resources/unsubscribe"
+  val Listen                = "subscriptions/listen"
 
   val requests: Set[String] =
     Set(
@@ -81,6 +88,7 @@ object Methods:
       ReadResource,
       SubscribeResource,
       UnsubscribeResource,
+      Listen,
     )
 end Methods
 
@@ -99,6 +107,7 @@ object ClientRequest:
       case Methods.ReadResource          => uri(params, "resources/read").map(ReadResource(_))
       case Methods.SubscribeResource     => uri(params, "resources/subscribe").map(SubscribeResource(_))
       case Methods.UnsubscribeResource   => uri(params, "resources/unsubscribe").map(UnsubscribeResource(_))
+      case Methods.Listen                => listen(params)
       case other                         => Left(RpcError.methodNotFound(other))
 
   private def initialize(p: Json.Obj): Either[RpcError, ClientRequest] =
@@ -127,6 +136,17 @@ object ClientRequest:
         case Some(_)           => Left(RpcError.InvalidParams("arguments must be a JSON object"))
     yield CallTool(name, args)
 
+  private def listen(p: Json.Obj): Either[RpcError, ClientRequest] =
+    for
+      name <- p.get("operation") match
+        case Some(Json.Str(n)) => ToolName.from(n).left.map(e => RpcError.InvalidParams(e.message))
+        case _                 => Left(RpcError.InvalidParams("missing operation"))
+      args <- p.get("arguments") match
+        case None              => Right(Json.Obj())
+        case Some(o: Json.Obj) => Right(o)
+        case Some(_)           => Left(RpcError.InvalidParams("arguments must be a JSON object"))
+    yield Listen(name, args)
+
   private def uri(p: Json.Obj, method: String): Either[RpcError, String] =
     p.get("uri") match
       case Some(Json.Str(u)) => Right(u)
@@ -147,10 +167,11 @@ final case class RequestMeta(
 )
 
 object RequestMeta:
-  val VersionKey    = "io.modelcontextprotocol/protocolVersion"
-  val ClientInfoKey = "io.modelcontextprotocol/clientInfo"
-  val ClientCapsKey = "io.modelcontextprotocol/clientCapabilities"
-  val ServerInfoKey = "io.modelcontextprotocol/serverInfo"
+  val VersionKey        = "io.modelcontextprotocol/protocolVersion"
+  val ClientInfoKey     = "io.modelcontextprotocol/clientInfo"
+  val ClientCapsKey     = "io.modelcontextprotocol/clientCapabilities"
+  val ServerInfoKey     = "io.modelcontextprotocol/serverInfo"
+  val SubscriptionIdKey = "io.modelcontextprotocol/subscriptionId"
 
   def of(params: Json.Obj): RequestMeta =
     val meta = params.get("_meta") match

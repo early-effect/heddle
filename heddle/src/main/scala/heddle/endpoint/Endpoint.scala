@@ -6,6 +6,8 @@ import heddle.error.ParamError
 import heddle.http.{Body, MediaType, Method, Path, QueryParams, Request, Response, Status, Url}
 import heddle.http.header.{HeaderName, Headers, TypedHeader}
 import heddle.route.{Combiner, HeaderCodec, PathCodec, PathKind, QueryCodec, Route, Routes}
+import zio.json.JsonCodec
+import zio.stream.ZStream
 import zio.{Chunk, IO, ZIO}
 
 sealed abstract class Endpoint[In, Err, Out]:
@@ -82,6 +84,36 @@ sealed abstract class Endpoint[In, Err, Out]:
         )
       ),
       outputBody = Some(Endpoint.BodyOf(codec.mediaType, codec.schema, codec.encode, Some(codec.decode))),
+    )
+
+  /** Terminates the operation as a subscription of `A`. The handler is a gate that returns one listener's stream. */
+  def stream[A: Schema: JsonCodec]: Subscription[In, Err, A] =
+    val documented = summon[Schema[A]].doc
+    val json       = summon[JsonCodec[A]]
+    val next       = doc.copy(responses =
+      Endpoint.replaceSuccess(
+        doc.responses,
+        StatusDoc(Status.Ok, Some(documented), Some(MediaType.EventStream), "Subscription"),
+      )
+    )
+    Subscription(
+      this,
+      next,
+      documented,
+      json,
+      [R] =>
+        (open: In => ZIO[R, Err, ZStream[R, Err, Observed[A]]]) =>
+          Routes(
+            Route.from(
+              method,
+              path,
+              (pathIn, req) =>
+                decodeIn(pathIn, req).foldZIO(
+                  failure => ZIO.succeed(failure),
+                  in => Subscription.respond(errors, json, open(in)),
+                ),
+            )
+          ),
     )
 
   def outEmpty: Endpoint[In, Err, Unit] =
