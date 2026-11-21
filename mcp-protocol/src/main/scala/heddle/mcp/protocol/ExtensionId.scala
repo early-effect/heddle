@@ -9,6 +9,9 @@ object ExtensionId:
   /** MCP Apps (SEP-1865). */
   val Ui: ExtensionId = "io.modelcontextprotocol/ui"
 
+  /** MCP Events (SEP-3415). */
+  val Events: ExtensionId = "io.modelcontextprotocol/events"
+
   def from(raw: String): Either[ExtensionIdError, ExtensionId] =
     val slash = raw.indexOf('/')
     if slash <= 0 || slash == raw.length - 1 || raw.indexOf('/', slash + 1) != -1 then

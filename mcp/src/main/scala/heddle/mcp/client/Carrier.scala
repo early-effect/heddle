@@ -104,7 +104,7 @@ private[client] final class HttpCarrier private (
         )
       val routed = era match
         case Era.Stateless =>
-          val named = params.get("name").collect { case Json.Str(n) if method == Methods.CallTool => n }
+          val named = params.get("name").collect { case Json.Str(n) if Methods.named.contains(method) => n }
           named.fold(base.add(HttpTransport.MethodHeader, method))(n =>
             base.add(HttpTransport.MethodHeader, method).add(HttpTransport.NameHeader, n)
           )

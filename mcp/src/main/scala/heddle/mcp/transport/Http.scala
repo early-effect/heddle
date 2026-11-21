@@ -277,7 +277,7 @@ object Http:
           else if headVer != bodyVer then Some(RpcError.HeaderMismatch(s"Header mismatch: $ProtocolHeader"))
           else if !headers.get(MethodHeader).contains(m) then
             Some(RpcError.HeaderMismatch(s"Header mismatch: $MethodHeader"))
-          else if m == Methods.CallTool && (name.isEmpty || headers.get(NameHeader) != name) then
+          else if Methods.named.contains(m) && (name.isEmpty || headers.get(NameHeader) != name) then
             Some(RpcError.HeaderMismatch(s"Header mismatch: $NameHeader"))
           else None
         problem.map(e => Message.Error(Some(id), e))

@@ -6,15 +6,27 @@ import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
-import heddle.mcp.protocol.{Era, ExtensionId, Implementation, Message, Notifications, Structured, Tool, ToolName}
+import heddle.mcp.events.{Delivery, EventGateway, EventRegistry, EventRuntime, Events, Principal, Replay, TtlPolicy}
+import heddle.mcp.protocol.{
+  Era,
+  EventName,
+  ExtensionId,
+  Implementation,
+  Message,
+  Notifications,
+  Structured,
+  Tool,
+  ToolName,
+}
 import heddle.mcp.server.{Engine, Offer, OperationStream, SessionHub, ToolCall}
 import heddle.mcp.transport.{Http, Stdio}
 import heddle.route.Routes
 import zio.json.*
 import zio.json.ast.Json
-import zio.{Chunk, NonEmptyChunk, UIO, ZIO, ZNothing}
+import zio.{Chunk, NonEmptyChunk, UIO, ZIO, ZLayer, ZNothing}
 
 import java.io.{InputStream, OutputStream}
+import scala.util.NotGiven
 
 /** An MCP server over bound operations, native tools, and resources. Serve it on HTTP (`routes`) or a pipe (`stdio`).
   * Everything that adds to what it offers is checked: a second tool or resource with a taken name is a build error.
@@ -25,6 +37,7 @@ final class Mcp[-R] private (
     catalogOps: Chunk[BoundOp[R, ?, ?, ?]],
     instructions: Option[String],
     path: String,
+    registry: EventRegistry[R],
 ):
   private val hub = new SessionHub
 
@@ -64,7 +77,7 @@ final class Mcp[-R] private (
 
   def withTool[R1](t: ToolCall[R1]): Either[NonEmptyChunk[McpBuildError], Mcp[R & R1]] =
     if offer.tools.exists(_.tool.name == t.tool.name) then Left(NonEmptyChunk(McpBuildError.DuplicateTool(t.tool.name)))
-    else Right(new Mcp(server, offer.copy(tools = offer.tools :+ t), catalogOps, instructions, path))
+    else Right(new Mcp(server, offer.copy(tools = offer.tools :+ t), catalogOps, instructions, path, registry))
 
   /** Resources clients list and read. A taken URI, here or already on the server, is a build error. */
   def withResources[R1](served: ServedResource[R1]*): Either[NonEmptyChunk[McpBuildError], Mcp[R & R1]] =
@@ -73,7 +86,9 @@ final class Mcp[-R] private (
     NonEmptyChunk.fromChunk(dupes) match
       case Some(errors) => Left(errors)
       case None         =>
-        Right(new Mcp(server, offer.copy(resources = offer.resources ++ served), catalogOps, instructions, path))
+        Right(
+          new Mcp(server, offer.copy(resources = offer.resources ++ served), catalogOps, instructions, path, registry)
+        )
 
   /** Gives the tool named `name` extra `_meta` (merged by key). A promotable operation that is not listed yet, such as
     * one only an App's view calls, is listed now. A name no operation has is a build error.
@@ -89,7 +104,7 @@ final class Mcp[-R] private (
           case None     => Left(NonEmptyChunk(McpBuildError.NoSuchTool(name)))
           case Some(op) =>
             ToolCall.bound(op).left.map(NonEmptyChunk(_)).map { t =>
-              new Mcp(server, offer.copy(tools = offer.tools :+ merged(t)), catalogOps, instructions, path)
+              new Mcp(server, offer.copy(tools = offer.tools :+ merged(t)), catalogOps, instructions, path, registry)
             }
       case i =>
         Right(
@@ -99,12 +114,20 @@ final class Mcp[-R] private (
             catalogOps,
             instructions,
             path,
+            registry,
           )
         )
 
   /** Advertises an extension in `server/discover` and `initialize` capabilities, with its settings. */
   def withExtension(id: ExtensionId, settings: Json.Obj = Json.Obj()): Mcp[R] =
-    new Mcp(server, offer.copy(extensions = offer.extensions.updated(id, settings)), catalogOps, instructions, path)
+    new Mcp(
+      server,
+      offer.copy(extensions = offer.extensions.updated(id, settings)),
+      catalogOps,
+      instructions,
+      path,
+      registry,
+    )
 
   def routes: Routes[R, ZNothing] =
     Http.routes(engine, hub, path)
@@ -132,8 +155,56 @@ final class Mcp[-R] private (
   private def engine: Engine[R] =
     Engine(server, offer, instructions, 300000, hub)
 
+  /** A typed event. `In` and `Data` are pinned, and the accepting function is the last parameter list. */
+  inline def event[In, Data](inline name: String, description: String = ""): Mcp.EventBuilder[R, In, Data] =
+    Mcp.EventBuilder(this, EventName(name), description)
+
+  /** Runs at subscribe and before each webhook delivery. A refusal is `Forbidden`. Poll of an authenticated caller uses
+    * it once. The function is a memory read: it runs while the event log is locked.
+    */
+  def authorize(allow: (Principal, EventName, Json.Obj) => UIO[Boolean]): Mcp[R] =
+    new Mcp(server, offer, catalogOps, instructions, path, registry.copy(allow = allow))
+
+  /** Clamps the grant, the cap, and the counters. `ttlMs: null` is the cap, not forever. */
+  def eventPolicy(policy: TtlPolicy): Mcp[R] =
+    new Mcp(server, offer, catalogOps, instructions, path, registry.copy(policy = TtlPolicy.sanitize(policy)))
+
+  /** The ring and the subscriptions. Build the layer from the final server: it closes over the declarations and the
+    * allow hook. It does not provide the clock. The app runtime's clock grants each TTL.
+    */
+  def eventsLayer: ZLayer[Any, Nothing, Events] =
+    EventRuntime.layer(registry.decls, registry.policy, registry.allow)
+
+  private[mcp] def offered: Offer[R] = offer
+
+  private[mcp] def registered: EventRegistry[R] = registry
+
+  private[mcp] def rebuild[R1 <: R](nextOffer: Offer[R1], next: EventRegistry[R1]): Mcp[R1] =
+    new Mcp(server, nextOffer, catalogOps, instructions, path, next)
+
+  private[mcp] def addEvent[In, Data](
+      name: EventName,
+      description: String,
+      modes: NonEmptyChunk[Delivery],
+      replay: Replay,
+      accept: (In, Data) => Boolean,
+  )(using
+      Schema[In],
+      JsonCodec[In],
+      Schema[Data],
+      JsonCodec[Data],
+  ): Either[NonEmptyChunk[McpBuildError], Mcp[R & Events.Env]] =
+    if registry.decls.exists(_.name == name) then Left(NonEmptyChunk(McpBuildError.DuplicateEvent(name)))
+    else
+      heddle.mcp.events.ErasedEvent.build(name, description, modes, replay, accept) match
+        case Left(error)  => Left(NonEmptyChunk(error))
+        case Right(event) =>
+          val gateway = EventGateway.live[R & Events.Env](registry.read)
+          val next    = Offer[R & Events.Env](offer.tools, offer.resources, offer.extensions, offer.streams, gateway)
+          Right(new Mcp(server, next, catalogOps, instructions, path, registry.copy(decls = registry.decls :+ event)))
+
   private def copy(instructions: Option[String] = instructions, path: String = path): Mcp[R] =
-    new Mcp(server, offer, catalogOps, instructions, path)
+    new Mcp(server, offer, catalogOps, instructions, path, registry)
 end Mcp
 
 object Mcp:
@@ -159,7 +230,14 @@ object Mcp:
         val title   = apis.headOption.map(_.title).getOrElse("heddle")
         val version = apis.headOption.map(_.version).getOrElse("0.0.0")
         Right(
-          new Mcp(Implementation(title, version), Offer(tools, Chunk.empty, Map.empty, streams), catalog, None, "mcp")
+          new Mcp(
+            Implementation(title, version),
+            Offer(tools, Chunk.empty, Map.empty, streams),
+            catalog,
+            None,
+            "mcp",
+            EventRegistry.empty,
+          )
         )
 
   def unauthorized(resourceMetadata: String, scopes: List[String] = Nil): Response =
@@ -275,4 +353,73 @@ object Mcp:
                 case Left(e)  => ZIO.succeed(ToolCall.failed(e.message))
                 case Right(t) => t.call(inner, headers)
     }
+
+  final class EventBuilder[-R, In, Data](mcp: Mcp[R], name: EventName, description: String):
+    def pollAndWebhook(
+        accept: (In, Data) => Boolean
+    )(using
+        Schema[In],
+        JsonCodec[In],
+        Schema[Data],
+        JsonCodec[Data],
+    ): Either[NonEmptyChunk[McpBuildError], Mcp[R & Events.Env]] =
+      using(NonEmptyChunk(Delivery.Poll, Delivery.Webhook), Replay.default)(accept)
+
+    def poll(
+        accept: (In, Data) => Boolean
+    )(using
+        Schema[In],
+        JsonCodec[In],
+        Schema[Data],
+        JsonCodec[Data],
+    ): Either[NonEmptyChunk[McpBuildError], Mcp[R & Events.Env]] =
+      using(NonEmptyChunk(Delivery.Poll), Replay.default)(accept)
+
+    def webhook(replay: Replay)(
+        accept: (In, Data) => Boolean
+    )(using
+        Schema[In],
+        JsonCodec[In],
+        Schema[Data],
+        JsonCodec[Data],
+    ): Either[NonEmptyChunk[McpBuildError], Mcp[R & Events.Env]] =
+      using(NonEmptyChunk(Delivery.Webhook), replay)(accept)
+
+    def using(modes: NonEmptyChunk[Delivery], replay: Replay)(
+        accept: (In, Data) => Boolean
+    )(using
+        Schema[In],
+        JsonCodec[In],
+        Schema[Data],
+        JsonCodec[Data],
+    ): Either[NonEmptyChunk[McpBuildError], Mcp[R & Events.Env]] =
+      mcp.addEvent(name, description, modes, replay, accept)
+  end EventBuilder
+
+  extension [R](mcp: Mcp[R])
+    def principal[R1](read: Headers => ZIO[R1, Nothing, Option[Principal]])(using
+        wiring: PrincipalWiring[R]
+    ): Mcp[R & R1] =
+      wiring(mcp, read)
+
+  /** After an event is declared, `R` already has the sender. Before that, the gateway stays absent. */
+  private[mcp] trait PrincipalWiring[R]:
+    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1]
+
+  private[mcp] given eventsPrincipal[R <: Events.Env]: PrincipalWiring[R] with
+    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
+      val reg     = mcp.registered
+      val base    = mcp.offered
+      val gateway = EventGateway.live[R & R1](read)
+      val offered = Offer[R & R1](base.tools, base.resources, base.extensions, base.streams, gateway)
+      mcp.rebuild(offered, EventRegistry[R & R1](reg.decls, reg.policy, read, reg.allow))
+
+  private[mcp] given plainPrincipal[R](using NotGiven[R <:< Events.Env]): PrincipalWiring[R] with
+    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
+      val reg  = mcp.registered
+      val base = mcp.offered
+      mcp.rebuild(
+        Offer(base.tools, base.resources, base.extensions, base.streams, EventGateway.none),
+        EventRegistry[R & R1](reg.decls, reg.policy, read, reg.allow),
+      )
 end Mcp

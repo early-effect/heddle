@@ -15,6 +15,12 @@ object ProtocolGens:
       .map(ToolName.from)
       .collect { case Right(name) => name }
 
+  val eventName: Gen[Any, EventName] =
+    Gen
+      .stringBounded(1, 40)(Gen.oneOf(Gen.alphaNumericChar, Gen.elements('_', '-', '.')))
+      .map(EventName.from)
+      .collect { case Right(name) => name }
+
   val json: Gen[Any, Json] = Gen.suspend(jsonAt(3))
 
   private def jsonAt(depth: Int): Gen[Any, Json] =
@@ -41,6 +47,25 @@ object ProtocolGens:
   val version: Gen[Any, ProtocolVersion] =
     Gen.oneOf(Gen.const(ProtocolVersion.Current), Gen.const(ProtocolVersion.Legacy), text.map(ProtocolVersion(_)))
 
+  private val reservedCodes = Set(
+    -32700, -32600, -32601, -32602, -32603, -32002, -32020, -32022, -32023, -32024, -32025, -32026, -32027,
+  )
+
+  private val callbackFailure: Gen[Any, CallbackFailure] = Gen.elements(
+    CallbackFailure.ConnectionRefused,
+    CallbackFailure.Timeout,
+    CallbackFailure.TlsError,
+    CallbackFailure.Http4xx,
+    CallbackFailure.Http5xx,
+    CallbackFailure.ChallengeFailed,
+  )
+
+  private val ttlRequest: Gen[Any, TtlRequest] = Gen.oneOf(
+    Gen.const(TtlRequest.Absent),
+    Gen.const(TtlRequest.Unbounded),
+    Gen.long(0, 100_000).map(TtlRequest.Millis(_)),
+  )
+
   val rpcError: Gen[Any, RpcError] = Gen.oneOf(
     text.map(RpcError.ParseError(_)),
     text.map(RpcError.InvalidRequest(_)),
@@ -51,7 +76,13 @@ object ProtocolGens:
     text.map(RpcError.ResourceNotFound(_)),
     (text <*> Gen.chunkOfBounded(0, 3)(version)).map(RpcError.UnsupportedVersion(_, _)),
     Gen.option(obj()).map(RpcError.OperationFailed(_)),
-    (Gen.int(-31999, 31999) <*> text <*> Gen.option(obj())).map(RpcError.Other(_, _, _)),
+    Gen.option(Gen.elements("event", "subscription")).map(RpcError.NotFound(_)),
+    Gen.option(text).map(RpcError.Forbidden(_)),
+    (text <*> Gen.option(Gen.int(0, 32))).map(RpcError.ResourceExhausted(_, _)),
+    obj().map(RpcError.Unsupported(_)),
+    callbackFailure.map(RpcError.CallbackEndpointError(_)),
+    (Gen.int(-31999, 31999).filterNot(reservedCodes.contains) <*> text <*> Gen.option(obj()))
+      .map(RpcError.Other(_, _, _)),
   )
 
   val message: Gen[Any, Message] = Gen.oneOf(
@@ -105,5 +136,13 @@ object ProtocolGens:
     text.map(ClientRequest.SubscribeResource(_)),
     text.map(ClientRequest.UnsubscribeResource(_)),
     (toolName <*> obj()).map(ClientRequest.Listen(_, _)),
+    Gen.option(text).map(ClientRequest.ListEvents(_)),
+    (eventName <*> obj() <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> Gen.option(Gen.int(0, 50)))
+      .map(ClientRequest.PollEvents(_, _, _, _, _)),
+    (eventName <*> obj() <*> text <*> text <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> ttlRequest)
+      .map(ClientRequest.SubscribeEvents(_, _, _, _, _, _, _)),
+    (eventName <*> obj() <*> text).map(ClientRequest.UnsubscribeEvents(_, _, _)),
+    (eventName <*> obj() <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> Gen.option(Gen.long(0, 100_000)))
+      .map(ClientRequest.StreamEvents(_, _, _, _, _)),
   )
 end ProtocolGens

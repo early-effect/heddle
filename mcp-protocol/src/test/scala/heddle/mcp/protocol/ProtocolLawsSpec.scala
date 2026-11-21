@@ -21,6 +21,43 @@ object ProtocolLawsSpec extends ZIOSpecDefault:
       test("ClientRequest")(
         check(clientRequest)(r => assertTrue(ClientRequest.decode(r.method, r.params) == Right(r)))
       ),
+      test("a null event cursor is absent and a null ttl does not expire") {
+        val params = Json.Obj(
+          "name"     -> Json.Str("tick"),
+          "delivery" -> Json.Obj(
+            "mode"   -> Json.Str("webhook"),
+            "url"    -> Json.Str("https://hooks.example/mcp"),
+            "secret" -> Json.Str("whsec_placeholder"),
+          ),
+          "cursor" -> Json.Null,
+          "ttlMs"  -> Json.Null,
+        )
+        assertTrue(
+          ClientRequest.decode(Methods.SubscribeEvents, params) == Right(
+            ClientRequest.SubscribeEvents(
+              EventName("tick"),
+              Json.Obj(),
+              "https://hooks.example/mcp",
+              "whsec_placeholder",
+              None,
+              None,
+              TtlRequest.Unbounded,
+            )
+          )
+        )
+      },
+      test("an unknown callback reason stays an error object") {
+        val raw = Json.Obj(
+          "code"    -> Json.Num(-32027),
+          "message" -> Json.Str("CallbackEndpointError"),
+          "data"    -> Json.Obj("reason" -> Json.Str("nope")),
+        )
+        assertTrue {
+          RpcError.fromJson(raw) match
+            case Some(RpcError.Other(-32027, "CallbackEndpointError", _)) => true
+            case _                                                        => false
+        }
+      },
       test("Tool")(roundTrips(tool)),
       test("ContentBlock")(roundTrips(content)),
       test("CallToolResult")(roundTrips(callToolResult)),
