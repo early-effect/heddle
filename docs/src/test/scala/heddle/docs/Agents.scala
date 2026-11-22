@@ -5,7 +5,7 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import heddle.mcp.{Mcp, McpBuildError, ServedResource, Session}
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
-import heddle.mcp.events.{TtlPolicy, VerificationPolicy}
+import heddle.mcp.events.{Principal, TtlPolicy, VerificationPolicy}
 import heddle.mcp.protocol.{
   CallToolResult,
   ClientRequest,
@@ -379,6 +379,12 @@ challenge. `VerificationPolicy.Required` (the default) posts a signed nonce and 
 the `2xx` body echoes it. `VerificationPolicy.Skip` commits that first subscribe with no challenge
 POST, for a hosted receiver that answers with its own body.
 
+`principal` names that caller. Pass `Headers => ZIO[R1, Nothing, Option[Principal]]` after the event
+is declared. The method is on `Mcp` once `R` includes `Events.Env`, and the server's own package
+calls it. A missing or blank value is `Forbidden` on subscribe. Poll of a request that presents
+nobody still reads the ring. `eventsLayer` closes over that final server and leaves the clock on
+the runtime: the runtime clock grants each TTL, and a test moves `TestClock`.
+
 `delivery.headers` is a heddle extension. The events spec does not define it. An optional object of
 string to string is copied onto every webhook POST, including the verification challenge. A
 receiver that checks `Authorization: Bearer <key>` puts that header here. The signature still
@@ -404,15 +410,18 @@ The signed POST itself is JVM-only. JS and Native fail the send with `Unavailabl
               filter.kind == milestone.kind
             )
           }
-          .map(
-            _.eventPolicy(
-              TtlPolicy.default.copy(
-                floor = Duration.fromMillis(60_000),
-                default = Duration.fromMillis(900_000),
-                cap = Duration.fromMillis(3_600_000),
+          .map { declared =>
+            declared
+              .principal(headers => ZIO.succeed(headers.get("X-Principal").map(Principal(_))))
+              .eventPolicy(
+                TtlPolicy.default.copy(
+                  floor = Duration.fromMillis(60_000),
+                  default = Duration.fromMillis(900_000),
+                  cap = Duration.fromMillis(3_600_000),
+                )
               )
-            ).verificationPolicy(VerificationPolicy.Skip)
-          )
+              .verificationPolicy(VerificationPolicy.Skip)
+          }
         built.isRight
       }.assert(ok => assertTrue(ok)),
       exampleValue {

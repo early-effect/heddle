@@ -36,7 +36,6 @@ import zio.json.ast.Json
 import zio.{Chunk, NonEmptyChunk, UIO, ZIO, ZLayer, ZNothing}
 
 import java.io.{InputStream, OutputStream}
-import scala.util.NotGiven
 
 /** An MCP server over bound operations, native tools, and resources. Serve it on HTTP (`routes`) or a pipe (`stdio`).
   * Everything that adds to what it offers is checked: a second tool or resource with a taken name is a build error.
@@ -415,18 +414,12 @@ object Mcp:
       mcp.addEvent(name, description, modes, replay, accept)
   end EventBuilder
 
-  extension [R](mcp: Mcp[R])
-    def principal[R1](read: Headers => ZIO[R1, Nothing, Option[Principal]])(using
-        wiring: PrincipalWiring[R]
-    ): Mcp[R & R1] =
-      wiring(mcp, read)
+  extension [R <: Events.Env](mcp: Mcp[R])
 
-  /** After an event is declared, `R` already has the sender. Before that, the gateway stays absent. */
-  private[mcp] trait PrincipalWiring[R]:
-    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1]
-
-  private[mcp] given eventsPrincipal[R <: Events.Env]: PrincipalWiring[R] with
-    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
+    /** Reads the caller of subscribe, poll, and unsubscribe. Call this after the event is declared. A missing or blank
+      * principal is `Forbidden` on subscribe. Poll with no principal still reads the ring.
+      */
+    def principal[R1](read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
       val reg     = mcp.registered
       val base    = mcp.offered
       val gateway = EventGateway.live[R & R1](read)
@@ -435,13 +428,5 @@ object Mcp:
         offered,
         EventRegistry[R & R1](reg.decls, reg.policy, reg.verification, read, reg.allow),
       )
-
-  private[mcp] given plainPrincipal[R](using NotGiven[R <:< Events.Env]): PrincipalWiring[R] with
-    def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
-      val reg  = mcp.registered
-      val base = mcp.offered
-      mcp.rebuild(
-        Offer(base.tools, base.resources, base.extensions, base.streams, EventGateway.none),
-        EventRegistry[R & R1](reg.decls, reg.policy, reg.verification, read, reg.allow),
-      )
+  end extension
 end Mcp
