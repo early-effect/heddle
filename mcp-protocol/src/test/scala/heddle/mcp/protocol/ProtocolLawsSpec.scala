@@ -9,6 +9,17 @@ import zio.test.*
 object ProtocolLawsSpec extends ZIOSpecDefault:
   private def toolChar(c: Char): Boolean = c.isLetterOrDigit && c < 128 || "_-.".contains(c)
 
+  private def subscribeDelivery(headers: Json): Json.Obj =
+    Json.Obj(
+      "name"     -> Json.Str("tick"),
+      "delivery" -> Json.Obj(
+        "mode"    -> Json.Str("webhook"),
+        "url"     -> Json.Str("https://hooks.example/mcp"),
+        "secret"  -> Json.Str("whsec_placeholder"),
+        "headers" -> headers,
+      ),
+    )
+
   private val idPart = Gen.stringBounded(1, 12)(Gen.oneOf(Gen.alphaNumericChar, Gen.elements('-', '.', '_')))
 
   private def roundTrips[A: JsonCodec](gen: Gen[Any, A]) =
@@ -21,6 +32,98 @@ object ProtocolLawsSpec extends ZIOSpecDefault:
       test("ClientRequest")(
         check(clientRequest)(r => assertTrue(ClientRequest.decode(r.method, r.params) == Right(r)))
       ),
+      test("a null event cursor is absent and a null ttl does not expire") {
+        val params = Json.Obj(
+          "name"     -> Json.Str("tick"),
+          "delivery" -> Json.Obj(
+            "mode"   -> Json.Str("webhook"),
+            "url"    -> Json.Str("https://hooks.example/mcp"),
+            "secret" -> Json.Str("whsec_placeholder"),
+          ),
+          "cursor" -> Json.Null,
+          "ttlMs"  -> Json.Null,
+        )
+        assertTrue(
+          ClientRequest.decode(Methods.SubscribeEvents, params) == Right(
+            ClientRequest.SubscribeEvents(
+              EventName("tick"),
+              Json.Obj(),
+              "https://hooks.example/mcp",
+              "whsec_placeholder",
+              None,
+              None,
+              TtlRequest.Unbounded,
+              DeliveryHeaders.empty,
+            )
+          )
+        )
+      },
+      test("delivery.headers is an optional object and a secret") {
+        val token   = "Bearer super-secret"
+        val params  = subscribeDelivery(Json.Obj("Authorization" -> Json.Str(token)))
+        val decoded = ClientRequest.decode(Methods.SubscribeEvents, params)
+        val printed = decoded.fold(_.text, _.toString)
+        val again   = decoded.flatMap(req => ClientRequest.decode(req.method, req.params))
+        assertTrue(
+          decoded.exists {
+            case ClientRequest.SubscribeEvents(_, _, _, _, _, _, _, headers) =>
+              headers.entries == Chunk("Authorization" -> token)
+            case _ => false
+          },
+          !printed.contains(token),
+          !printed.contains("super-secret"),
+          again == decoded,
+        )
+      },
+      test("delivery.headers rejects reserved names, bad values, and oversize blocks") {
+        val token                               = "Bearer super-secret"
+        val planted                             = "planted-secret-value"
+        def message(delivery: Json.Obj): String =
+          ClientRequest.decode(Methods.SubscribeEvents, subscribeDelivery(delivery)) match
+            case Left(error) => error.text
+            case Right(_)    => ""
+        val host     = message(Json.Obj("Host" -> Json.Str(planted)))
+        val webhook  = message(Json.Obj("Webhook-Id" -> Json.Str(planted)))
+        val mcp      = message(Json.Obj("x-mcp-trace" -> Json.Str(planted)))
+        val proxy    = message(Json.Obj("Proxy-Authorization" -> Json.Str(planted)))
+        val typed    = message(Json.Obj("Authorization" -> Json.Obj("token" -> Json.Str(planted))))
+        val broken   = message(Json.Obj("Authorization" -> Json.Str(s"$token\nmore")))
+        val repeated = message(Json.Obj("Authorization" -> Json.Str("a"), "authorization" -> Json.Str(planted)))
+        val wide     = message(Json.Obj(Chunk.fromIterable((1 to 17).map(n => s"X-H$n" -> Json.Str("v")))))
+        val longName = message(Json.Obj(("A" * 65) -> Json.Str(planted)))
+        val longVal  = message(Json.Obj("Authorization" -> Json.Str("a" * 4097)))
+        val bulky    = message(
+          Json.Obj(Chunk.fromIterable((1 to 16).map(n => s"H$n" -> Json.Str("b" * 600))))
+        )
+        assertTrue(
+          host == "delivery.headers rejects Host",
+          webhook == "delivery.headers rejects Webhook-Id",
+          mcp == "delivery.headers rejects x-mcp-trace",
+          proxy == "delivery.headers rejects Proxy-Authorization",
+          typed == "delivery.headers.Authorization must be a string",
+          broken == "delivery.headers.Authorization must not contain a control character",
+          repeated == "delivery.headers repeats authorization",
+          wide == "delivery.headers has 17 names and the cap is 16",
+          longName == "delivery.headers has a name longer than 64 characters",
+          longVal == "delivery.headers.Authorization is longer than 4096 characters",
+          bulky == "delivery.headers exceeds 8192 characters",
+          List(host, webhook, mcp, proxy, typed, broken, repeated, wide, longName, longVal, bulky).forall { text =>
+            !text.contains(planted) && !text.contains(token) && !text.contains("super-secret")
+          },
+        )
+      },
+      test("an unknown callback reason stays an error object") {
+        val raw = Json.Obj(
+          "code"    -> Json.Num(-32027),
+          "message" -> Json.Str("CallbackEndpointError"),
+          "data"    -> Json.Obj("reason" -> Json.Str("nope")),
+        )
+        assertTrue {
+          RpcError.fromJson(raw) match
+            case Some(RpcError.Other(-32027, "CallbackEndpointError", _)) => true
+            case _                                                        => false
+        }
+      },
       test("Tool")(roundTrips(tool)),
       test("ContentBlock")(roundTrips(content)),
       test("CallToolResult")(roundTrips(callToolResult)),

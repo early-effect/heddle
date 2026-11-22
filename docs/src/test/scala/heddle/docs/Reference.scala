@@ -20,7 +20,7 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
 | --- | --- | --- |
 | `heddle` | ZIO, zio-json, neotype | HTTP types, routes, middleware, `Server.install` (JVM Loom, Node, Native), Schema, Endpoint, OpenAPI |
 | `heddle-mcp-protocol` | zio-json | MCP wire types and codecs: JSON-RPC messages, requests, tools, results, resources |
-| `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`) |
+| `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`). Events: poll and signed webhooks. `Mcp#principal` reads the caller after the event is declared |
 | `heddle-mcp-apps` | heddle-mcp | [MCP Apps](mcp-apps.html): sheds of typed grants, `ui://` views, `_meta.ui`, and the policy a host clamps |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
@@ -41,6 +41,7 @@ packages. Datastar `readSignals` is an extension on `Request`.
 | `Files` | nio | `node:fs` + `SafePath` | nio + `SafePath` |
 | Digest / RS256 | `java.security` | `node:crypto` | OpenSSL |
 | MCP HTTP + stdio | yes | yes | yes |
+| MCP event webhook POST | yes | no (`Unavailable`) | no (`Unavailable`) |
 | MCP Apps model | yes | yes (Node and browser) | yes |
 | `heddle-oauth` | yes | yes | no |
 | `HeddleApp` | yes | no | no |

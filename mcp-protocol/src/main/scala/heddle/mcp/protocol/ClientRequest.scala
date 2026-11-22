@@ -17,20 +17,51 @@ enum ClientRequest:
   case SubscribeResource(uri: String)
   case UnsubscribeResource(uri: String)
   case Listen(operation: ToolName, arguments: Json.Obj)
+  case ListEvents(cursor: Option[String])
+  case PollEvents(
+      name: EventName,
+      arguments: Json.Obj,
+      cursor: Option[String],
+      maxAgeMs: Option[Long],
+      maxEvents: Option[Int],
+  )
+  case SubscribeEvents(
+      name: EventName,
+      arguments: Json.Obj,
+      url: String,
+      secret: String,
+      cursor: Option[String],
+      maxAgeMs: Option[Long],
+      ttl: TtlRequest,
+      headers: DeliveryHeaders,
+  )
+  case UnsubscribeEvents(name: EventName, arguments: Json.Obj, url: String)
+  case StreamEvents(
+      name: EventName,
+      arguments: Json.Obj,
+      cursor: Option[String],
+      maxAgeMs: Option[Long],
+      heartbeatMs: Option[Long],
+  )
 
   def method: String =
     this match
-      case Ping                     => Methods.Ping
-      case Discover                 => Methods.Discover
-      case Initialize(_, _, _)      => Methods.Initialize
-      case ListTools(_)             => Methods.ListTools
-      case CallTool(_, _)           => Methods.CallTool
-      case ListResources(_)         => Methods.ListResources
-      case ListResourceTemplates(_) => Methods.ListResourceTemplates
-      case ReadResource(_)          => Methods.ReadResource
-      case SubscribeResource(_)     => Methods.SubscribeResource
-      case UnsubscribeResource(_)   => Methods.UnsubscribeResource
-      case Listen(_, _)             => Methods.Listen
+      case Ping                                    => Methods.Ping
+      case Discover                                => Methods.Discover
+      case Initialize(_, _, _)                     => Methods.Initialize
+      case ListTools(_)                            => Methods.ListTools
+      case CallTool(_, _)                          => Methods.CallTool
+      case ListResources(_)                        => Methods.ListResources
+      case ListResourceTemplates(_)                => Methods.ListResourceTemplates
+      case ReadResource(_)                         => Methods.ReadResource
+      case SubscribeResource(_)                    => Methods.SubscribeResource
+      case UnsubscribeResource(_)                  => Methods.UnsubscribeResource
+      case Listen(_, _)                            => Methods.Listen
+      case ListEvents(_)                           => Methods.ListEvents
+      case PollEvents(_, _, _, _, _)               => Methods.PollEvents
+      case SubscribeEvents(_, _, _, _, _, _, _, _) => Methods.SubscribeEvents
+      case UnsubscribeEvents(_, _, _)              => Methods.UnsubscribeEvents
+      case StreamEvents(_, _, _, _, _)             => Methods.StreamEvents
 
   def params: Json.Obj =
     def cursor(c: Option[String]) = Json.Obj(Chunk.fromIterable(c.map("cursor" -> Json.Str(_))))
@@ -49,6 +80,47 @@ enum ClientRequest:
       case SubscribeResource(uri)   => Json.Obj("uri" -> Json.Str(uri))
       case UnsubscribeResource(uri) => Json.Obj("uri" -> Json.Str(uri))
       case Listen(operation, args)  => Json.Obj("operation" -> Json.Str(operation.value), "arguments" -> args)
+      case ListEvents(c)            => cursor(c)
+      case PollEvents(name, args, c, age, max) =>
+        named(name, args, Chunk.fromIterable(c.map("cursor" -> Json.Str(_))) ++ ageField(age) ++ maxField(max))
+      case SubscribeEvents(name, args, url, secret, c, age, ttl, headers) =>
+        named(
+          name,
+          args,
+          Chunk(
+            "delivery" -> Json.Obj(
+              Chunk(
+                "mode"   -> Json.Str("webhook"),
+                "url"    -> Json.Str(url),
+                "secret" -> Json.Str(secret),
+              ) ++ headers.wireField
+            )
+          ) ++ Chunk.fromIterable(c.map("cursor" -> Json.Str(_))) ++ ageField(age) ++ ttlField(ttl),
+        )
+      case UnsubscribeEvents(name, args, url) =>
+        named(name, args, Chunk("delivery" -> Json.Obj("url" -> Json.Str(url))))
+      case StreamEvents(name, args, c, age, heartbeat) =>
+        named(
+          name,
+          args,
+          Chunk.fromIterable(c.map("cursor" -> Json.Str(_))) ++ ageField(age) ++
+            Chunk.fromIterable(heartbeat.map(ms => "heartbeatMs" -> Json.Num(ms))),
+        )
+
+  private def named(name: EventName, args: Json.Obj, extra: Chunk[(String, Json)]): Json.Obj =
+    Json.Obj(Chunk("name" -> Json.Str(name.value), "arguments" -> args) ++ extra)
+
+  private def ageField(age: Option[Long]): Chunk[(String, Json)] =
+    Chunk.fromIterable(age.map(ms => "maxAgeMs" -> Json.Num(ms)))
+
+  private def maxField(max: Option[Int]): Chunk[(String, Json)] =
+    Chunk.fromIterable(max.map(n => "maxEvents" -> Json.Num(n)))
+
+  private def ttlField(ttl: TtlRequest): Chunk[(String, Json)] =
+    ttl match
+      case TtlRequest.Absent     => Chunk.empty
+      case TtlRequest.Unbounded  => Chunk("ttlMs" -> Json.Null)
+      case TtlRequest.Millis(ms) => Chunk("ttlMs" -> Json.Num(ms))
 end ClientRequest
 
 /** Wire notification names. */
@@ -75,6 +147,14 @@ object Methods:
   val SubscribeResource     = "resources/subscribe"
   val UnsubscribeResource   = "resources/unsubscribe"
   val Listen                = "subscriptions/listen"
+  val ListEvents            = "events/list"
+  val PollEvents            = "events/poll"
+  val SubscribeEvents       = "events/subscribe"
+  val UnsubscribeEvents     = "events/unsubscribe"
+  val StreamEvents          = "events/stream"
+
+  /** Methods whose `params.name` must be repeated in `Mcp-Name`. `events/list` has no name. */
+  val named: Set[String] = Set(CallTool, PollEvents, SubscribeEvents, UnsubscribeEvents, StreamEvents)
 
   val requests: Set[String] =
     Set(
@@ -89,6 +169,11 @@ object Methods:
       SubscribeResource,
       UnsubscribeResource,
       Listen,
+      ListEvents,
+      PollEvents,
+      SubscribeEvents,
+      UnsubscribeEvents,
+      StreamEvents,
     )
 end Methods
 
@@ -108,6 +193,11 @@ object ClientRequest:
       case Methods.SubscribeResource     => uri(params, "resources/subscribe").map(SubscribeResource(_))
       case Methods.UnsubscribeResource   => uri(params, "resources/unsubscribe").map(UnsubscribeResource(_))
       case Methods.Listen                => listen(params)
+      case Methods.ListEvents            => optionalCursor(params).map(ListEvents(_))
+      case Methods.PollEvents            => poll(params)
+      case Methods.SubscribeEvents       => subscribe(params)
+      case Methods.UnsubscribeEvents     => unsubscribe(params)
+      case Methods.StreamEvents          => stream(params)
       case other                         => Left(RpcError.methodNotFound(other))
 
   private def initialize(p: Json.Obj): Either[RpcError, ClientRequest] =
@@ -157,6 +247,124 @@ object ClientRequest:
       case None              => Right(None)
       case Some(Json.Str(c)) => Right(Some(c))
       case Some(_)           => Left(RpcError.InvalidParams("cursor must be a string"))
+
+  /** `null` and a missing cursor are both "absent". Tool cursors stay strict; event cursors follow the events spec. */
+  private def optionalCursor(p: Json.Obj): Either[RpcError, Option[String]] =
+    p.get("cursor") match
+      case None | Some(Json.Null) => Right(None)
+      case Some(Json.Str(c))      => Right(Some(c))
+      case Some(_)                => Left(RpcError.InvalidParams("cursor must be a string"))
+
+  private def poll(p: Json.Obj): Either[RpcError, ClientRequest] =
+    for
+      name <- eventName(p)
+      args <- arguments(p)
+      c    <- optionalCursor(p)
+      age  <- optionalLong(p, "maxAgeMs")
+      max  <- optionalInt(p, "maxEvents")
+    yield PollEvents(name, args, c, age, max)
+
+  private def subscribe(p: Json.Obj): Either[RpcError, ClientRequest] =
+    for
+      name     <- eventName(p)
+      args     <- arguments(p)
+      delivery <- delivery(p)
+      _        <- webhookMode(delivery)
+      url      <- stringField(delivery, "url", "delivery.url")
+      secret   <- stringField(delivery, "secret", "delivery.secret")
+      headers  <- deliveryHeaders(delivery)
+      c        <- optionalCursor(p)
+      age      <- optionalLong(p, "maxAgeMs")
+      ttl      <- ttl(p)
+    yield SubscribeEvents(name, args, url, secret, c, age, ttl, headers)
+
+  private def unsubscribe(p: Json.Obj): Either[RpcError, ClientRequest] =
+    for
+      name     <- eventName(p)
+      args     <- arguments(p)
+      delivery <- delivery(p)
+      _        <- optionalWebhook(delivery)
+      url      <- stringField(delivery, "url", "delivery.url")
+    yield UnsubscribeEvents(name, args, url)
+
+  private def stream(p: Json.Obj): Either[RpcError, ClientRequest] =
+    for
+      name <- eventName(p)
+      args <- arguments(p)
+      c    <- optionalCursor(p)
+      age  <- optionalLong(p, "maxAgeMs")
+      beat <- optionalLong(p, "heartbeatMs")
+    yield StreamEvents(name, args, c, age, beat)
+
+  private def eventName(p: Json.Obj): Either[RpcError, EventName] =
+    p.get("name") match
+      case Some(Json.Str(n)) => EventName.from(n).left.map(e => RpcError.InvalidParams(e.message))
+      case _                 => Left(RpcError.InvalidParams("missing event name"))
+
+  private def arguments(p: Json.Obj): Either[RpcError, Json.Obj] =
+    p.get("arguments") match
+      case None              => Right(Json.Obj())
+      case Some(o: Json.Obj) => Right(o)
+      case Some(_)           => Left(RpcError.InvalidParams("arguments must be a JSON object"))
+
+  private def delivery(p: Json.Obj): Either[RpcError, Json.Obj] =
+    p.get("delivery") match
+      case Some(o: Json.Obj) => Right(o)
+      case _                 => Left(RpcError.InvalidParams("delivery must be an object"))
+
+  /** Subscribe names the mode. Push is a known mode this server answers as `Unsupported`, not a parse failure. */
+  private def webhookMode(delivery: Json.Obj): Either[RpcError, Unit] =
+    delivery.get("mode") match
+      case Some(Json.Str("webhook")) => Right(())
+      case Some(Json.Str("push"))    =>
+        Left(RpcError.Unsupported(Json.Obj("feature" -> Json.Str("deliveryMode"), "value" -> Json.Str("push"))))
+      case Some(Json.Str(_)) => Left(RpcError.InvalidParams("delivery.mode must be webhook"))
+      case _                 => Left(RpcError.InvalidParams("delivery.mode must be webhook"))
+
+  private def optionalWebhook(delivery: Json.Obj): Either[RpcError, Unit] =
+    delivery.get("mode") match
+      case None | Some(Json.Str("webhook")) => Right(())
+      case Some(Json.Str("push"))           =>
+        Left(RpcError.Unsupported(Json.Obj("feature" -> Json.Str("deliveryMode"), "value" -> Json.Str("push"))))
+      case _ => Left(RpcError.InvalidParams("delivery.mode must be webhook"))
+
+  /** Absent means no extra headers. Present is the heddle `delivery.headers` extension. */
+  private def deliveryHeaders(delivery: Json.Obj): Either[RpcError, DeliveryHeaders] =
+    delivery.get("headers") match
+      case None       => Right(DeliveryHeaders.empty)
+      case Some(json) => DeliveryHeaders.parse(json)
+
+  private def stringField(obj: Json.Obj, key: String, label: String): Either[RpcError, String] =
+    obj.get(key) match
+      case Some(Json.Str(s)) => Right(s)
+      case _                 => Left(RpcError.InvalidParams(s"$label must be a string"))
+
+  private def ttl(p: Json.Obj): Either[RpcError, TtlRequest] =
+    p.get("ttlMs") match
+      case None            => Right(TtlRequest.Absent)
+      case Some(Json.Null) => Right(TtlRequest.Unbounded)
+      case Some(json)      => whole(json, "ttlMs").map(TtlRequest.Millis(_))
+
+  private def optionalLong(p: Json.Obj, key: String): Either[RpcError, Option[Long]] =
+    p.get(key) match
+      case None       => Right(None)
+      case Some(json) => whole(json, key).map(Some(_))
+
+  private def optionalInt(p: Json.Obj, key: String): Either[RpcError, Option[Int]] =
+    optionalLong(p, key).flatMap {
+      case None                         => Right(None)
+      case Some(n) if n <= Int.MaxValue => Right(Some(n.toInt))
+      case Some(_)                      => Left(RpcError.InvalidParams(s"$key must be an integer"))
+    }
+
+  private def whole(json: Json, key: String): Either[RpcError, Long] =
+    json match
+      case Json.Num(n) if n.signum >= 0 =>
+        scala.util.Try(n.longValueExact).toOption match
+          case Some(v) => Right(v)
+          case None    => Left(RpcError.InvalidParams(s"$key must be an integer"))
+      case Json.Num(_) => Left(RpcError.InvalidParams(s"$key must be a non-negative integer"))
+      case _           => Left(RpcError.InvalidParams(s"$key must be an integer"))
 end ClientRequest
 
 /** The 2026 per-request `_meta`: every stateless request says which revision it speaks. */

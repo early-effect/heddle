@@ -34,6 +34,7 @@ object MyVersions extends ZipxVersions:
   val ascentJs        = Lib("rocks.earlyeffect", "ascent-js", "0.11.1")
   val ascentCss       = Lib("rocks.earlyeffect", "ascent-css", "0.10.2")
   val chekhov         = Lib("rocks.earlyeffect", "chekhov-zio-test", "0.1.3").test
+  val slayer          = Lib("rocks.earlyeffect", "slayer", "0.2.0").test
   val chekhovDriver   = chekhov.mod("chekhov-driver").test
 
   val scalafmt       = Plugin("org.scalameta", "sbt-scalafmt", "2.6.2")
@@ -62,6 +63,9 @@ object MyVersions extends ZipxVersions:
   def docsTest    = library(specularZioTest, specularTheme, mermoidAscent.test, ascentCss)
   def docsJs      = library(specular, mermoidAscent, ascentJs, ascentCss, zio)
   def browserTest = library(chekhov, chekhovDriver)
+
+  /** JVM tests stub `WebhookTransport`. JS and Native do not see this dependency. */
+  def mcpJvmTest = library(slayer)
 
   /** OpenTelemetry is JVM-only, so `heddle-opentelemetry` is too. */
   def opentelemetryLib  = library(zioOpentelemetry)

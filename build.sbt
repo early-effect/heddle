@@ -215,7 +215,7 @@ lazy val mcp = (projectMatrix in file("mcp"))
     publishMavenStyle    := true,
     pomIncludeRepository := { _ => false },
   )
-  .jvmPlatform(scalaVersions = scalaVersions)
+  .jvmPlatform(scalaVersions = scalaVersions, MyVersions.mcpJvmTest)
   .jsPlatform(
     scalaVersions = scalaVersions,
     MyVersions.jsRuntime ++ Seq(

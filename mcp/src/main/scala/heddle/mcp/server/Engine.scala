@@ -2,6 +2,7 @@ package heddle.mcp.server
 
 import heddle.http.header.Headers
 import heddle.mcp.ServedResource
+import heddle.mcp.events.EventGateway
 import heddle.mcp.protocol.*
 import zio.json.*
 import zio.json.ast.Json
@@ -14,6 +15,7 @@ final case class Offer[-R](
     resources: Chunk[ServedResource[R]],
     extensions: Map[ExtensionId, Json.Obj],
     streams: Chunk[OperationStream[R]] = Chunk.empty,
+    events: EventGateway[R] = EventGateway.none,
 )
 
 /** Answers MCP requests from typed messages. Transports parse bytes and pick the [[Era]]; this decides everything else,
@@ -35,8 +37,8 @@ final class Engine[-R](
     val resources = Option.when(offer.resources.nonEmpty)(
       "resources" -> Json.Obj("subscribe" -> Json.Bool(true))
     )
-    val extensions = Option.when(offer.extensions.nonEmpty)(
-      "extensions" -> Json.Obj(Chunk.fromIterable(offer.extensions.map((id, settings) => id.value -> settings)))
+    val extensions = Option.when(extensionSettings.nonEmpty)(
+      "extensions" -> Json.Obj(Chunk.fromIterable(extensionSettings.map((id, settings) => id.value -> settings)))
     )
     val subscriptions = Option.when(offer.streams.nonEmpty)(
       "subscriptions" -> Json.Arr(offer.streams.map { stream =>
@@ -164,6 +166,14 @@ final class Engine[-R](
         ZIO.left(RpcError.InvalidRequest("resources/unsubscribe needs a session"))
       case (ClientRequest.Listen(_, _), _) =>
         ZIO.left(RpcError.InvalidRequest("subscriptions/listen is a stream"))
+      case (ClientRequest.ListEvents(cursor), Era.Stateless)       => offer.events.list(cursor)
+      case (poll: ClientRequest.PollEvents, Era.Stateless)         => offer.events.poll(headers, poll)
+      case (sub: ClientRequest.SubscribeEvents, Era.Stateless)     => offer.events.subscribe(headers, sub)
+      case (unsub: ClientRequest.UnsubscribeEvents, Era.Stateless) => offer.events.unsubscribe(headers, unsub)
+      case (ClientRequest.StreamEvents(_, _, _, _, _), Era.Stateless) if offer.events.enabled =>
+        ZIO.left(
+          RpcError.Unsupported(Json.Obj("feature" -> Json.Str("deliveryMode"), "value" -> Json.Str("push")))
+        )
       case (other, _) => ZIO.left(RpcError.methodNotFound(other.method))
 
   private def read(uri: String): ZIO[R, Nothing, Either[RpcError, Json.Obj]] =
@@ -227,6 +237,13 @@ final class Engine[-R](
 
   private def subscriptionMeta(id: RequestId): Json.Obj =
     Json.Obj(RequestMeta.SubscriptionIdKey -> id.json)
+
+  /** A server with events always advertises the empty settings object, so a later `withExtension` cannot add
+    * `listChanged`.
+    */
+  private def extensionSettings: Map[ExtensionId, Json.Obj] =
+    if offer.events.enabled then offer.extensions.updated(ExtensionId.Events, Json.Obj())
+    else offer.extensions
 
   private def discover: Json.Obj =
     Envelope.complete(
