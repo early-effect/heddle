@@ -33,6 +33,7 @@ enum ClientRequest:
       cursor: Option[String],
       maxAgeMs: Option[Long],
       ttl: TtlRequest,
+      headers: DeliveryHeaders,
   )
   case UnsubscribeEvents(name: EventName, arguments: Json.Obj, url: String)
   case StreamEvents(
@@ -45,22 +46,22 @@ enum ClientRequest:
 
   def method: String =
     this match
-      case Ping                                 => Methods.Ping
-      case Discover                             => Methods.Discover
-      case Initialize(_, _, _)                  => Methods.Initialize
-      case ListTools(_)                         => Methods.ListTools
-      case CallTool(_, _)                       => Methods.CallTool
-      case ListResources(_)                     => Methods.ListResources
-      case ListResourceTemplates(_)             => Methods.ListResourceTemplates
-      case ReadResource(_)                      => Methods.ReadResource
-      case SubscribeResource(_)                 => Methods.SubscribeResource
-      case UnsubscribeResource(_)               => Methods.UnsubscribeResource
-      case Listen(_, _)                         => Methods.Listen
-      case ListEvents(_)                        => Methods.ListEvents
-      case PollEvents(_, _, _, _, _)            => Methods.PollEvents
-      case SubscribeEvents(_, _, _, _, _, _, _) => Methods.SubscribeEvents
-      case UnsubscribeEvents(_, _, _)           => Methods.UnsubscribeEvents
-      case StreamEvents(_, _, _, _, _)          => Methods.StreamEvents
+      case Ping                                    => Methods.Ping
+      case Discover                                => Methods.Discover
+      case Initialize(_, _, _)                     => Methods.Initialize
+      case ListTools(_)                            => Methods.ListTools
+      case CallTool(_, _)                          => Methods.CallTool
+      case ListResources(_)                        => Methods.ListResources
+      case ListResourceTemplates(_)                => Methods.ListResourceTemplates
+      case ReadResource(_)                         => Methods.ReadResource
+      case SubscribeResource(_)                    => Methods.SubscribeResource
+      case UnsubscribeResource(_)                  => Methods.UnsubscribeResource
+      case Listen(_, _)                            => Methods.Listen
+      case ListEvents(_)                           => Methods.ListEvents
+      case PollEvents(_, _, _, _, _)               => Methods.PollEvents
+      case SubscribeEvents(_, _, _, _, _, _, _, _) => Methods.SubscribeEvents
+      case UnsubscribeEvents(_, _, _)              => Methods.UnsubscribeEvents
+      case StreamEvents(_, _, _, _, _)             => Methods.StreamEvents
 
   def params: Json.Obj =
     def cursor(c: Option[String]) = Json.Obj(Chunk.fromIterable(c.map("cursor" -> Json.Str(_))))
@@ -82,15 +83,17 @@ enum ClientRequest:
       case ListEvents(c)            => cursor(c)
       case PollEvents(name, args, c, age, max) =>
         named(name, args, Chunk.fromIterable(c.map("cursor" -> Json.Str(_))) ++ ageField(age) ++ maxField(max))
-      case SubscribeEvents(name, args, url, secret, c, age, ttl) =>
+      case SubscribeEvents(name, args, url, secret, c, age, ttl, headers) =>
         named(
           name,
           args,
           Chunk(
             "delivery" -> Json.Obj(
-              "mode"   -> Json.Str("webhook"),
-              "url"    -> Json.Str(url),
-              "secret" -> Json.Str(secret),
+              Chunk(
+                "mode"   -> Json.Str("webhook"),
+                "url"    -> Json.Str(url),
+                "secret" -> Json.Str(secret),
+              ) ++ headers.wireField
             )
           ) ++ Chunk.fromIterable(c.map("cursor" -> Json.Str(_))) ++ ageField(age) ++ ttlField(ttl),
         )
@@ -269,10 +272,11 @@ object ClientRequest:
       _        <- webhookMode(delivery)
       url      <- stringField(delivery, "url", "delivery.url")
       secret   <- stringField(delivery, "secret", "delivery.secret")
+      headers  <- deliveryHeaders(delivery)
       c        <- optionalCursor(p)
       age      <- optionalLong(p, "maxAgeMs")
       ttl      <- ttl(p)
-    yield SubscribeEvents(name, args, url, secret, c, age, ttl)
+    yield SubscribeEvents(name, args, url, secret, c, age, ttl, headers)
 
   private def unsubscribe(p: Json.Obj): Either[RpcError, ClientRequest] =
     for
@@ -323,6 +327,12 @@ object ClientRequest:
       case Some(Json.Str("push"))           =>
         Left(RpcError.Unsupported(Json.Obj("feature" -> Json.Str("deliveryMode"), "value" -> Json.Str("push"))))
       case _ => Left(RpcError.InvalidParams("delivery.mode must be webhook"))
+
+  /** Absent means no extra headers. Present is the heddle `delivery.headers` extension. */
+  private def deliveryHeaders(delivery: Json.Obj): Either[RpcError, DeliveryHeaders] =
+    delivery.get("headers") match
+      case None       => Right(DeliveryHeaders.empty)
+      case Some(json) => DeliveryHeaders.parse(json)
 
   private def stringField(obj: Json.Obj, key: String, label: String): Either[RpcError, String] =
     obj.get(key) match

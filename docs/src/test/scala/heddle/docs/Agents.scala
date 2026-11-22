@@ -5,6 +5,7 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import heddle.mcp.{Mcp, McpBuildError, ServedResource, Session}
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
+import heddle.mcp.events.{TtlPolicy, VerificationPolicy}
 import heddle.mcp.protocol.{
   CallToolResult,
   ClientRequest,
@@ -12,9 +13,11 @@ import heddle.mcp.protocol.{
   ExtensionId,
   Implementation,
   Message,
+  Methods,
   ProtocolVersion,
   RequestId,
   Resource,
+  RpcError,
   ToolName,
 }
 import heddle.mcp.transport.Http as McpHttp
@@ -362,6 +365,89 @@ Do not embed a second authorization server inside `heddle-mcp`. When the HTTP tr
 bearer token, `Mcp.bearer` + `Mcp.protectedResource` advertise the resource metadata. JWT
 verification lives in `heddle-oauth`.
 """
+    ),
+    section("Events")(
+      md"""
+`io.modelcontextprotocol/events` is advertised once the server declares an event. It is a
+2026-07-28 method: a 2025 session gets method not found. `poll` and `webhook` are the modes this
+server implements. Push is refused.
+
+Declare the event, then choose the two policies the way you choose any other server setting.
+`eventPolicy` sets `TtlPolicy`: `floor` raises a short `ttlMs`, an omitted `ttlMs` uses `default`,
+and `cap` bounds a longer one, including `ttlMs: null`. `verificationPolicy` chooses the subscribe
+challenge. `VerificationPolicy.Required` (the default) posts a signed nonce and commits only when
+the `2xx` body echoes it. `VerificationPolicy.Skip` commits that first subscribe with no challenge
+POST, for a hosted receiver that answers with its own body.
+
+`delivery.headers` is a heddle extension. The events spec does not define it. An optional object of
+string to string is copied onto every webhook POST, including the verification challenge. A
+receiver that checks `Authorization: Bearer <key>` puts that header here. The signature still
+covers only the id, the timestamp, and the body.
+
+Names are rejected, case-insensitively, when they are hop-by-hop (`Host`, `Content-Length`,
+`Content-Type`, `Transfer-Encoding`, `Connection`, and the rest of that set), when they start with
+`webhook-` or `X-MCP-`, or when the block exceeds 16 names or 8192 characters. A value is at most
+4096 characters and cannot contain a control character. Values are secrets: they are absent from
+`toString`, from the subscribe result, and from the error text. They are not part of the
+subscription id. Subscribing again with the same principal, url, name, and arguments replaces the
+headers on that subscription.
+
+The signed POST itself is JVM-only. JS and Native fail the send with `Unavailable`.
+""",
+      exampleValue {
+        case class Filter(kind: String) derives Schema, JsonCodec
+        case class Milestone(kind: String, note: String) derives Schema, JsonCodec
+        val built = Mcp
+          .from(Api("Shop", "1"))
+          .flatMap {
+            _.event[Filter, Milestone]("session.milestone", "A session milestone").pollAndWebhook((filter, milestone) =>
+              filter.kind == milestone.kind
+            )
+          }
+          .map(
+            _.eventPolicy(
+              TtlPolicy.default.copy(
+                floor = Duration.fromMillis(60_000),
+                default = Duration.fromMillis(900_000),
+                cap = Duration.fromMillis(3_600_000),
+              )
+            ).verificationPolicy(VerificationPolicy.Skip)
+          )
+        built.isRight
+      }.assert(ok => assertTrue(ok)),
+      exampleValue {
+        val token = "Bearer receiver-key"
+        val base  = Chunk(
+          "mode"   -> Json.Str("webhook"),
+          "url"    -> Json.Str("https://hooks.example/events"),
+          "secret" -> Json.Str("whsec_placeholder"),
+        )
+        def params(headers: Json.Obj) = Json.Obj(
+          "name"      -> Json.Str("session.milestone"),
+          "arguments" -> Json.Obj("kind" -> Json.Str("edit")),
+          "delivery"  -> Json.Obj(base :+ ("headers" -> headers)),
+        )
+        val decoded = ClientRequest.decode(
+          Methods.SubscribeEvents,
+          params(Json.Obj("Authorization" -> Json.Str(token))),
+        )
+        val refused = ClientRequest.decode(Methods.SubscribeEvents, params(Json.Obj("Host" -> Json.Str(token))))
+        val carried = decoded.toOption match
+          case Some(ClientRequest.SubscribeEvents(_, _, _, _, _, _, _, headers)) =>
+            headers.entries == Chunk("Authorization" -> token) && !decoded
+              .fold(_.text, _.toString)
+              .contains(
+                "receiver-key"
+              )
+          case _ => false
+        (carried, refused)
+      }.assert { (carried, refused) =>
+        assertTrue(
+          carried,
+          refused == Left(RpcError.InvalidParams("delivery.headers rejects Host")),
+          !refused.fold(_.text, _.toString).contains("receiver-key"),
+        )
+      },
     ),
   )
 end Agents

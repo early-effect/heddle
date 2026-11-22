@@ -1,11 +1,22 @@
 package heddle.mcp.events
 
+import heddle.mcp.protocol.DeliveryHeaders
 import zio.{Chunk, IO, ULayer, ZIO, ZLayer}
 
-/** One signed POST. `body` is the exact UTF-8 the signature covers. */
-final case class WebhookCall(url: String, headers: Chunk[(String, String)], body: String):
+/** One signed POST. `body` is the exact UTF-8 the signature covers. `headers` are the signing headers. `delivery` is
+  * the caller's extra headers. Their values are secrets: `DeliveryHeaders.toString` omits them, and they are not
+  * covered by the signature.
+  */
+final case class WebhookCall(
+    url: String,
+    headers: Chunk[(String, String)],
+    body: String,
+    delivery: DeliveryHeaders = DeliveryHeaders.empty,
+):
   def header(name: String): Option[String] =
-    headers.collectFirst { case (key, value) if key.equalsIgnoreCase(name) => value }
+    def find(pairs: Chunk[(String, String)]): Option[String] =
+      pairs.collectFirst { case (key, value) if key.equalsIgnoreCase(name) => value }
+    find(headers).orElse(find(delivery.entries))
 
 /** The status and body a callback returned. The body is only for the verification echo. */
 final case class DeliveryReply(status: Int, body: String)

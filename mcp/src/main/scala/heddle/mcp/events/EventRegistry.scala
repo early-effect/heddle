@@ -5,12 +5,13 @@ import heddle.mcp.protocol.EventName
 import zio.json.ast.Json
 import zio.{Chunk, UIO, ZIO}
 
-/** Declarations, limits, and the two hooks a server author supplies. The layer and the gateway are built from this, so
-  * a later `withTool` has to carry it or the events disappear.
+/** Declarations, limits, and the hooks a server author supplies. The layer and the gateway are built from this, so a
+  * later `withTool` has to carry it or the events disappear.
   */
 private[heddle] final case class EventRegistry[-R](
     decls: Chunk[ErasedEvent[?, ?]],
     policy: TtlPolicy,
+    verification: VerificationPolicy,
     read: Headers => ZIO[R, Nothing, Option[Principal]],
     allow: (Principal, EventName, Json.Obj) => UIO[Boolean],
 )
@@ -20,6 +21,7 @@ private[heddle] object EventRegistry:
     EventRegistry(
       Chunk.empty,
       TtlPolicy.default,
+      VerificationPolicy.default,
       _ => ZIO.none,
       (_, _, _) => ZIO.succeed(true),
     )

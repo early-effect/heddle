@@ -13,18 +13,20 @@ private[heddle] object EventRuntime:
   def layer(
       decls: Chunk[ErasedEvent[?, ?]],
       policy: TtlPolicy,
+      verification: VerificationPolicy,
       allow: (Principal, EventName, Json.Obj) => UIO[Boolean],
   ): ZLayer[Any, Nothing, Events] =
     ZLayer.fromZIO {
       for
         state <- Ref.make(EventLog.LogState.empty)
         gate  <- Semaphore.make(1)
-      yield Live(decls, policy, allow, state, gate)
+      yield Live(decls, policy, verification, allow, state, gate)
     }
 
   private final class Live(
       decls: Chunk[ErasedEvent[?, ?]],
       policy: TtlPolicy,
+      verification: VerificationPolicy,
       allow: (Principal, EventName, Json.Obj) => UIO[Boolean],
       state: Ref[EventLog.LogState],
       gate: Semaphore,
@@ -65,7 +67,7 @@ private[heddle] object EventRuntime:
             case EventLog.Prelude.Stop(error)           => ZIO.succeed((kept, EventLog.SubscribeStep.Failed(error)))
             case EventLog.Prelude.Ask(event, principal) =>
               allow(principal, event.name, request.arguments).map { ok =>
-                EventLog.granted(kept, policy, event, principal, request, ok, nonce, at)
+                EventLog.granted(kept, policy, verification, event, principal, request, ok, nonce, at)
               }
         }
         decided <- step match

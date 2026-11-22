@@ -1,6 +1,6 @@
 package heddle.mcp.events
 
-import heddle.mcp.protocol.{CallbackFailure, ClientRequest, EventName, RpcError, TtlRequest}
+import heddle.mcp.protocol.{CallbackFailure, ClientRequest, DeliveryHeaders, EventName, RpcError, TtlRequest}
 import zio.json.EncoderOps
 import zio.json.ast.Json
 import zio.{Chunk, Duration}
@@ -40,6 +40,7 @@ private[events] object EventLog:
       url: String,
       host: String,
       secret: Chunk[Byte],
+      delivery: DeliveryHeaders,
       previous: Option[(Chunk[Byte], Instant)],
       name: String,
       arguments: Json.Obj,
@@ -61,6 +62,7 @@ private[events] object EventLog:
       url: String,
       host: String,
       secret: Chunk[Byte],
+      delivery: DeliveryHeaders,
       name: String,
       arguments: Json.Obj,
       argsKey: String,
@@ -124,6 +126,7 @@ private[events] object EventLog:
   def granted(
       state: LogState,
       policy: TtlPolicy,
+      verification: VerificationPolicy,
       event: ErasedEvent[?, ?],
       principal: Principal,
       request: ClientRequest.SubscribeEvents,
@@ -140,7 +143,7 @@ private[events] object EventLog:
           val until   = now.plusMillis(grantMillis(request.ttl, policy))
           findKey(state, principal.value, url.value, event.name.value, argsKey) match
             case Some(existing) =>
-              val next = refresh(state, existing, secret.bytes, until, now, policy)
+              val next = refresh(state, existing, secret.bytes, request.headers, until, now, policy)
               (next, SubscribeStep.Ready(existing.id, truncated = existing.gap, refreshed = true))
             case None if state.subs.length >= policy.maxSubscriptions =>
               (state, SubscribeStep.Failed(RpcError.ResourceExhausted("subscriptions", Some(policy.maxSubscriptions))))
@@ -151,6 +154,7 @@ private[events] object EventLog:
                 url.value,
                 url.host,
                 secret.bytes,
+                request.headers,
                 event.name.value,
                 request.arguments,
                 argsKey,
@@ -160,7 +164,8 @@ private[events] object EventLog:
                 ephemeral = event.replay == Replay.Ephemeral,
                 nonce,
               )
-              if state.verified.contains(verifiedKey(principal.value, url.value)) then
+              val known = state.verified.contains(verifiedKey(principal.value, url.value))
+              if known || verification == VerificationPolicy.Skip then
                 val (inserted, id) = insert(state, pending)
                 (inserted, SubscribeStep.Ready(id, pending.truncated, refreshed = false))
               else
@@ -177,7 +182,7 @@ private[events] object EventLog:
     findKey(state, pending.principal, pending.url, pending.name, pending.argsKey) match
       case Some(existing) =>
         val until = pending.until
-        val next  = refresh(state, existing, pending.secret, until, now, policy).copy(
+        val next  = refresh(state, existing, pending.secret, pending.delivery, until, now, policy).copy(
           verified = state.verified + verifiedKey(pending.principal, pending.url)
         )
         Right((next, existing.id, true))
@@ -396,7 +401,7 @@ private[events] object EventLog:
   def challengeCall(pending: Pending, now: Instant): WebhookCall =
     val body = Json.Obj("type" -> Json.Str("verification"), "challenge" -> Json.Str(pending.nonce)).toJson
     val id   = s"msg_verification_${pending.nonce}"
-    signed(pending.url, id, body, Chunk(pending.secret), Some(subscriptionId(pending)), now)
+    signed(pending.url, id, body, Chunk(pending.secret), Some(subscriptionId(pending)), pending.delivery, now)
 
   def challengeResult(reply: DeliveryReply, nonce: String): Either[RpcError, Unit] =
     if reply.status < 200 || reply.status >= 300 then Left(RpcError.CallbackEndpointError(statusReason(reply.status)))
@@ -450,6 +455,7 @@ private[events] object EventLog:
       state: LogState,
       sub: Sub,
       secret: Chunk[Byte],
+      delivery: DeliveryHeaders,
       until: Instant,
       now: Instant,
       policy: TtlPolicy,
@@ -457,6 +463,7 @@ private[events] object EventLog:
     val grace = now.plusMillis(millis(policy.secretGrace))
     val next  = sub.copy(
       secret = secret,
+      delivery = delivery,
       previous = Some((sub.secret, grace)),
       until = until,
       active = true,
@@ -473,6 +480,7 @@ private[events] object EventLog:
       pending.url,
       pending.host,
       pending.secret,
+      pending.delivery,
       None,
       pending.name,
       pending.arguments,
@@ -657,7 +665,10 @@ private[events] object EventLog:
     sub.inflight.filter(_.busy).map { flight =>
       val secrets =
         Chunk(sub.secret) ++ Chunk.fromIterable(sub.previous.filter((_, until) => until.isAfter(now)).map(_._1))
-      Sending(flight.webhookId, signed(sub.url, flight.webhookId, flight.body, secrets, Some(sub.id), now))
+      Sending(
+        flight.webhookId,
+        signed(sub.url, flight.webhookId, flight.body, secrets, Some(sub.id), sub.delivery, now),
+      )
     }
 
   private def signed(
@@ -666,6 +677,7 @@ private[events] object EventLog:
       body: String,
       secrets: Chunk[Chunk[Byte]],
       subId: Option[String],
+      delivery: DeliveryHeaders,
       now: Instant,
   ): WebhookCall =
     val stamp     = now.getEpochSecond
@@ -676,7 +688,7 @@ private[events] object EventLog:
       "webhook-signature" -> signature,
       "content-type"      -> "application/json",
     ) ++ Chunk.fromIterable(subId.map(id => "X-MCP-Subscription-Id" -> id))
-    WebhookCall(url, headers, body)
+    WebhookCall(url, headers, body, delivery)
 
   private def retry(sub: Sub, flight: Flight, now: Instant, policy: TtlPolicy, reason: String): Sub =
     if abandonDue(flight, policy, now) then failFlight(sub, flight, now, policy, Some(reason), count = true)

@@ -120,7 +120,12 @@ enum WebhookSecretError:
   case Encoding
   case Length
 
-/** Grants and limits, already clamped. `ttlMs: null` is the cap: this store is in memory and does not grant forever. */
+/** Grants and limits, already clamped by `sanitize`.
+  *
+  * `floor`, `default`, and `cap` are the server's TTL. A requested `ttlMs` below the floor is raised, an omitted
+  * `ttlMs` uses `default`, and a longer one, including `null`, is the cap. This store is in memory and does not grant
+  * forever.
+  */
 final case class TtlPolicy(
     default: Duration,
     cap: Duration,
@@ -179,6 +184,20 @@ object TtlPolicy:
   private def millis(duration: Duration): Long =
     Try(duration.toMillis).toOption.filter(_ > 0).getOrElse(1L)
 end TtlPolicy
+
+/** Whether the first subscribe to a `(principal, url)` must pass the nonce challenge. The server chooses this when it
+  * builds the event layer, the same way it chooses `TtlPolicy`.
+  */
+enum VerificationPolicy:
+  /** POST a signed `verification` body and commit only when a `2xx` echoes the nonce. */
+  case Required
+
+  /** Commit the first subscribe with no challenge POST. A hosted receiver answers with its own body. */
+  case Skip
+end VerificationPolicy
+
+object VerificationPolicy:
+  val default: VerificationPolicy = Required
 
 /** Why `Events.publish` refused. Not an exception: the event never entered the ring. */
 enum EmitError:

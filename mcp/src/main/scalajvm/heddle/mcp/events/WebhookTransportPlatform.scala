@@ -87,7 +87,7 @@ private[events] object WebhookTransportPlatform:
     write(socket.getOutputStream, requestBytes(uri, host, port, call))
     readReply(socket.getInputStream)
 
-  private def requestBytes(uri: URI, host: String, port: Int, call: WebhookCall): Array[Byte] =
+  private[events] def requestBytes(uri: URI, host: String, port: Int, call: WebhookCall): Array[Byte] =
     val path       = Option(uri.getRawPath).filter(_.nonEmpty).getOrElse("/")
     val query      = Option(uri.getRawQuery).fold("")(q => s"?$q")
     val hostHeader = if port == 443 then host else if host.contains(':') then s"[$host]:$port" else s"$host:$port"
@@ -99,12 +99,13 @@ private[events] object WebhookTransportPlatform:
     head.append("Accept: application/json\r\n")
     head.append(s"Content-Length: ${body.length}\r\n")
     head.append("Connection: close\r\n")
-    call.headers.foreach { (name, value) =>
+    def writeHeader(name: String, value: String): Unit =
       head.append(name)
       head.append(": ")
       head.append(value)
       head.append("\r\n")
-    }
+    call.headers.foreach { (name, value) => writeHeader(name, value) }
+    call.delivery.entries.foreach { (name, value) => writeHeader(name, value) }
     head.append("\r\n")
     head.toString.getBytes(StandardCharsets.UTF_8) ++ body
 

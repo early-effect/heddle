@@ -6,7 +6,17 @@ import heddle.http.Response
 import heddle.http.header.{AuthScheme, Authorization, Headers}
 import heddle.http.header.Authorization.given
 import heddle.mcp.auth.ProtectedResource
-import heddle.mcp.events.{Delivery, EventGateway, EventRegistry, EventRuntime, Events, Principal, Replay, TtlPolicy}
+import heddle.mcp.events.{
+  Delivery,
+  EventGateway,
+  EventRegistry,
+  EventRuntime,
+  Events,
+  Principal,
+  Replay,
+  TtlPolicy,
+  VerificationPolicy,
+}
 import heddle.mcp.protocol.{
   Era,
   EventName,
@@ -165,15 +175,24 @@ final class Mcp[-R] private (
   def authorize(allow: (Principal, EventName, Json.Obj) => UIO[Boolean]): Mcp[R] =
     new Mcp(server, offer, catalogOps, instructions, path, registry.copy(allow = allow))
 
-  /** Clamps the grant, the cap, and the counters. `ttlMs: null` is the cap, not forever. */
+  /** The server's TTL. `floor` raises a short `ttlMs`, an omitted `ttlMs` uses `default`, and `cap` bounds a longer
+    * one. `ttlMs: null` is the cap, not forever. The other fields of `TtlPolicy` are the attempt and subscription
+    * limits. `sanitize` clamps a policy that cannot be granted.
+    */
   def eventPolicy(policy: TtlPolicy): Mcp[R] =
     new Mcp(server, offer, catalogOps, instructions, path, registry.copy(policy = TtlPolicy.sanitize(policy)))
+
+  /** Challenge policy for the first subscribe to a `(principal, url)`. `Required` is the default. `Skip` commits that
+    * subscribe with no challenge POST.
+    */
+  def verificationPolicy(policy: VerificationPolicy): Mcp[R] =
+    new Mcp(server, offer, catalogOps, instructions, path, registry.copy(verification = policy))
 
   /** The ring and the subscriptions. Build the layer from the final server: it closes over the declarations and the
     * allow hook. It does not provide the clock. The app runtime's clock grants each TTL.
     */
   def eventsLayer: ZLayer[Any, Nothing, Events] =
-    EventRuntime.layer(registry.decls, registry.policy, registry.allow)
+    EventRuntime.layer(registry.decls, registry.policy, registry.verification, registry.allow)
 
   private[mcp] def offered: Offer[R] = offer
 
@@ -412,7 +431,10 @@ object Mcp:
       val base    = mcp.offered
       val gateway = EventGateway.live[R & R1](read)
       val offered = Offer[R & R1](base.tools, base.resources, base.extensions, base.streams, gateway)
-      mcp.rebuild(offered, EventRegistry[R & R1](reg.decls, reg.policy, read, reg.allow))
+      mcp.rebuild(
+        offered,
+        EventRegistry[R & R1](reg.decls, reg.policy, reg.verification, read, reg.allow),
+      )
 
   private[mcp] given plainPrincipal[R](using NotGiven[R <:< Events.Env]): PrincipalWiring[R] with
     def apply[R1](mcp: Mcp[R], read: Headers => ZIO[R1, Nothing, Option[Principal]]): Mcp[R & R1] =
@@ -420,6 +442,6 @@ object Mcp:
       val base = mcp.offered
       mcp.rebuild(
         Offer(base.tools, base.resources, base.extensions, base.streams, EventGateway.none),
-        EventRegistry[R & R1](reg.decls, reg.policy, read, reg.allow),
+        EventRegistry[R & R1](reg.decls, reg.policy, reg.verification, read, reg.allow),
       )
 end Mcp

@@ -66,6 +66,19 @@ object ProtocolGens:
     Gen.long(0, 100_000).map(TtlRequest.Millis(_)),
   )
 
+  private val deliveryHeaders: Gen[Any, DeliveryHeaders] =
+    val name  = Gen.elements("Authorization", "X-Request-Id", "X-Tenant")
+    val value = Gen.stringBounded(0, 24)(Gen.alphaNumericChar)
+    Gen
+      .chunkOfBounded(0, 3)(name <*> value)
+      .map { pairs =>
+        val distinct = pairs.foldLeft(Chunk.empty[(String, String)]) { (acc, pair) =>
+          if acc.exists { case (seen, _) => seen.equalsIgnoreCase(pair._1) } then acc else acc :+ pair
+        }
+        DeliveryHeaders.parse(Json.Obj(distinct.map((key, text) => key -> Json.Str(text))))
+      }
+      .collect { case Right(headers) => headers }
+
   val rpcError: Gen[Any, RpcError] = Gen.oneOf(
     text.map(RpcError.ParseError(_)),
     text.map(RpcError.InvalidRequest(_)),
@@ -139,8 +152,8 @@ object ProtocolGens:
     Gen.option(text).map(ClientRequest.ListEvents(_)),
     (eventName <*> obj() <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> Gen.option(Gen.int(0, 50)))
       .map(ClientRequest.PollEvents(_, _, _, _, _)),
-    (eventName <*> obj() <*> text <*> text <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> ttlRequest)
-      .map(ClientRequest.SubscribeEvents(_, _, _, _, _, _, _)),
+    (eventName <*> obj() <*> text <*> text <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> ttlRequest <*>
+      deliveryHeaders).map(ClientRequest.SubscribeEvents(_, _, _, _, _, _, _, _)),
     (eventName <*> obj() <*> text).map(ClientRequest.UnsubscribeEvents(_, _, _)),
     (eventName <*> obj() <*> Gen.option(text) <*> Gen.option(Gen.long(0, 100_000)) <*> Gen.option(Gen.long(0, 100_000)))
       .map(ClientRequest.StreamEvents(_, _, _, _, _)),

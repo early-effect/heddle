@@ -2,7 +2,16 @@ package heddle.mcp.events
 
 import heddle.*
 import heddle.mcp.Mcp
-import heddle.mcp.protocol.{ClientRequest, EventName, ExtensionId, ProtocolVersion, RequestMeta, RpcError, TtlRequest}
+import heddle.mcp.protocol.{
+  ClientRequest,
+  DeliveryHeaders,
+  EventName,
+  ExtensionId,
+  ProtocolVersion,
+  RequestMeta,
+  RpcError,
+  TtlRequest,
+}
 import heddle.mcp.transport.Http
 import slayer.*
 import zio.*
@@ -31,6 +40,7 @@ object EventsSpec extends ZIOSpecDefault:
     case Build(errors: NonEmptyChunk[heddle.mcp.McpBuildError])
     case Publish(error: EmitError)
     case Id(error: EventIdError)
+    case Headers(message: String)
 
   private def whsec(fill: Byte): String =
     "whsec_" + Base64.getEncoder.encodeToString(Array.fill(32)(fill))
@@ -42,6 +52,7 @@ object EventsSpec extends ZIOSpecDefault:
       replay: Replay = Replay.default,
       modes: NonEmptyChunk[Delivery] = NonEmptyChunk(Delivery.Poll, Delivery.Webhook),
       who: Option[Principal] = Some(Principal("grok")),
+      verification: VerificationPolicy = VerificationPolicy.Required,
   ): Either[NonEmptyChunk[heddle.mcp.McpBuildError], Mcp[Events.Env]] =
     Mcp
       .from(Api("Shop", "1.0.0"))
@@ -50,7 +61,7 @@ object EventsSpec extends ZIOSpecDefault:
           filter.kind == milestone.kind
         )
       }
-      .map(_.principal(_ => ZIO.succeed(who)).eventPolicy(policy))
+      .map(_.principal(_ => ZIO.succeed(who)).eventPolicy(policy).verificationPolicy(verification))
 
   private def pairServer: Either[NonEmptyChunk[heddle.mcp.McpBuildError], Mcp[Events.Env]] =
     Mcp
@@ -98,11 +109,12 @@ object EventsSpec extends ZIOSpecDefault:
       cursor: Option[String] = None,
       ttl: TtlRequest = TtlRequest.Absent,
       maxAgeMs: Option[Long] = None,
+      headers: DeliveryHeaders = DeliveryHeaders.empty,
   ): URIO[Events.Env, Either[RpcError, Json.Obj]] =
     ZIO.serviceWithZIO[Events](
       _.subscribe(
         who,
-        ClientRequest.SubscribeEvents(EventName(Name), arguments, url, secret, cursor, maxAgeMs, ttl),
+        ClientRequest.SubscribeEvents(EventName(Name), arguments, url, secret, cursor, maxAgeMs, ttl, headers),
       )
     )
 
@@ -248,6 +260,7 @@ object EventsSpec extends ZIOSpecDefault:
                     None,
                     None,
                     TtlRequest.Absent,
+                    DeliveryHeaders.empty,
                   ),
                 )
               )
@@ -292,6 +305,101 @@ object EventsSpec extends ZIOSpecDefault:
           }
         yield result
       },
+      test("caller headers ride every post, and a refresh replaces them without a new subscription") {
+        val firstToken  = "Bearer receiver-one"
+        val secondToken = "Bearer receiver-two"
+        for
+          first <- ZIO
+            .fromEither(DeliveryHeaders.parse(Json.Obj("Authorization" -> Json.Str(firstToken))))
+            .mapError(error => Unexpected.Headers(error.text))
+          second <- ZIO
+            .fromEither(DeliveryHeaders.parse(Json.Obj("Authorization" -> Json.Str(secondToken))))
+            .mapError(error => Unexpected.Headers(error.text))
+          mcp    <- ZIO.fromEither(server()).mapError(Unexpected.Build(_))
+          result <- run(mcp) {
+            for
+              calls  <- Ref.make(Chunk.empty[WebhookCall])
+              _      <- echoing(calls)((_, _) => DeliveryReply(200, ""))
+              opened <- subscribe(Some(Principal("grok")), headers = first)
+              _      <- emit("e1", "edit")
+              mid    <- calls.get
+              again  <- subscribe(Some(Principal("grok")), headers = second)
+              _      <- emit("e2", "edit")
+              seen   <- calls.get
+            yield
+              val challenge   = mid.find(verification)
+              val firstEvent  = mid.find(_.body.contains("\"eventId\":\"e1\""))
+              val secondEvent = seen.find(_.body.contains("\"eventId\":\"e2\""))
+              val printed     =
+                opened.fold(_.text, _.toJson) + again.fold(_.text, _.toJson) + seen.map(_.toString).mkString
+              assertTrue(
+                opened.toOption.flatMap(text(_, "id")) == again.toOption.flatMap(text(_, "id")),
+                challenge.exists(_.header("Authorization").contains(firstToken)),
+                firstEvent.exists(_.header("Authorization").contains(firstToken)),
+                secondEvent.exists(_.header("Authorization").contains(secondToken)),
+                seen.count(verification) == 1,
+                !printed.contains("receiver-one"),
+                !printed.contains("receiver-two"),
+              )
+          }
+        yield result
+      },
+      test("skip verification commits the first subscribe without a challenge") {
+        val token = "Bearer receiver-key"
+        for
+          headers <- ZIO
+            .fromEither(DeliveryHeaders.parse(Json.Obj("Authorization" -> Json.Str(token))))
+            .mapError(error => Unexpected.Headers(error.text))
+          mcp    <- ZIO.fromEither(server(verification = VerificationPolicy.Skip)).mapError(Unexpected.Build(_))
+          result <- run(mcp) {
+            for
+              calls  <- Ref.make(Chunk.empty[WebhookCall])
+              _      <- echoing(calls)((_, _) => DeliveryReply(200, "not-the-nonce"))
+              opened <- subscribe(Some(Principal("grok")), headers = headers)
+              before <- calls.get
+              _      <- emit("e1", "edit")
+              seen   <- calls.get
+            yield
+              val eventPost = seen.find(_.body.contains("\"eventId\":\"e1\""))
+              assertTrue(
+                opened.isRight,
+                before.isEmpty,
+                seen.length == 1,
+                eventPost.exists(call => !verification(call) && call.header("Authorization").contains(token)),
+                !opened.fold(_.text, _.toJson).contains("receiver-key"),
+                !seen.map(_.toString).mkString.contains("receiver-key"),
+              )
+          }
+        yield result
+      },
+      test("the https request carries caller headers and still owns hop-by-hop fields") {
+        val token = "Bearer receiver-key"
+        for headers <- ZIO
+            .fromEither(DeliveryHeaders.parse(Json.Obj("Authorization" -> Json.Str(token))))
+            .mapError(error => Unexpected.Headers(error.text))
+        yield
+          val call = WebhookCall(
+            "https://hooks.example/events",
+            Chunk(
+              "content-type"      -> "application/json",
+              "webhook-id"        -> "msg_1",
+              "webhook-timestamp" -> "1",
+              "webhook-signature" -> "v1,abc",
+            ),
+            "{}",
+            headers,
+          )
+          val bytes = WebhookTransportPlatform.requestBytes(new java.net.URI(call.url), "hooks.example", 443, call)
+          val lines = new String(bytes, java.nio.charset.StandardCharsets.UTF_8).split("\r\n").toList
+          assertTrue(
+            lines.exists(_ == s"Authorization: $token"),
+            lines.count(_.toLowerCase.startsWith("host:")) == 1,
+            lines.exists(_ == "Host: hooks.example"),
+            lines.exists(_.startsWith("Content-Length:")),
+            lines.exists(_ == "Connection: close"),
+            !call.toString.contains("receiver-key"),
+          )
+      },
       test("two principals on one url get different subscriptions") {
         for
           mcp    <- ZIO.fromEither(server()).mapError(Unexpected.Build(_))
@@ -331,6 +439,7 @@ object EventsSpec extends ZIOSpecDefault:
                     None,
                     None,
                     TtlRequest.Absent,
+                    DeliveryHeaders.empty,
                   ),
                 )
               )
@@ -345,6 +454,7 @@ object EventsSpec extends ZIOSpecDefault:
                     None,
                     None,
                     TtlRequest.Absent,
+                    DeliveryHeaders.empty,
                   ),
                 )
               )
@@ -402,6 +512,35 @@ object EventsSpec extends ZIOSpecDefault:
               gone == Left(RpcError.NotFound(Some("subscription"))),
               occurrences(seen).isEmpty,
             )
+          }
+        yield result
+      },
+      test("floor, default, and cap each set the grant") {
+        val policy = TtlPolicy.sanitize(
+          TtlPolicy.default.copy(floor = 2.minutes, default = 10.minutes, cap = 30.minutes)
+        )
+        for
+          mcp    <- ZIO.fromEither(server(policy)).mapError(Unexpected.Build(_))
+          result <- run(mcp) {
+            for
+              calls  <- Ref.make(Chunk.empty[WebhookCall])
+              _      <- echoing(calls)((_, _) => DeliveryReply(200, ""))
+              at     <- Clock.instant
+              raised <- subscribe(Some(Principal("grok")), arguments = args("floor"), ttl = TtlRequest.Millis(1))
+              plain  <- subscribe(Some(Principal("grok")), arguments = args("default"))
+              capped <- subscribe(
+                Some(Principal("grok")),
+                arguments = args("cap"),
+                ttl = TtlRequest.Millis(60L * 60L * 1000L),
+              )
+            yield
+              def grant(result: Either[RpcError, Json.Obj]): Option[String] =
+                result.toOption.flatMap(text(_, "refreshBefore"))
+              assertTrue(
+                grant(raised).contains(at.plusMillis(2.minutes.toMillis).toString),
+                grant(plain).contains(at.plusMillis(10.minutes.toMillis).toString),
+                grant(capped).contains(at.plusMillis(30.minutes.toMillis).toString),
+              )
           }
         yield result
       },
