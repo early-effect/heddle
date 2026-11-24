@@ -16,6 +16,7 @@ object Catalog:
   val otelSdk          = dep"io.opentelemetry:opentelemetry-sdk:1.68.0"
   val otelSdkTesting   = dep"io.opentelemetry:opentelemetry-sdk-testing:1.68.0"
   val scalaJavaTime    = dep"io.github.cquiroz::scala-java-time:2.10.0"
+  val tastyInspector   = dep"org.scala-lang::scala3-tasty-inspector:3.10.1"
   val specular         = dep"rocks.earlyeffect::specular-core:0.21.5"
   val specularZioTest  = specular.module("specular-zio-test")
   val specularTheme    = specular.module("early-effect-docs-theme")

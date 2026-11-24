@@ -21,6 +21,7 @@ object build extends HistosBuild:
     val nativeNightly = NativeVersion("0.5.13-20261122-fa4437d-SNAPSHOT")
     val heddle        = core(module("heddle", Jvm, Js, Native)(scala3))
       .artifact(artifact"heddle")
+      .description(pom"HTTP as an effect. Loom under the floor.")
       .libraryDependencies(neotype, scalaJavaTime.on(Js, Native))
       .jsVersion(JsVersion("1.23.0"))
       .jsModule(JsModuleKind.CommonJS)
@@ -30,6 +31,7 @@ object build extends HistosBuild:
       .link(NativeLibrary.Ssl, NativeLibrary.Crypto)
     val brotli = core(module("brotli", Jvm, Js, Native)(scala3))
       .artifact(artifact"heddle-brotli")
+      .description(pom"RFC 7932 brotli encoder for heddle")
       .dependsOn(heddle)
       .testDependsOn(heddle)
       .libraryDependencies(scalaJavaTime.on(Js, Native))
@@ -42,6 +44,7 @@ object build extends HistosBuild:
       .link(NativeLibrary.Ssl, NativeLibrary.Crypto)
     val oauth = core(module("oauth", Jvm, Js)(scala3))
       .artifact(artifact"heddle-oauth")
+      .description(pom"OAuth2 / OIDC client, resource server, and provider for heddle")
       .dependsOn(heddle)
       .testDependsOn(heddle)
       .libraryDependencies(scalaJavaTime.on(Js))
@@ -52,6 +55,7 @@ object build extends HistosBuild:
     val mcpProtocol = core(module("mcpProtocol", Jvm, Js, Native)(scala3))
       .in(path"mcp-protocol")
       .artifact(artifact"heddle-mcp-protocol")
+      .description(pom"MCP wire types and codecs: JSON-RPC, tools, resources, capabilities")
       .libraryDependencies(scalaJavaTime.on(Js, Native))
       .jsVersion(JsVersion("1.23.0"))
       .nativeVersion(nativeNightly)
@@ -59,6 +63,7 @@ object build extends HistosBuild:
       .threadStack(ThreadStack("8m"))
     val mcp = core(module("mcp", Jvm, Js, Native)(scala3))
       .artifact(artifact"heddle-mcp")
+      .description(pom"MCP 2026-07-28 server for heddle endpoints")
       .dependsOn(heddle, mcpProtocol)
       .testDependsOn(heddle, mcpProtocol)
       .libraryDependencies(scalaJavaTime.on(Js, Native))
@@ -72,6 +77,7 @@ object build extends HistosBuild:
     val mcpApps = tested(module("mcpApps", Jvm, Js, Native)(scala3))
       .in(path"mcp-apps")
       .artifact(artifact"heddle-mcp-apps")
+      .description(pom"MCP Apps (SEP-1865): sheds of typed grants, ui:// resources, and the policy a host clamps")
       .dependsOn(mcp)
       .testDependsOn(mcp)
       .libraryDependencies(scalaJavaTime.on(Js, Native), ascentDomFacade.on(Js))
@@ -90,6 +96,7 @@ object build extends HistosBuild:
     val mcpAppsHost = tested(module("mcpAppsHost", Jvm, Js)(scala3))
       .in(path"mcp-apps-host")
       .artifact(artifact"heddle-mcp-apps-host")
+      .description(pom"MCP Apps host kit: effective policy, CSP, hash pins, audit, consent, and the view pipeline")
       .dependsOn(mcpApps)
       .testDependsOn(mcpApps)
       .libraryDependencies(scalaJavaTime.on(Js))
@@ -98,10 +105,12 @@ object build extends HistosBuild:
     val mcpAppsFrame = flagged(module("mcpAppsFrame", Js)(scala3))
       .in(path"mcp-apps-frame")
       .artifact(artifact"heddle-mcp-apps-frame")
+      .description(pom"MCP Apps host frame: the relay iframe and its handshake, in the host page")
       .dependsOn(mcpAppsHost)
       .jsVersion(JsVersion("1.23.0"))
     val opentelemetry = core(module("opentelemetry", Jvm)(scala3))
       .artifact(artifact"heddle-opentelemetry")
+      .description(pom"OpenTelemetry spans for heddle servers and clients")
       .dependsOn(heddle)
       .testDependsOn(heddle)
       .libraryDependencies(zioOpentelemetry)
@@ -196,6 +205,7 @@ object build extends HistosBuild:
       .scalac(ScalacFlag.Deprecation, ScalacFlag.UnusedAll, ScalacFlag.Feature, ScalacFlag.ImplicitConversions)
       .libraryDependencies(specular.on(Js), mermoidAscent.on(Js), ascentJs.on(Js), ascentCss, zio)
       .testDependencies(
+        tastyInspector.on(Jvm),
         specularZioTest.on(Jvm),
         specularTheme.on(Jvm),
         mermoidAscent.on(Jvm),
@@ -216,11 +226,26 @@ object build extends HistosBuild:
         PluginSources.module(buildTooling),
         PluginSources.ship(dep"rocks.earlyeffect::specular-histos:0.0.3-SNAPSHOT"),
       )
-      .license(License(license"Apache-2.0", url"https://www.apache.org/licenses/LICENSE-2.0.txt"))
-      .developer(Developer(developer"russwyte", pom"Russ White"))
-      .scm(Scm(url"https://github.com/early-effect/heddle", connection"scm:git@github.com:early-effect/heddle.git"))
+      .organizationName(pom"Early Effect")
+      .organizationHomepage(MetadataUri("https://www.earlyeffect.rocks"))
+      .versionScheme(VersionScheme.EarlySemver)
+      .license(License(license"Apache-2.0", MetadataUri("http://www.apache.org/licenses/LICENSE-2.0.txt")))
+      .developer(
+        Developer(
+          developer"russwyte",
+          pom"Russ White",
+          histos.supply.Email("356303+russwyte@users.noreply.github.com"),
+          MetadataUri("https://github.com/russwyte"),
+        )
+      )
+      .scm(
+        Scm(
+          MetadataUri("https://github.com/early-effect/heddle"),
+          connection"scm:git@github.com:early-effect/heddle.git",
+        )
+      )
       .description(pom"HTTP as an effect. Loom under the floor.")
-      .url(url"https://github.com/early-effect/heddle")
+      .url(MetadataUri("https://github.com/early-effect/heddle"))
       .runnerTools(
         RunnerTools(
           Some(NodeFloor(25)),
