@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Histos build outputs
+/.histos/
+
 # sbt
 .sbt/
 dist/*

@@ -90,6 +90,15 @@ startup, graph, and parity gates pass. They are not the operational command refe
 or hand-edit generated workflows. After that gate, the owning integration step runs `./histos workflow --update`
 and commits its generated outputs, then proves `./histos workflow --check`.
 
+`releases` records evidence for the graph's current ship line, not historical versions. Its checked-empty
+registry means `heddle` 0.16.0 is unreleased; the latest historical release is `v0.15.2`. Do not add
+`heddle matches` or `heddle unknown` merely because 0.15.2 exists: those entries would mark 0.16.0 released.
+Advance this evidence when the current line releases or the graph moves to another line.
+
+Workflow generation pins `early-effect/histos/.github/actions/setup` to the executing launcher's embedded
+commit. Generate with a published SDK whose stamp identifies the approved source and whose setup action
+exists at that commit. A locally assembled jar retaining an older stamp does not satisfy that gate.
+
 Publishing is CI-only. Histos generates snapshot and release workflows for the ship. Snapshots follow
 successful default-branch CI, eligible `snapshots`-labeled PR CI, or dispatch. Release dispatch is not authorized
 until the user confirms the feature is complete. Do not cut non-snapshot tags, dispatch releases, publish,
