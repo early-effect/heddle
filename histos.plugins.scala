@@ -14,6 +14,6 @@ object plugins extends HistosPlugins:
 
   def sources: PluginCatalog = PluginCatalog(
     PluginSources.module(buildTooling),
-    PluginSources.ship(dep"rocks.earlyeffect::specular-histos:0.0.3-SNAPSHOT").link(LinkStrategy.BinaryOrSource),
+    PluginSources.ship(dep"rocks.earlyeffect::specular-histos:0.1.0-SNAPSHOT").link(LinkStrategy.BinaryOrSource),
   )
 end plugins

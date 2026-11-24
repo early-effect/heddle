@@ -228,7 +228,7 @@ object build extends HistosBuild:
       .organization(organization"rocks.earlyeffect")
       .plugins(
         PluginSources.module(buildTooling),
-        PluginSources.ship(dep"rocks.earlyeffect::specular-histos:0.0.3-SNAPSHOT"),
+        PluginSources.ship(dep"rocks.earlyeffect::specular-histos:0.1.0-SNAPSHOT"),
       )
       .organizationName(pom"Early Effect")
       .organizationHomepage(MetadataUri("https://www.earlyeffect.rocks"))
