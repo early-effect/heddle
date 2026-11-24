@@ -219,5 +219,5 @@ object ProtocolLawsSpec extends ZIOSpecDefault:
           assertTrue(ExtensionId.from(s"$p/$bad$n") == Left(ExtensionIdError.BadCharacter(bad, p.length + 1)))
         },
     ),
-  ) @@ TestAspect.timeout(60.seconds)
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds)
 end ProtocolLawsSpec
