@@ -1,8 +1,9 @@
 package heddle
 
-import heddle.internal.node.{Buffers, Fs, NodeTls, TlsOptions, TlsSocket}
+import heddle.internal.node.{Buffers, Fs, NodePath, NodeTls, StatOptions, TlsOptions, TlsSocket}
 import heddle.server.{BodyBytes, Files, Port, Tls}
 import scala.scalajs.js
+import scala.scalajs.js.annotation.JSImport
 import zio.*
 import zio.test.*
 
@@ -71,11 +72,26 @@ object JsLiveSpec extends ZIOSpecDefault:
         }
       ,
       test("Files.fromPath serves a Node file"):
-        val path = "target/heddle-js-files-test.txt"
-        val _    = Fs.writeFileSync(path, Buffers.toU8(Chunk.fromArray("hello-js".getBytes)))
-        Files.fromPath(path).map { res =>
-          assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "hello-js")
-        }
+        ZIO.scoped:
+          for
+            file <- temporaryFile
+            res  <- Files.fromPath(file.path)
+          yield assertTrue(res.status == Status.Ok, res.body.text.is(_.some) == "hello-js")
+      ,
+      test("interrupting the Node file fixture removes its directory"):
+        ZIO.scoped:
+          for
+            ready <- Promise.make[NodeFixtureError, NodeFile]
+            fiber <- ZIO
+              .scoped(temporaryFile.tap(file => ready.succeed(file)).flatMap(_ => ZIO.never))
+              .tapErrorCause(cause => ready.failCause(cause).unit)
+              .forkScoped
+            file   <- ready.await
+            exit   <- fiber.interrupt
+            exists <- ZIO
+              .attempt(Fs.statSync(file.directory, StatOptions(throwIfNoEntry = false)).toOption.nonEmpty)
+              .mapError(NodeFixtureError.Inspect(file.directory, _))
+          yield assertTrue(exit.isInterrupted, !exists)
       ,
       test("HTTPS Server.install answers HTTP/1.1"):
         val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -94,6 +110,48 @@ object JsLiveSpec extends ZIOSpecDefault:
     ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds) @@ TestAspect.withLiveClock
 
   private val local: Server.Config = Server.Config.default.copy(host = "127.0.0.1", port = Port(0))
+
+  private final case class NodeFile(directory: String, path: String)
+
+  private enum NodeFixtureError:
+    case Create(cause: Throwable)
+    case Write(path: String, cause: Throwable)
+    case Remove(path: String, cause: Throwable)
+    case Inspect(path: String, cause: Throwable)
+
+  private def temporaryFile: ZIO[Scope, NodeFixtureError, NodeFile] =
+    ZIO
+      .acquireRelease(
+        ZIO
+          .attempt(NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "heddle-js-files-")))
+          .mapError(NodeFixtureError.Create(_))
+      )(directory =>
+        ZIO
+          .attempt(NodeFs.rmSync(directory, RmRecursive()))
+          .mapError(NodeFixtureError.Remove(directory, _))
+          .catchAll(error => ZIO.logWarning(s"Node file fixture cleanup failed: $error"))
+      )
+      .flatMap: directory =>
+        val path = NodePath.join(directory, "fixture.txt")
+        ZIO
+          .attempt(Fs.writeFileSync(path, Buffers.toU8(Chunk.fromArray("hello-js".getBytes))))
+          .mapError(NodeFixtureError.Write(path, _))
+          .as(NodeFile(directory, path))
+
+  @js.native
+  @JSImport("node:fs", JSImport.Namespace)
+  private object NodeFs extends js.Object:
+    def mkdtempSync(prefix: String): String            = js.native
+    def rmSync(path: String, options: js.Object): Unit = js.native
+
+  @js.native
+  @JSImport("node:os", JSImport.Namespace)
+  private object NodeOs extends js.Object:
+    def tmpdir(): String = js.native
+
+  private class RmRecursive extends js.Object:
+    val recursive: Boolean = true
+    val force: Boolean     = true
 
   private def tlsGet(port: Int, path: String): Task[String] =
     ZIO
