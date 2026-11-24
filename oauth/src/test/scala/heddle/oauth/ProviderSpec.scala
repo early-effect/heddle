@@ -121,7 +121,7 @@ object ProviderSpec extends ZIOSpecDefault:
           !Passwords.check("ada", "sha256:abc"),
           !Passwords.check("ada", "pbkdf2-sha256$0$AAAA$AAAA"),
         ),
-    ).provideShared(TestKeys.signing("op")) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@
+    ).provideShared(TestKeys.providerSigning) @@ TestAspect.sequential @@ TestAspect.timeout(60.seconds) @@
       TestAspect.withLiveClock
 
   private def endpoints(base: String) = OAuthEndpoints(s"$base/authorize", s"$base/token", Some(s"$base/userinfo"))
