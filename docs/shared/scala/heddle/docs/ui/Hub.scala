@@ -502,9 +502,9 @@ object Hub:
   def modeButton(mode: Source[String], label: String): UI[Any] =
     choiceButton(mode, label, label)
 
-  def choiceButton[A](current: Source[A], value: A, label: String)(using Eq[A]): UI[Any] =
+  def choiceButton[A: Eq](current: Source[A], value: A, label: String): UI[Any] =
     E.button(
-      current.map(now => if now == value then Set[CssClass](BtnOn) else Set[CssClass](Btn)),
+      current.map(now => if summon[Eq[A]].eqv(now, value) then Set[CssClass](BtnOn) else Set[CssClass](Btn)),
       Events.onClick(_ => current.set(value)),
       label,
     )

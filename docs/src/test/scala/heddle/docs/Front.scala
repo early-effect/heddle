@@ -11,7 +11,7 @@ import zio.test.*
 /** Install coordinate. Judge the raw build version. Do not trust `displayVersion` after `-ci` was stripped. */
 object DocsVersion:
   /** Last published tag. */
-  val published = "0.11.0"
+  val published = "0.15.2"
 
   /** A dynver distance (`-ci`, `+`, `SNAPSHOT`) is the next line. Anything else is advertised as written. */
   def advertise(raw: String): String =
@@ -19,9 +19,8 @@ object DocsVersion:
     val distance = trimmed.contains("-ci") || trimmed.contains("+") || trimmed.contains("SNAPSHOT")
     if trimmed.nonEmpty && !distance then trimmed else published
 
-  /** `specular.meta.version` is the raw build version. Absent in unit tests, so those use [[published]]. */
-  def version: String =
-    sys.props.get("specular.meta.version").map(advertise).getOrElse(published)
+  /** Installation examples name the released coordinate, not the open ship line. */
+  def version: String = published
 end DocsVersion
 
 /** The site front. Specular still emits a summary index; [[BuildSite]] copies this page over it. */
@@ -129,12 +128,12 @@ ${coordinate}
           !version.contains("+"),
           !coordinate.contains("-ci"),
           !coordinate.contains("SNAPSHOT"),
-          coordinate.contains("0.11.0"),
-          !coordinate.contains("0.11.1"),
-          DocsVersion.advertise("0.11.1-ci") == DocsVersion.published,
-          DocsVersion.advertise("0.11.0+7-abcdef") == DocsVersion.published,
-          DocsVersion.advertise("0.11.1-SNAPSHOT") == DocsVersion.published,
-          DocsVersion.advertise("0.11.0") == "0.11.0",
+          coordinate.contains("0.15.2"),
+          !coordinate.contains("0.16.0"),
+          DocsVersion.advertise("0.16.0-ci") == DocsVersion.published,
+          DocsVersion.advertise("0.15.2+7-abcdef") == DocsVersion.published,
+          DocsVersion.advertise("0.16.0-SNAPSHOT") == DocsVersion.published,
+          DocsVersion.advertise("0.15.2") == "0.15.2",
         )
       },
       test("sequence diagram fits a phone column") {

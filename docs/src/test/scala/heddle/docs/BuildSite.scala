@@ -5,10 +5,30 @@ import specular.*
 import specular.site.*
 import zio.*
 
-import java.nio.file.{Files, Path, Paths, StandardCopyOption}
+import java.nio.file.{Files, Path, StandardCopyOption}
 
-/** Docs-as-tests site builder (Test classpath; `docs/specularSite`). */
-object BuildSite extends DocsSite:
+/** Validates source configuration before the site evaluates examples. */
+object BuildSite extends ZIOAppDefault:
+  def pages: Vector[DocPage] = HeddleSite.pages
+
+  private[docs] def afterBuild(out: Path, result: SiteOutput): IO[SiteError, Unit] = HeddleSite.afterBuild(out, result)
+
+  def build: IO[SiteError, SiteOutput] =
+    for
+      root   <- RepoRoot.load.mapError(error => SiteError.Settings(Config.Error.InvalidData(message = error.toString)))
+      result <- ZIO.configProviderWith: provider =>
+        val sources = ConfigProvider.fromMap(Map("specular.source.root" -> root.path.toString))
+        ZIO.withConfigProvider(sources.orElse(provider))(HeddleSite.build)
+    yield result
+
+  def run = build.foldZIO(
+    error => Console.printLineError(s"specular: ${error.message}").ignore.as(ExitCode.failure),
+    result => Console.printLine(s"Wrote ${result.pages.mkString(", ")}").ignore.as(ExitCode.success),
+  )
+end BuildSite
+
+/** Docs-as-tests site builder on the docs JVM Test classpath. */
+private object HeddleSite extends DocsSite:
 
   @navLabel("Start")
   final case class Start(why: WhyHeddle.type, started: GettingStarted.type, hosts: ThreeHosts.type)
@@ -94,39 +114,11 @@ object BuildSite extends DocsSite:
       ZIO.attemptBlockingIO(Files.copy(front, index, StandardCopyOption.REPLACE_EXISTING)).mapError { err =>
         SiteError.WriteFailed(index, err)
       }
-    promote *> EarlyEffectTheme.writeLogo(out) *> copyClientBundle(out)
-
-  private def copyClientBundle(out: Path): IO[SiteError, Unit] =
-    val dest = out.resolve("assets/client.js")
-    findClientJs match
-      case None =>
-        ZIO.fail(SiteError.MissingFile(clientJsMarker))
-      case Some(src) =>
-        ZIO
-          .attemptBlockingIO {
-            Files.createDirectories(dest.getParent)
-            Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING)
-            ()
-          }
-          .mapError(err => SiteError.WriteFailed(dest, err))
-
-  private def clientJsMarker: Path =
-    repoRoot.resolve("target/specular-client-js.path")
-
-  private def findClientJs: Option[Path] =
-    val marker = clientJsMarker
-    if !Files.isRegularFile(marker) then None
-    else
-      val line = Files.readString(marker).trim
-      if line.isEmpty then None
-      else
-        val path = Paths.get(line)
-        Option.when(Files.isRegularFile(path))(path)
-
-  private def repoRoot: Path =
-    val here = Paths.get("").toAbsolutePath
-    Iterator
-      .unfold(Option(here))(_.map(p => (p, Option(p.getParent))))
-      .find(p => Files.exists(p.resolve("build.sbt")))
-      .getOrElse(here)
-end BuildSite
+    val client = out.resolve("assets/client.js")
+    for
+      exists <- ZIO.attemptBlockingIO(Files.isRegularFile(client)).mapError(SiteError.FileUnreadable(client, _))
+      _      <- ZIO.fail(SiteError.MissingFile(client)).unless(exists)
+      _      <- promote
+      _      <- EarlyEffectTheme.writeLogo(out)
+    yield ()
+end HeddleSite
