@@ -187,24 +187,6 @@ object build extends HistosBuild:
         ScopedRoot(RepoPath("docs/shared/scala"), SourceSet.Test, PlatformSelection.only(Jvm), RootKind.Sources),
         ScopedRoot(RepoPath("docs/shared/scala"), SourceSet.Main, PlatformSelection.only(Js), RootKind.Sources),
         ScopedRoot(RepoPath("docs-js/src/main/scala"), SourceSet.Main, PlatformSelection.only(Js), RootKind.Sources),
-        ScopedRoot(
-          RepoPath("docs/src/main/resources"),
-          SourceSet.Main,
-          PlatformSelection.only(Jvm),
-          RootKind.Resources,
-        ),
-        ScopedRoot(
-          RepoPath("docs/src/test/resources"),
-          SourceSet.Test,
-          PlatformSelection.only(Jvm),
-          RootKind.Resources,
-        ),
-        ScopedRoot(
-          RepoPath("docs-js/src/main/resources"),
-          SourceSet.Main,
-          PlatformSelection.only(Js),
-          RootKind.Resources,
-        ),
       )
       .scalac(ScalacFlag.Deprecation, ScalacFlag.UnusedAll, ScalacFlag.Feature, ScalacFlag.ImplicitConversions)
       .libraryDependencies(specular.on(Js), mermoidAscent.on(Js), ascentJs.on(Js), ascentCss, zio)
