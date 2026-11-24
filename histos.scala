@@ -309,5 +309,5 @@ object build extends HistosBuild:
     .displayVersion("0.15.2")
     .linkClient
     .preview
-    .ci(SiteCi.Publish(SitePublish.Automatic))
+    .ci(SiteCi.Publish(SitePublish.Both))
 end build
