@@ -61,10 +61,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@6c08c6252fde55582633fa31e879c29565a92e6a # 6c08c6252fde55582633fa31e879c29565a92e6a
+      - uses: early-effect/histos/.github/actions/setup@8613e13eb3fabc2eb6995ffb774de1b6dfd7a209 # 8613e13eb3fabc2eb6995ffb774de1b6dfd7a209
       - run: ./histos doctor --preflight snapshots
       - run: "./histos compile heddle brotli oauth mcpProtocol mcp mcpApps mcpAppsHost opentelemetry --platform jvm"
-      - run: ./histos doctor release
+      - run: ./histos doctor --area release
       - id: authorized
         env:
           GH_TOKEN: ${{ github.token }}
