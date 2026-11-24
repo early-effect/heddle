@@ -84,11 +84,16 @@ The Histos graph declares formatting, doc checks, JVM suites, dependency/securit
 ship versions/compatibility, JS and Native verify jobs, `browsers`, `browser-check`, and the Specular `docs`
 job. Specular builds the site and links its JS client; use its watched preview, not a static server over
 `target/site`. Browser CI uses the `RunnerTools` Playwright pin and Chekhov's versioned CLI cache.
+Generated `ci.yml` verifies the graph and deploys Pages on a verified default-branch push;
+`histos-pages.yml` provides manual Pages dispatch. `histos-snapshots.yml` handles eligible snapshots,
+`histos-release.yml` is release dispatch, and `histos-deps.yml` is dependency maintenance.
 
-During migration, retained sbt/project/zipx files and generated setup/workflows remain until the assembled
-startup, graph, and parity gates pass. They are not the operational command reference. Do not delete them
-or hand-edit generated workflows. After that gate, the owning integration step runs `./histos workflow --update`
-and commits its generated outputs, then proves `./histos workflow --check`.
+Histos is the only operational build. The sbt/ZIPX graph, catalog, plugins, setup action, and workflows
+were retired after assembled parity and actual artifact inspection. Consumer sbt snippets and historical
+plans are not operational build files and remain valid. Keep `.jvmopts`: the Histos launcher reads it.
+Run `./histos workflow --update` after graph or plugin-job changes, commit the generated files, and prove
+`./histos workflow --check`. Never hand-edit generated YAML. Install repository hooks with
+`scripts/install-git-hooks`; pre-commit uses the same `./histos fmt --check` gate as CI.
 
 `releases` records evidence for the graph's current ship line, not historical versions. Its checked-empty
 registry means `heddle` 0.16.0 is unreleased; the latest historical release is `v0.15.2`. Do not add

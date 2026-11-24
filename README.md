@@ -101,12 +101,17 @@ examples, benchmark mains, documentation, generated-source producers, and verifi
 The source build plugin stages the relay into host Main, browser view/host JS assets into browser Test,
 and the transcript into docs JVM Test and JS Main. CI includes JVM tests, JS and Native verification,
 `browsers`, `browser-check`, formatting, doc/workflow/security checks, ship compatibility, and Specular docs.
-The retained sbt/zipx setup and generated workflows stay until the migration's assembled parity gate passes.
-Workflow regeneration belongs to that final gate, not a manual YAML edit.
+Histos is the repository's only build. Regenerate CI from the typed graph with `./histos workflow --update`,
+then prove `./histos workflow --check` and commit the generated files. Do not hand-edit generated YAML.
+The setup action is pinned to the published SDK's source commit; `build.properties` selects the toolchain.
+The repository's `.jvmopts` still supplies launcher JVM options. Install the repository hooks with
+`scripts/install-git-hooks` to use the same `./histos fmt --check` gate as CI.
 
 Publishing is CI-only. Snapshot integration precedes completion, through successful default-branch CI,
-eligible `snapshots`-labeled PR CI, or snapshot dispatch. A non-snapshot release waits for explicit feature
-completion approval. Nothing in a local build authorizes publication or merging.
+eligible `snapshots`-labeled same-repository PR CI, or snapshot dispatch. Fork PRs cannot enter the
+credential-bearing snapshot job. Docs deploy after verified default-branch CI; `histos-pages.yml` also
+provides manual Pages dispatch. A non-snapshot release waits for explicit feature completion approval.
+Nothing in a local build authorizes publication or merging.
 
 ### Manual benchmark and profile scripts
 

@@ -4,22 +4,13 @@
 # Histos build outputs
 /.histos/
 
-# sbt
-.sbt/
+# Build outputs
 dist/*
 target/
 out/
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
-project/local-plugins.sbt
 .history
 .ensime
 .ensime_cache/
-.sbt-scripted/
-local.sbt
-build.sbt.semanticdb
 
 # Bloop
 .bsp

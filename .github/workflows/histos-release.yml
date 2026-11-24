@@ -1,0 +1,27 @@
+name: release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-heddle:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: early-effect/histos/.github/actions/setup@6c08c6252fde55582633fa31e879c29565a92e6a # 6c08c6252fde55582633fa31e879c29565a92e6a
+      - run: ./histos doctor --preflight release-heddle
+      - run: "./histos publish release heddle"
+        env:
+          HISTOS_SESSION: release
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_KEY_HEX: ${{ secrets.PGP_KEY_HEX }}
