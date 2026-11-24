@@ -32,7 +32,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@8613e13eb3fabc2eb6995ffb774de1b6dfd7a209 # 8613e13eb3fabc2eb6995ffb774de1b6dfd7a209
+      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
       - run: ./histos doctor --preflight histos-deps
         env:
           GH_TOKEN: ${{ github.token }}
