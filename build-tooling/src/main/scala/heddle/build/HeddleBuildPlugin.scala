@@ -6,20 +6,8 @@ import zio.*
 trait RelayBrowserTasks:
   def run(task: TaskSpec, request: RunRequest): ZIO[Scope & PluginScopes, PluginRunError, PluginOutput]
 
-object RelayBrowserTasks:
-  /** B1 replaces this registration with the verified relay/browser implementation. */
-  val pending: ULayer[RelayBrowserTasks] = ZLayer.succeed(new RelayBrowserTasks:
-    def run(task: TaskSpec, request: RunRequest): ZIO[Scope & PluginScopes, PluginRunError, PluginOutput] =
-      ZIO.fail(PluginRunError.Unverified(SourceId("heddle.b1"))))
-
 trait DocsTranscriptTask:
   def run(task: TaskSpec, request: RunRequest): ZIO[Scope & PluginScopes, PluginRunError, PluginOutput]
-
-object DocsTranscriptTask:
-  /** B2 replaces this registration with the verified transcript implementation. */
-  val pending: ULayer[DocsTranscriptTask] = ZLayer.succeed(new DocsTranscriptTask:
-    def run(task: TaskSpec, request: RunRequest): ZIO[Scope & PluginScopes, PluginRunError, PluginOutput] =
-      ZIO.fail(PluginRunError.Unverified(SourceId("heddle.b2"))))
 
 final class HeddleBuildPlugin(relayBrowser: RelayBrowserTasks, transcript: DocsTranscriptTask) extends HistosPlugin:
   val id: PluginId             = TaskSpec.pluginId

@@ -74,25 +74,40 @@ object TaskSpecSpec extends ZIOSpecDefault:
         TaskSpec.browserCheck.dependencies == List(TaskDep.Link(ProjectName("browser"), None, Some(JsOptimize.Full))),
       )
     },
-    test("pending runners fail explicitly instead of claiming an empty successful output") {
-      val b1 = ZIO.service[RelayBrowserTasks].provideLayer(RelayBrowserTasks.pending)
-      val b2 = ZIO.service[DocsTranscriptTask].provideLayer(DocsTranscriptTask.pending)
+    test("wired plugin dispatches to both live services and preserves their typed failures") {
+      val plugin = ZIO
+        .service[HeddleBuildPlugin]
+        .provideLayer(
+          (RelayBrowserLive.layer ++ TranscriptLive.layer) >>> HeddleBuildPlugin.layer
+        )
       ZIO.scoped:
         for
-          scope <- ZIO.scope
-          relay <- b1
-          docs  <- b2
-          first <- relay
-            .run(TaskSpec.relay, request(TaskSpec.relay.name))
+          scope  <- ZIO.scope
+          runner <- plugin
+          first  <- runner
+            .run(request(TaskSpec.browserAssets.name))
             .exit
             .provideSomeLayer[Scope](PluginScopes.live(scope))
-          second <- docs
-            .run(TaskSpec.transcript, request(TaskSpec.transcript.name))
+          second <- runner
+            .run(request(TaskSpec.transcript.name))
             .exit
             .provideSomeLayer[Scope](PluginScopes.live(scope))
         yield assertTrue(
-          first.causeOption.flatMap(_.failureOption).contains(PluginRunError.Unverified(SourceId("heddle.b1"))),
-          second.causeOption.flatMap(_.failureOption).contains(PluginRunError.Unverified(SourceId("heddle.b2"))),
+          first.causeOption
+            .flatMap(_.failureOption)
+            .contains(
+              RelayBrowserError
+                .ExpectedNamedLinkFailure(
+                  ExpectedBrowserLink(ProjectName("appsBrowserView"), Catalog.scala3, JsOptimize.Fast),
+                  0,
+                )
+                .pluginError
+            ),
+          second.causeOption
+            .flatMap(_.failureOption)
+            .contains(
+              PluginRunError.MissingDestination(OutputName("transcript-source"))
+            ),
         )
     },
   )

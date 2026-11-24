@@ -278,8 +278,8 @@ object build extends HistosBuild:
 
   override def services: BuildServices =
     BuildServices.default
-      .add[RelayBrowserTasks](RelayBrowserTasks.pending)
-      .add[DocsTranscriptTask](DocsTranscriptTask.pending)
+      .add[RelayBrowserTasks](RelayBrowserLive.layer)
+      .add[DocsTranscriptTask](TranscriptLive.layer)
       .tasks[HeddleBuildPlugin](HeddleBuildPlugin.layer)
       .add[Specular](ZLayer.succeed(site) >>> Specular.layer)
       .tasks[Specular](ZLayer.succeed(site) >>> Specular.layer)
