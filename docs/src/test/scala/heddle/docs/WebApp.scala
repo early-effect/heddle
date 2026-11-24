@@ -18,7 +18,7 @@ The box office on [the landing](index.html) is that client: list bills, open one
     section("Clone if you want the process")(
       md"""
 ```bash
-sbt example/run
+./histos run example --platform jvm --main example.Main
 ```
 
 That serves `/preview`, `/docs`, and `POST /mcp` from the real `Api`. The widget above is the

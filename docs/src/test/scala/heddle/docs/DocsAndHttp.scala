@@ -31,7 +31,7 @@ JSON we serve, not a fixture we typed twice.
     section("Try it on the live hub")(
       md"""
 ```bash
-sbt example/run
+./histos run example --platform jvm --main example.Main
 ```
 
 Open [http://localhost:8080/docs](http://localhost:8080/docs).

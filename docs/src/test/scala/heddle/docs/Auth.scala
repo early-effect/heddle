@@ -53,9 +53,10 @@ Failures are typed: `JoseError` inside `OAuthError.InvalidToken`, `RsaError` ins
 
 Stored passwords are salted PBKDF2-HMAC-SHA256 at 600,000 iterations, checked in constant time.
 
-A loopback OpenID provider is `sbt oauth/run`
+A loopback OpenID provider is `./histos run oauth --platform jvm --main heddle.oauth.provider.ProviderApp`
 (`http://127.0.0.1:8080/.well-known/openid-configuration`).
-`sbt example/run` embeds that OP next to the box office API so Swagger Authorize works against the
+`./histos run example --platform jvm --main example.Main` embeds that OP next to the box office API
+so Swagger Authorize works against the
 same process. Seed user `ada` / `ada`. Machine client `machine` / `secret`.
 """,
       exampleZIO {

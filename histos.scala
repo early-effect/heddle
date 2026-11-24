@@ -122,7 +122,9 @@ object build extends HistosBuild:
       .dependsOn(heddle)
       .libraryDependencies(zio, zioStreams, zioJson, zioHttp)
       .main(MainClass("bench.HeddlePlain"))
-      .jvmOptions(JvmOptions(List(JvmFlag("-Xms2g"), JvmFlag("-Xmx2g"), JvmFlag("-Xss6m"))))
+      .jvmOptions(
+        JvmOptions(List(JvmFlag("-XX:+UnlockDiagnosticVMOptions"), JvmFlag("-XX:+DebugNonSafepoints")))
+      )
     val perfTests = core(module("perfTests", Jvm)(scala3))
       .dependsOn(heddle)
       .testDependsOn(heddle)
