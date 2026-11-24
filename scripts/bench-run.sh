@@ -9,6 +9,7 @@ DURATION="${DURATION:-15s}"
 CONNECTIONS="${CONNECTIONS:-256}"
 JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 BENCH_CLIENT=""
+BENCH_CANCEL=""
 BENCH_PORT=""
 BENCH_LOCK=""
 BENCH_LOG=""
@@ -86,44 +87,59 @@ bench_wait_closed() {
 
 # New selection flags can use the JVM CLI fallback. Its sibling `server` is not owned.
 bench_cli_child() {
-  ps -axo pid=,ppid=,args= | awk -v parent="$BENCH_CLIENT" \
-    '$2 == parent && / -jar / && (/ run bench --platform jvm --main / || / compile bench --platform jvm/) { print $1 }'
+  ps -axo pid=,ppid=,args= | awk -v parent="$1" \
+    '$2 == parent && / -jar / && (/ run bench --platform jvm --main / || / compile bench --platform jvm/ || / cancel [0-9a-f-]+/) { print $1 }'
 }
 
-bench_stop() {
-  [[ -n "$BENCH_CLIENT" ]] || return 0
-  local run pid _ owned=()
-  run="$(awk '/^run [0-9a-f-]+$/ { print $2; exit }' "$BENCH_LOG")"
-  if [[ -n "$run" ]]; then
-    "$ROOT/histos" --no-color cancel "$run" >&2 || true
-  fi
+bench_reap_client() {
+  local client="$1" pid _ owned=()
   # Freeze before inspecting children so early startup cannot fork a CLI behind cleanup.
-  kill -STOP "$BENCH_CLIENT" 2>/dev/null || true
+  kill -STOP "$client" 2>/dev/null || true
   while read -r pid; do
     [[ -n "$pid" ]] && owned+=("$pid")
-  done < <(bench_cli_child)
+  done < <(bench_cli_child "$client")
   if [[ ${#owned[@]} -eq 0 ]]; then
-    kill -TERM "$BENCH_CLIENT" 2>/dev/null || true
+    kill -TERM "$client" 2>/dev/null || true
   else
     # Socket EOF cancels the scoped run. Let the native parent reap its JVM fallback.
     for pid in "${owned[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
   fi
-  kill -CONT "$BENCH_CLIENT" 2>/dev/null || true
+  kill -CONT "$client" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8; do
-    kill -0 "$BENCH_CLIENT" 2>/dev/null || break
+    kill -0 "$client" 2>/dev/null || break
     sleep 0.25
   done
-  if kill -0 "$BENCH_CLIENT" 2>/dev/null; then
+  if kill -0 "$client" 2>/dev/null; then
     if [[ ${#owned[@]} -gt 0 ]]; then
       for pid in "${owned[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
     fi
     for _ in 1 2 3 4 5 6 7 8; do
-      kill -0 "$BENCH_CLIENT" 2>/dev/null || break
+      kill -0 "$client" 2>/dev/null || break
       sleep 0.25
     done
-    kill -KILL "$BENCH_CLIENT" 2>/dev/null || true
+    kill -KILL "$client" 2>/dev/null || true
   fi
-  wait "$BENCH_CLIENT" 2>/dev/null || true
+  wait "$client" 2>/dev/null || true
+}
+
+bench_stop() {
+  [[ -n "$BENCH_CLIENT" ]] || return 0
+  local run _
+  run="$(awk '/^run [0-9a-f-]+$/ { print $2; exit }' "$BENCH_LOG")"
+  if [[ -n "$run" ]]; then
+    if [[ -z "$BENCH_CANCEL" ]]; then
+      "$ROOT/histos" --no-color cancel "$run" >&2 &
+      BENCH_CANCEL=$!
+      # Two seconds for best-effort cancellation, then close only our clients.
+      for _ in $(seq 1 20); do
+        kill -0 "$BENCH_CANCEL" 2>/dev/null || break
+        sleep 0.1
+      done
+    fi
+    bench_reap_client "$BENCH_CANCEL"
+    BENCH_CANCEL=""
+  fi
+  bench_reap_client "$BENCH_CLIENT"
   BENCH_CLIENT=""
   [[ -z "$BENCH_PORT" ]] || bench_wait_closed "$BENCH_PORT"
 }

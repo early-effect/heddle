@@ -6,18 +6,13 @@ if [[ "$(uname -s)" != Linux ]]; then
   echo "browser system dependency installation is Linux-only" >&2
   exit 1
 fi
-# RunnerTools lists Node, LLVM, then Playwright. Read the Playwright pin, not a cached arbitrary version.
+# The named Playwright binding is also consumed by RunnerTools.
 version="$(awk '
-  /RunnerTools\(/ { tools = 1 }
-  tools && /browsers[[:space:]]*=/ { exit }
-  tools && /Some\(ToolRevision\("/ {
-    count++
-    if (count == 2) {
-      sub(/.*ToolRevision\("/, "")
-      sub(/".*/, "")
-      print
-      exit
-    }
+  /^[[:space:]]*private val playwright[[:space:]]*=[[:space:]]*ToolRevision\("[0-9]+\.[0-9]+\.[0-9]+"\)[[:space:]]*$/ {
+    sub(/.*ToolRevision\("/, "")
+    sub(/".*/, "")
+    print
+    exit
   }
 ' "$ROOT/histos.scala")"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

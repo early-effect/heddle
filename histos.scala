@@ -17,6 +17,8 @@ import histos.plugin.{
 import _root_.zio.ZLayer
 
 object build extends HistosBuild:
+  private val playwright = ToolRevision("1.62.1")
+
   def graph: Either[BuildError, ProjectGraph] =
     val nativeNightly = NativeVersion("0.5.13-20261122-fa4437d-SNAPSHOT")
     val heddle        = core(module("heddle", Jvm, Js, Native)(scala3))
@@ -252,7 +254,7 @@ object build extends HistosBuild:
         RunnerTools(
           Some(NodeFloor(25)),
           Some(ToolRevision("21.1.8")),
-          Some(ToolRevision("1.62.1")),
+          Some(playwright),
           browsers = Set(Browser.Chromium, Browser.Firefox, Browser.WebKit),
           jdk = Some(JdkFloor(25)),
         )
