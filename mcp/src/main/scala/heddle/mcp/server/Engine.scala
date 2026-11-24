@@ -18,8 +18,8 @@ final case class Offer[-R](
     events: EventGateway[R] = EventGateway.none,
 )
 
-/** Answers MCP requests from typed messages. Transports parse bytes and pick the [[Era]]; this decides everything else,
-  * and never throws or dies on what a client sends.
+/** Answers MCP requests from typed messages. Transports parse bytes and pick the [[heddle.mcp.protocol.Era]]; this
+  * decides everything else, and never throws or dies on what a client sends.
   */
 final class Engine[-R](
     val server: Implementation,

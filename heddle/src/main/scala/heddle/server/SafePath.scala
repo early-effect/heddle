@@ -5,7 +5,7 @@ import heddle.http.Path
 /** Jail a user-controlled relative path under a root.
   *
   * `..`, `.`, empty segments, NUL, and backslash are rejected before any filesystem call. Percent-decoding is
-  * [[Path.decode]]'s job: `%2e%2e` is already `..` in [[Path.segments]].
+  * [[heddle.http.Path.decode]]'s job: `%2e%2e` is already `..` in [[heddle.http.Path.segments]].
   */
 object SafePath:
   def remainder(urlPrefix: String, path: Path): Option[List[String]] =

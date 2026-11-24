@@ -73,7 +73,10 @@ object HeaderCodec:
     def schema: SchemaDoc                 = SchemaDoc.Str(Some("uri"))
     def required: Boolean                 = true
 
-  /** `If-Match` and `If-None-Match`. One line per tag. `*` is dropped, as [[EntityTag.parseList]] drops it. */
+  /** `If-Match` and `If-None-Match`, one line per tag.
+    *
+    * [[heddle.http.header.EntityTag.parseList]] drops `*`.
+    */
   given HeaderCodec[Chunk[EntityTag]] with
     def decode(values: Chunk[String]): Either[ParamError, Chunk[EntityTag]] =
       if values.isEmpty then Left(ParamError.Missing)
