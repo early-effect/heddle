@@ -26,7 +26,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight affected
       - id: affected
         env:
@@ -58,7 +58,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight test
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -146,7 +146,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight versions
       - run: "./histos run versions"
   compatibility:
@@ -162,13 +162,25 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: "~/.cache/coursier/v1"
           key: "coursier-${{ hashFiles('histos.scala') }}-${{ runner.os }}-${{ runner.arch }}"
-      - run: "./histos compile heddle brotli oauth mcpProtocol mcp mcpApps mcpAppsHost opentelemetry --platform jvm"
-      - run: ./histos doctor --area release
+      - run: |
+          base=all
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            last=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&status=success&branch=${GITHUB_REF_NAME}&per_page=1" --jq '.workflow_runs[0].head_sha // empty' || true)
+            if [ -n "$last" ] && git merge-base --is-ancestor "$last" HEAD; then
+              base="$last"
+            fi
+          fi
+          ./histos publish check --base "$base"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
   scaladoc:
     if: "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'"
     needs: [affected]
@@ -182,7 +194,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight scaladoc
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -237,7 +249,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight format
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -258,7 +270,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "25"
@@ -298,7 +310,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "25"
@@ -365,7 +377,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "25"
@@ -405,7 +417,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: "~/.cache/coursier/v1"
@@ -424,7 +436,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight docs
       - run: "./histos run dev.earlyeffect.specular/site"
       - if: "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
@@ -464,7 +476,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight cache-seed
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -556,10 +568,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight workflow
-      - run: "./histos compile heddle brotli oauth mcpProtocol mcp mcpApps mcpAppsHost opentelemetry --platform jvm"
-      - run: ./histos doctor --area release
       - run: ./histos doctor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -581,14 +591,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/histos/advisories
           key: histos-osv-${{ hashFiles('dependencies.lock') }}-${{ github.run_id }}
           restore-keys: histos-osv-
       - run: ./histos doctor --preflight supply-chain
-      - run: ./histos compile --platform jvm
       - run: ./histos doctor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -611,7 +620,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@af16c748b1cc2cb95b936aaae601f900679c9ef2 # af16c748b1cc2cb95b936aaae601f900679c9ef2
+      - uses: early-effect/histos/.github/actions/setup@35724d60188466584ed469012df59a6e8efc92a9 # 35724d60188466584ed469012df59a6e8efc92a9
       - run: ./histos doctor --preflight dependency-snapshot
       - run: ./histos deps snapshot --submit
         env:
