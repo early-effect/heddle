@@ -52,13 +52,13 @@ docs-js mounts Hub widgets. It does not import `BoundOp` or `Mcp.handle`.
     section("Example hub")(
       md"""
 ```bash
-sbt example/run
+./histos run example --platform jvm --main example.Main
 ```
 
 - http://localhost:8080/docs — box office API + Swagger, Authorize against the embedded OP
 - http://localhost:8080/preview — box office UI (same `Api`)
 - http://localhost:8080/mcp — Streamable HTTP MCP (`POST`; 2026 native, 2025 `initialize`)
-- `sbt "example/run -- --mcp-stdio"` — same `Api`, stdio JSON-RPC
+- `./histos run example --platform jvm --main example.Main -- --mcp-stdio`: same `Api`, stdio JSON-RPC
 
 Seed users: `ada` / `ada`. Machine client `machine` / `secret`.
 """
@@ -110,7 +110,7 @@ Gzip is not a field. Wrap the `Routes`: `app @@ Middleware.compress()`.
 
 JVM is JDK 21+ (Loom is the default scheduler, not a bind requirement). JS is Node. Native
 is POSIX plus OpenSSL. `HeddleApp` is the JVM `ZIOAppDefault` that serves `routes` and
-exits 0 on Ctrl-C under sbt 2.
+exits 0 on Ctrl-C.
 """,
       exampleValue {
         (

@@ -1,6 +1,7 @@
 package example
 
 import java.nio.charset.StandardCharsets
+import scala.jdk.CollectionConverters.*
 import heddle.*
 import heddle.mcp.Mcp
 import heddle.mcp.client.{McpClient, McpError, McpStdio}
@@ -44,7 +45,7 @@ object ExampleMcpSpec extends ZIOSpecDefault:
     val req = name.fold(req0)(n => req0.withHeader(Http.NameHeader, n))
     routes(req)
 
-  def spec =
+  private val tests =
     suite("example MCP")(
       test("HTTP loopback discover list and get_show"):
         for
@@ -182,59 +183,41 @@ object ExampleMcpSpec extends ZIOSpecDefault:
           assertTrue(text.contains("2026-07-28"), text.contains("get_show"), text.contains("Evening bill"))
       ,
       test("subprocess --mcp-stdio discover list and get_show"):
-        ZIO
-          .attemptBlocking {
-            val javaHome = sys.props("java.home")
-            val cp       =
-              val here     = java.nio.file.Path.of("target", "mcp-stdio.classpath")
-              val fromRoot = java.nio.file.Path.of("example", "target", "mcp-stdio.classpath")
-              val file     = if java.nio.file.Files.isRegularFile(here) then here else fromRoot
-              if java.nio.file.Files.isRegularFile(file) then java.nio.file.Files.readString(file).trim else "MISSING"
-            val pb = ProcessBuilder(
-              s"$javaHome/bin/java",
-              "-cp",
-              cp,
-              "example.Main",
-              "--mcp-stdio",
-            )
-            pb.redirectError(ProcessBuilder.Redirect.PIPE)
-            val proc = pb.start()
-            try
-              val os      = proc.getOutputStream
-              val payload =
-                List(
-                  mcpReq("server/discover", obj(), 1).toJson,
-                  mcpReq("tools/list", obj(), 2).toJson,
-                  mcpReq(
-                    "tools/call",
-                    obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
-                    3,
-                  ).toJson,
-                ).mkString("", "\n", "\n")
-              os.write(payload.getBytes(StandardCharsets.UTF_8))
-              os.flush()
-              os.close()
-              val text = String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-              proc.getErrorStream.readAllBytes()
-              val code = proc.waitFor()
-              (text, code)
-            finally proc.destroyForcibly()
-          }
-          .map { (text, code) =>
-            assertTrue(
-              code == 0,
-              text.contains("2026-07-28"),
-              text.contains("get_show"),
-              text.contains("Evening bill"),
-            )
-          }
+        val payload =
+          List(
+            mcpReq("server/discover", obj(), 1).toJson,
+            mcpReq("tools/list", obj(), 2).toJson,
+            mcpReq(
+              "tools/call",
+              obj("name" -> Json.Str("get_show"), "arguments" -> obj("id" -> Json.Num(1))),
+              3,
+            ).toJson,
+          ).mkString("", "\n", "\n")
+        ZIO.scoped {
+          for
+            command <- stdioCommand
+            proc    <- spawn(command)
+            _       <- processIO(proc) {
+              val out = proc.getOutputStream
+              out.write(payload.getBytes(StandardCharsets.UTF_8))
+              out.flush()
+              out.close()
+            }
+            text <- output(proc)
+            code <- processIO(proc)(proc.waitFor())
+          yield assertTrue(
+            code == 0,
+            text.contains("2026-07-28"),
+            text.contains("get_show"),
+            text.contains("Evening bill"),
+          )
+        }
       ,
       test("heddle's own client spawns the stdio server and makes typed calls with the shared endpoints"):
-        val command =
-          ChildCommand(s"${sys.props("java.home")}/bin/java", Chunk("-cp", classpath, "example.Main", "--mcp-stdio"))
         val client = McpClient.Settings(Implementation("example-spec", "0.0.1"))
         ZIO.scoped {
           for
+            command <- stdioCommand
             session <- McpStdio.spawn(command, client)
             tools   <- session.listTools
             show    <- session.call(Endpoints.getShow)(1)
@@ -247,6 +230,30 @@ object ExampleMcpSpec extends ZIOSpecDefault:
           )
         }
       ,
+      test("interrupting a scoped stdio subprocess stops and reaps the child"):
+        ZIO.scoped {
+          for
+            command <- stdioCommand
+            ready   <- Promise.make[ExampleError, Process]
+            fiber   <- ZIO
+              .scoped(spawn(command).tap(proc => ready.succeed(proc)).flatMap(output))
+              .tapErrorCause(cause => ready.failCause(cause).unit)
+              .forkScoped
+            proc  <- ready.await
+            alive <- io(proc.isAlive)
+            exit  <- fiber.interrupt
+            ended <- io(!proc.isAlive)
+          yield assertTrue(alive, exit.isInterrupted, ended)
+        }
+      ,
+      test("missing or empty JVM properties have a typed error"):
+        assertTrue(
+          propertyValue("java.class.path", None) == Left(ExampleError.MissingProperty("java.class.path")),
+          propertyValue("java.home", Some("")) == Left(ExampleError.MissingProperty("java.home")),
+          propertyValue("java.home", Some("  ")) == Left(ExampleError.MissingProperty("java.home")),
+          propertyValue("java.class.path", Some("/path with spaces")) == Right("/path with spaces"),
+        )
+      ,
       test("a program that does not exist is a Spawn error, not a hang"):
         val missing = ChildCommand("/no/such/mcp-server")
         ZIO.scoped(McpStdio.spawn(missing, McpClient.Settings(Implementation("spec", "0"))).flip).map { e =>
@@ -254,11 +261,60 @@ object ExampleMcpSpec extends ZIOSpecDefault:
             case McpError.Spawn("/no/such/mcp-server", _) => true
             case _                                        => false)
         },
-    ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds)
+    )
 
-  private def classpath: String =
-    val here     = java.nio.file.Path.of("target", "mcp-stdio.classpath")
-    val fromRoot = java.nio.file.Path.of("example", "target", "mcp-stdio.classpath")
-    val file     = if java.nio.file.Files.isRegularFile(here) then here else fromRoot
-    if java.nio.file.Files.isRegularFile(file) then java.nio.file.Files.readString(file).trim else "MISSING"
+  def spec = tests @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds)
+
+  private enum ExampleError:
+    case MissingProperty(name: String)
+    case PropertyAccess(name: String, cause: Throwable)
+    case Io(cause: Throwable)
+
+  private def propertyValue(name: String, value: Option[String]): Either[ExampleError, String] =
+    value.filter(_.trim.nonEmpty).toRight(ExampleError.MissingProperty(name))
+
+  private def property(name: String): IO[ExampleError, String] =
+    ZIO
+      .attempt(sys.props.get(name))
+      .mapError(ExampleError.PropertyAccess(name, _))
+      .flatMap(value => ZIO.fromEither(propertyValue(name, value)))
+
+  private val stdioCommand: IO[ExampleError, ChildCommand] =
+    for
+      javaHome <- property("java.home")
+      cp       <- property("java.class.path")
+    yield ChildCommand(s"$javaHome/bin/java", Chunk("-cp", cp, "example.Main", "--mcp-stdio"))
+
+  private def io[A](effect: => A): IO[ExampleError, A] =
+    ZIO.attemptBlocking(effect).mapError(ExampleError.Io(_))
+
+  private def stop(proc: Process): IO[ExampleError, Unit] =
+    io {
+      proc.destroyForcibly()
+      proc.waitFor()
+      ()
+    } *> ZIO.foreachDiscard(List(proc.getOutputStream, proc.getInputStream, proc.getErrorStream))(stream =>
+      io(stream.close())
+    )
+
+  private def spawn(command: ChildCommand): ZIO[Scope, ExampleError, Process] =
+    ZIO.acquireRelease(io {
+      val builder = ProcessBuilder((command.program +: command.args).asJava)
+      builder.redirectError(ProcessBuilder.Redirect.PIPE)
+      builder.start()
+    })(proc => stop(proc).catchAll(error => ZIO.logWarning(s"Subprocess cleanup failed: $error")))
+
+  private def processIO[A](proc: Process)(effect: => A): IO[ExampleError, A] =
+    ZIO
+      .attemptBlockingCancelable(effect)(
+        stop(proc).catchAll(error => ZIO.logWarning(s"Subprocess cancellation failed: $error"))
+      )
+      .mapError(ExampleError.Io(_))
+
+  private def output(proc: Process): IO[ExampleError, String] =
+    processIO(proc)(String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8))
+      .zipPar(processIO(proc)(String(proc.getErrorStream.readAllBytes(), StandardCharsets.UTF_8)))
+      .flatMap { (text, errors) =>
+        ZIO.when(errors.nonEmpty)(ZIO.logWarning(errors)).as(text)
+      }
 end ExampleMcpSpec

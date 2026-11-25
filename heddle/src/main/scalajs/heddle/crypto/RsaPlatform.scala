@@ -100,10 +100,12 @@ private[heddle] object RsaPlatform:
     while !t.testBit(0) do
       t = t.shiftRight(1)
       s += 1
-    var aInt  = 2
-    var found = Option.empty[(BigInteger, BigInteger)]
+    val exponent = js.BigInt(t.toString)
+    val modulus  = js.BigInt(n.toString)
+    var aInt     = 2
+    var found    = Option.empty[(BigInteger, BigInteger)]
     while found.isEmpty && aInt < 256 do
-      var x    = BigInteger.valueOf(aInt.toLong).modPow(t, n)
+      var x    = modPow(aInt, exponent, modulus)
       var i    = 0
       var stop = false
       while i < s && !stop && found.isEmpty do
@@ -117,6 +119,19 @@ private[heddle] object RsaPlatform:
           i += 1
       aInt += 1
     found
+
+  /** Native modular exponentiation avoids seconds of emulated arithmetic on Node's event loop per CRT base. */
+  private def modPow(base: Int, exponent: js.BigInt, modulus: js.BigInt): BigInteger =
+    val zero      = js.BigInt(0)
+    val one       = js.BigInt(1)
+    var power     = js.BigInt(base)
+    var remaining = exponent
+    var result    = one
+    while remaining > zero do
+      if (remaining & one) == one then result = (result * power) % modulus
+      power = (power * power) % modulus
+      remaining = remaining >> one
+    BigInteger(result.toString)
 
   private def integer(bytes: Chunk[Byte]): BigInteger =
     BigInteger(1, bytes.toArray)

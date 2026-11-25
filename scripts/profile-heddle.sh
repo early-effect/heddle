@@ -6,21 +6,16 @@ cd "$ROOT"
 PORT="${PORT:-8088}"
 OUT="${OUT:-$ROOT/target/profile}"
 mkdir -p "$OUT"
-export JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints}"
-
-sbt --no-server bench/compile
-sbt --no-server "bench/runMain bench.HeddlePlain $PORT" >/tmp/heddle-profile.log 2>&1 &
-sbt_pid=$!
-for _ in $(seq 1 80); do
-  curl -sf -o /dev/null --max-time 0.2 "http://127.0.0.1:${PORT}/plaintext" && break
-  sleep 0.25
-done
-pid="$(jps -l | awk '/bench.HeddlePlain/{print $1; exit}')"
-if [[ -z "${pid:-}" ]]; then
-  echo "HeddlePlain JVM not found" >&2
-  kill "$sbt_pid" 2>/dev/null || true
+# shellcheck source=bench-run.sh
+source "$ROOT/scripts/bench-run.sh"
+bench_start bench.HeddlePlain "$PORT"
+pid="$(bench_listener "$PORT")"
+# Port ownership alone is not proof: match the unique property of this invocation.
+if [[ -z "$pid" ]] || ! jcmd "$pid" VM.system_properties | grep -Fx "heddle.bench.owner=$BENCH_OWNER" >/dev/null; then
+  echo "owned HeddlePlain JVM not found. log: $BENCH_LOG" >&2
   exit 1
 fi
+echo "optional: asprof -d 30 -e cpu -f $OUT/cpu.html $pid  (while the server is up)"
 jcmd "$pid" JFR.start name=heddle settings=profile dumponexit=true filename="$OUT/heddle.jfr" duration=30s
 if command -v bombardier >/dev/null 2>&1; then
   bombardier -c 256 -d 30s --http1 "http://127.0.0.1:${PORT}/plaintext"
@@ -32,9 +27,5 @@ else
 fi
 sleep 2
 jcmd "$pid" JFR.dump name=heddle filename="$OUT/heddle.jfr" || true
-kill -INT "$pid" 2>/dev/null || true
-sleep 1
-kill -9 "$pid" 2>/dev/null || true
-kill "$sbt_pid" 2>/dev/null || true
+bench_stop
 echo "JFR: $OUT/heddle.jfr"
-echo "optional: asprof -d 30 -e cpu -f $OUT/cpu.html $pid  (while the server is up)"

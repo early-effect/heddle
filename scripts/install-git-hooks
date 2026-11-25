@@ -16,7 +16,7 @@ done
 
 echo "Installed git hooks from .githooks (core.hooksPath=.githooks)"
 if [ -f .githooks/pre-commit ]; then
-  echo "pre-commit will run: sbt scalafmtCheckAll"
+  echo "pre-commit will run: ./histos fmt --check"
 fi
 if [ -f .githooks/commit-msg ]; then
   echo "commit-msg will reject agent attribution in the commit message"

@@ -46,7 +46,7 @@ object Hello extends HeddleApp:
   def routes = app
 ```
 
-`HeddleApp` serves `routes` and exits 0 on Ctrl-C under sbt 2 (JVM).
+`HeddleApp` serves `routes` and exits 0 on Ctrl-C (JVM).
 `Server.serve(app).provide(Server.Config.defaults)` is the same bind without the trait, and
 that is what JS and Native use.
 """,
@@ -57,8 +57,8 @@ This repo's example is one process with HTTP, Swagger, MCP, an embedded OpenID p
 directory UI:
 
 ```bash
-sbt example/run                      # http://localhost:8080/docs  /preview  POST /mcp
-sbt "example/run -- --mcp-stdio"     # same Api, stdio JSON-RPC
+./histos run example --platform jvm --main example.Main  # /docs, /preview, POST /mcp on :8080
+./histos run example --platform jvm --main example.Main -- --mcp-stdio  # same Api, stdio JSON-RPC
 ```
 
 Seed user `ada` / `ada`. Machine client `machine` / `secret`.

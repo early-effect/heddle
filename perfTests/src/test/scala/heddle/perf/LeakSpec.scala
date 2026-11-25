@@ -164,7 +164,6 @@ object LeakSpec extends ZIOSpecDefault:
         pt1   <- ZIO.succeed(Resources.platformThreads)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1) && assertTrue(pt1 <= pt0 + 8)
     }
-  end cycle
 
   private def soakKeepAlive(n: Int): ZIO[Any, Any, TestResult] =
     val routes = Routes(Method.GET / "health" -> Handler.text("ok"))
@@ -192,7 +191,6 @@ object LeakSpec extends ZIOSpecDefault:
         fd1   <- ZIO.succeed(Resources.openFiles)
       yield leaked(tcp0, tcp1, heap0, heap1, fd0, fd1)
     }
-  end soakKeepAlive
 
   private def hits(port: Int, n: Int): Task[Unit] =
     ZIO.foreachDiscard(0 until n) { _ =>
@@ -223,5 +221,4 @@ object LeakSpec extends ZIOSpecDefault:
       case (Some(a), Some(b)) => b <= a + 8
       case _                  => true
     assertTrue(tcpOk, fdOk, heap1 <= heap0 + 16L * 1024 * 1024)
-  end leaked
 end LeakSpec

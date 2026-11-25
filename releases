@@ -1,0 +1,3 @@
+# Checked current ship line: heddle 0.16.0 is unreleased; latest release is v0.15.2.
+# No entries means the current line is unreleased, not that the ship has no release history.
+# After releasing the current line, record: <ship> matches, <ship> moved, or <ship> unknown.

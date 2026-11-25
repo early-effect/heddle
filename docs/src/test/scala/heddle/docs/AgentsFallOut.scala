@@ -31,7 +31,7 @@ still find the rest of the `Api`.
     ),
     section("Point Grok Build at the hub")(
       md"""
-With `sbt example/run` listening:
+With `./histos run example --platform jvm --main example.Main` listening:
 
 ```toml
 [mcp_servers.heddle-example]
@@ -42,14 +42,14 @@ Same `Api` as a local process:
 
 ```toml
 [mcp_servers.heddle-example]
-command = "sbt"
-args = ["example/run", "--", "--mcp-stdio"]
+command = "./histos"
+args = ["run", "example", "--platform", "jvm", "--main", "example.Main", "--", "--mcp-stdio"]
 ```
 
 Ask Grok to list tools, then seat a party of 2 on the Evening bill. You should see `seat_the_party`
 and a pickup code. That is the same function Swagger just called.
 
-stdio cold-start under sbt is slow. A packaged main is what you ship. The protocol is identical.
+Run that command from the repo root. A packaged main is what you ship. The protocol is identical.
 """
     ),
     section("Next")(

@@ -50,5 +50,4 @@ object Main extends ZIOAppDefault:
         s"${shed.grants.map(_.toolName)} $clamped $pinned"
     ) *> tools.either.flatMap(r => Console.printLine(r.fold(_.message, _.size.toString))) *>
       inPage.either.flatMap(r => Console.printLine(r.fold(_.toString, _.toString)))
-  end run
 end Main
