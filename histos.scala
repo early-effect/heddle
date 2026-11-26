@@ -21,8 +21,8 @@ object build extends HistosBuild:
 
   def graph: Either[BuildError, ProjectGraph] =
     val nativeNightly = NativeVersion("0.5.13-20261122-fa4437d-SNAPSHOT")
-    val heddle        = core(module("heddle", Jvm, Js, Native)(scala3))
-      .artifact(artifact"heddle")
+    val ship          = Ship("heddle")
+    val heddle        = core(ship.parent(Jvm, Js, Native)(scala3))
       .description(pom"HTTP as an effect. Loom under the floor.")
       .libraryDependencies(neotype, scalaJavaTime.on(Js, Native))
       .jsVersion(JsVersion("1.23.0"))
@@ -32,7 +32,6 @@ object build extends HistosBuild:
       .threadStack(ThreadStack("8m"))
       .link(NativeLibrary.Ssl, NativeLibrary.Crypto)
     val brotli = core(module("brotli", Jvm, Js, Native)(scala3))
-      .artifact(artifact"heddle-brotli")
       .description(pom"RFC 7932 brotli encoder for heddle")
       .dependsOn(heddle)
       .testDependsOn(heddle)
@@ -45,7 +44,6 @@ object build extends HistosBuild:
       .threadStack(ThreadStack("8m"))
       .link(NativeLibrary.Ssl, NativeLibrary.Crypto)
     val oauth = core(module("oauth", Jvm, Js)(scala3))
-      .artifact(artifact"heddle-oauth")
       .description(pom"OAuth2 / OIDC client, resource server, and provider for heddle")
       .dependsOn(heddle)
       .testDependsOn(heddle)
@@ -64,7 +62,6 @@ object build extends HistosBuild:
       .clang(ClangMajor(21))
       .threadStack(ThreadStack("8m"))
     val mcp = core(module("mcp", Jvm, Js, Native)(scala3))
-      .artifact(artifact"heddle-mcp")
       .description(pom"MCP 2026-07-28 server for heddle endpoints")
       .dependsOn(heddle, mcpProtocol)
       .testDependsOn(heddle, mcpProtocol)
@@ -111,7 +108,6 @@ object build extends HistosBuild:
       .dependsOn(mcpAppsHost)
       .jsVersion(JsVersion("1.23.0"))
     val opentelemetry = core(module("opentelemetry", Jvm)(scala3))
-      .artifact(artifact"heddle-opentelemetry")
       .description(pom"OpenTelemetry spans for heddle servers and clients")
       .dependsOn(heddle)
       .testDependsOn(heddle)
@@ -166,7 +162,7 @@ object build extends HistosBuild:
       .threadStack(ThreadStack("8m"))
       .link(NativeLibrary.Ssl, NativeLibrary.Crypto)
       .testAggregate(heddle, brotli, mcpProtocol, mcp, mcpApps)
-    val library = Ship("heddle").next(0, 16, 0)(
+    val library = ship.next(0, 16, 0)(
       heddle,
       brotli,
       oauth,
