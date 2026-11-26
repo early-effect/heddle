@@ -20,7 +20,6 @@ concurrency:
 jobs:
   deps:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,7 +31,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - uses: early-effect/histos/.github/actions/setup@6d1eb0f2850b3e99870a9627c4da4cd68c8d82a4 # 6d1eb0f2850b3e99870a9627c4da4cd68c8d82a4
+      - uses: early-effect/histos/.github/actions/setup@f8a13e5a612eb2bbc68d0ecf11888c0773fab0f8 # f8a13e5a612eb2bbc68d0ecf11888c0773fab0f8
       - run: ./histos doctor --preflight histos-deps
         env:
           GH_TOKEN: ${{ github.token }}
