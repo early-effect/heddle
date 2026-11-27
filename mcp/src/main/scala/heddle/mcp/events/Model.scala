@@ -123,8 +123,8 @@ enum WebhookSecretError:
 /** Grants and limits, already clamped by `sanitize`.
   *
   * `floor`, `default`, and `cap` are the server's TTL. A requested `ttlMs` below the floor is raised, an omitted
-  * `ttlMs` uses `default`, and a longer one, including `null`, is the cap. This store is in memory and does not grant
-  * forever.
+  * `ttlMs` uses `default`, and a longer one, including `null`, is the cap. A grant ends at its refresh time.
+  * `renewHealthy` moves that time only after a delivery succeeds, or after a restore that recorded no failure.
   */
 final case class TtlPolicy(
     default: Duration,
@@ -203,3 +203,7 @@ object VerificationPolicy:
 enum EmitError:
   case Unknown(name: EventName)
   case Undecodable(name: EventName)
+
+  /** The subscription store refused the snapshot. The event was not appended. */
+  case NotDurable
+end EmitError
