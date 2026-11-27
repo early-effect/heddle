@@ -5,7 +5,15 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import heddle.mcp.{Mcp, McpBuildError, ServedResource, Session}
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
-import heddle.mcp.events.{EventSnapshot, Events, Principal, StoreError, SubscriptionStore, TtlPolicy, VerificationPolicy}
+import heddle.mcp.events.{
+  EventSnapshot,
+  Events,
+  Principal,
+  StoreError,
+  SubscriptionStore,
+  TtlPolicy,
+  VerificationPolicy,
+}
 import heddle.mcp.protocol.{
   CallToolResult,
   ClientRequest,
@@ -423,7 +431,7 @@ The signed POST itself is JVM-only. JS and Native fail the send with `Unavailabl
                 )
               )
               .verificationPolicy(VerificationPolicy.Skip)
-            val memory: ZLayer[Any, Nothing, Events] = configured.eventsLayer
+            val memory: ZLayer[Any, Nothing, Events]     = configured.eventsLayer
             val durable: ZLayer[Any, StoreError, Events] =
               configured.eventsLayer(SubscriptionStore.file("subscriptions.json"))
             (memory, durable) match
