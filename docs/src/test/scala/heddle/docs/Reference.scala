@@ -42,6 +42,7 @@ packages. Datastar `readSignals` is an extension on `Request`.
 | Digest / RS256 | `java.security` | `node:crypto` | OpenSSL |
 | MCP HTTP + stdio | yes | yes | yes |
 | MCP event webhook POST | yes | no (`Unavailable`) | no (`Unavailable`) |
+| MCP subscription file | yes | no (`Unavailable`) | no (`Unavailable`) |
 | MCP Apps model | yes | yes (Node and browser) | yes |
 | `heddle-oauth` | yes | yes | no |
 | `HeddleApp` | yes | no | no |

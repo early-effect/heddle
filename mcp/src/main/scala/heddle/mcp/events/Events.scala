@@ -3,7 +3,7 @@ package heddle.mcp.events
 import heddle.mcp.protocol.{ClientRequest, EventName, RpcError}
 import zio.json.*
 import zio.json.ast.Json
-import zio.{Duration, Scope, UIO, URIO, ZIO}
+import zio.{Duration, IO, Scope, UIO, URIO, ZIO}
 
 import java.time.Instant
 
@@ -29,6 +29,12 @@ trait Events:
   ): ZIO[WebhookTransport, EmitError, Unit]
   def maintain: URIO[WebhookTransport, Unit]
 
+  /** Extend `refreshBefore` for subscriptions whose latest delivery succeeded, and for subscriptions restored with no
+    * recorded failure. A URL that has failed since it was armed is left to expire.
+    */
+  def renewHealthy(by: Duration): IO[StoreError, Unit]
+end Events
+
 object Events:
   /** What an events route needs besides the author's own environment. The clock stays on the app runtime. */
   type Env = Events & WebhookTransport
@@ -46,6 +52,10 @@ object Events:
   /** Expire, trim, and deliver whatever is due. Tests call this after moving `TestClock`. */
   def maintain: ZIO[Env, Nothing, Unit] =
     ZIO.serviceWithZIO[Events](_.maintain)
+
+  /** Extend healthy subscriptions. A test calls this after a delivery, or after restoring a snapshot. */
+  def renewHealthy(by: Duration): ZIO[Events, StoreError, Unit] =
+    ZIO.serviceWithZIO[Events](_.renewHealthy(by))
 
   /** Production loop. A test does not install it. */
   def maintained: ZIO[Env & Scope, Nothing, Unit] =

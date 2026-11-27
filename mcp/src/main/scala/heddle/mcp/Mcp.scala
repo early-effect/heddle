@@ -14,6 +14,8 @@ import heddle.mcp.events.{
   Events,
   Principal,
   Replay,
+  StoreError,
+  SubscriptionStore,
   TtlPolicy,
   VerificationPolicy,
 }
@@ -189,9 +191,15 @@ final class Mcp[-R] private (
 
   /** The ring and the subscriptions. Build the layer from the final server: it closes over the declarations and the
     * allow hook. It does not provide the clock. The app runtime's clock grants each TTL.
+    *
+    * The no-argument layer keeps the subscriptions in memory. Pass a [[heddle.mcp.events.SubscriptionStore]] to load a
+    * snapshot when the layer opens and write it back as subscriptions change. `SubscriptionStore.file` is JVM-only.
     */
   def eventsLayer: ZLayer[Any, Nothing, Events] =
     EventRuntime.layer(registry.decls, registry.policy, registry.verification, registry.allow)
+
+  def eventsLayer(store: ZLayer[Any, StoreError, SubscriptionStore]): ZLayer[Any, StoreError, Events] =
+    store >>> EventRuntime.stored(registry.decls, registry.policy, registry.verification, registry.allow)
 
   private[mcp] def offered: Offer[R] = offer
 

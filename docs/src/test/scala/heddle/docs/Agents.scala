@@ -5,7 +5,15 @@ import heddle.docs.fixture.*
 import heddle.docs.ui.Hub
 import heddle.mcp.{Mcp, McpBuildError, ServedResource, Session}
 import heddle.mcp.client.{McpCallFailure, McpClient, McpError}
-import heddle.mcp.events.{Principal, TtlPolicy, VerificationPolicy}
+import heddle.mcp.events.{
+  EventSnapshot,
+  Events,
+  Principal,
+  StoreError,
+  SubscriptionStore,
+  TtlPolicy,
+  VerificationPolicy,
+}
 import heddle.mcp.protocol.{
   CallToolResult,
   ClientRequest,
@@ -399,6 +407,8 @@ subscription id. Subscribing again with the same principal, url, name, and argum
 headers on that subscription.
 
 The signed POST itself is JVM-only. JS and Native fail the send with `Unavailable`.
+
+`eventsLayer` keeps the ring in memory. Pass `SubscriptionStore.file(path)` when a restart must keep the subscriptions: id, principal, url, name, arguments, `refreshBefore`, the webhook secret, non-empty delivery headers, the last successful delivery time when one exists, and each ring head. Bodies are not stored. The next event sequence is that head plus one. A restored subscription with no last delivery is healthy until a delivery fails, so `Events.renewHealthy` can extend it. A URL whose latest delivery failed is left to expire. The file store is JVM-only. JS and Native fail it with `Unavailable`. Both stores bind each subscription to a scope, its refresh time, and a capacity, and drop it when the scope closes or that time passes. A file drops expired and orphaned rows when it is loaded and when it is written. Secret and header values stay out of `toString` and out of errors.
 """,
       exampleValue {
         case class Filter(kind: String) derives Schema, JsonCodec
@@ -411,7 +421,7 @@ The signed POST itself is JVM-only. JS and Native fail the send with `Unavailabl
             )
           }
           .map { declared =>
-            declared
+            val configured = declared
               .principal(headers => ZIO.succeed(headers.get("X-Principal").map(Principal(_))))
               .eventPolicy(
                 TtlPolicy.default.copy(
@@ -421,9 +431,25 @@ The signed POST itself is JVM-only. JS and Native fail the send with `Unavailabl
                 )
               )
               .verificationPolicy(VerificationPolicy.Skip)
+            val memory: ZLayer[Any, Nothing, Events]     = configured.eventsLayer
+            val durable: ZLayer[Any, StoreError, Events] =
+              configured.eventsLayer(SubscriptionStore.file("subscriptions.json"))
+            (memory, durable) match
+              case (_: ZLayer[?, ?, ?], _: ZLayer[?, ?, ?]) => true
           }
-        built.isRight
+        built == Right(true)
       }.assert(ok => assertTrue(ok)),
+      exampleValue {
+        val raw =
+          """{"subscriptions":[{"id":"sub_a","principal":"grok","url":"https://hooks.example/events","name":"session.milestone","arguments":{"kind":"edit"},"refreshBefore":"2026-11-26T12:01:00Z","secret":"whsec_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"heads":[{"name":"session.milestone","head":2}]}"""
+        val decoded = EventSnapshot.decode(raw)
+        val round   = decoded.flatMap(snap => EventSnapshot.decode(EventSnapshot.encode(snap)))
+        val shown   = decoded.fold(_.toString, _.toString)
+        val missing = decoded.toOption.flatMap(_.subscriptions.headOption).exists(_.lastDeliveryAt.isEmpty)
+        (round == decoded, !shown.contains("whsec_"), missing)
+      }.assert { (round, hidden, missing) =>
+        assertTrue(round, hidden, missing)
+      },
       exampleValue {
         val token = "Bearer receiver-key"
         val base  = Chunk(

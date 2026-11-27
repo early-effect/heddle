@@ -55,6 +55,7 @@ private[events] object EventLog:
       failedSince: Option[Instant],
       inflight: Option[Flight],
       ephemeral: Boolean,
+      assumedHealthy: Boolean,
   )
 
   final case class Pending(
@@ -107,6 +108,133 @@ private[events] object EventLog:
     decls.foldLeft(state.copy(subs = live)) { (acc, event) =>
       trimOne(acc, event, now)
     }
+
+  def snapshot(state: LogState): EventSnapshot =
+    EventSnapshot(
+      state.subs.map { sub =>
+        StoredSubscription.trusted(
+          sub.id,
+          sub.principal,
+          sub.url,
+          sub.name,
+          sub.arguments,
+          sub.until,
+          sub.secret,
+          sub.delivery,
+          sub.lastDeliveryAt,
+        )
+      },
+      state.series.toVector
+        .collect {
+          case (name, series) if name.nonEmpty && series.head > 0L => RingHead(name, series.head)
+        }
+        .sortBy(_.name),
+    )
+
+  /** Rebuild the log from a snapshot. A row with no `lastDeliveryAt` is healthy until a delivery fails. The ring is
+    * empty and the watermark is the saved head, so the next publish is `head + 1` and no gap is invented.
+    */
+  def restore(
+      decls: Chunk[ErasedEvent[?, ?]],
+      snapshot: EventSnapshot,
+      now: Instant,
+  ): Either[StoreError, LogState] =
+    val heads = snapshot.heads.foldLeft(Map.empty[String, Long]) { (acc, head) =>
+      if head.name.isEmpty || head.head < 0L then acc
+      else acc.updated(head.name, acc.get(head.name).fold(head.head)(prev => math.max(prev, head.head)))
+    }
+    accept(snapshot.subscriptions, decls, heads, now, Vector.empty).map { subs =>
+      val verified = subs.map(sub => verifiedKey(sub.principal, sub.url)).toSet
+      val series   = heads.map((name, head) => name -> Series(head, Vector.empty))
+      LogState(series, subs, verified, Map.empty)
+    }
+
+  /** Move `until` out to `now + by` for a subscription whose last delivery succeeded, or that was restored with no
+    * recorded failure. A non-positive `by` does nothing. An earlier grant is not shortened.
+    */
+  def renewHealthy(state: LogState, decls: Chunk[ErasedEvent[?, ?]], by: Duration, now: Instant): LogState =
+    Try(by.toMillis).toOption.filter(_ > 0L) match
+      case None     => state
+      case Some(ms) =>
+        val kept     = housekeep(state, decls, now)
+        val horizon  = now.plusMillis(ms)
+        val extended = kept.subs.map { sub =>
+          if renewable(sub) && sub.until.isBefore(horizon) then sub.copy(until = horizon) else sub
+        }
+        kept.copy(subs = extended)
+
+  private def renewable(sub: Sub): Boolean =
+    sub.active && sub.failures == 0 && sub.lastError.isEmpty && (sub.lastDeliveryAt.isDefined || sub.assumedHealthy)
+
+  private def accept(
+      rest: Vector[StoredSubscription],
+      decls: Chunk[ErasedEvent[?, ?]],
+      heads: Map[String, Long],
+      now: Instant,
+      acc: Vector[Sub],
+  ): Either[StoreError, Vector[Sub]] =
+    rest.headOption match
+      case None                                               => Right(acc)
+      case Some(stored) if !stored.refreshBefore.isAfter(now) =>
+        accept(rest.drop(1), decls, heads, now, acc)
+      case Some(stored) =>
+        acc.find(_.id == stored.id) match
+          case Some(prior) if stored.refreshBefore.isBefore(prior.until) =>
+            accept(rest.drop(1), decls, heads, now, acc)
+          case Some(_) =>
+            materialize(stored, decls, heads).flatMap { sub =>
+              val replaced = acc.map(item => if item.id == sub.id then sub else item)
+              accept(rest.drop(1), decls, heads, now, replaced)
+            }
+          case None =>
+            materialize(stored, decls, heads).flatMap { sub =>
+              accept(rest.drop(1), decls, heads, now, acc :+ sub)
+            }
+
+  private def materialize(
+      stored: StoredSubscription,
+      decls: Chunk[ErasedEvent[?, ?]],
+      heads: Map[String, Long],
+  ): Either[StoreError, Sub] =
+    if stored.secret.length < 24 || stored.secret.length > 64 then Left(StoreError.Restore("secret"))
+    else
+      decls.find(_.name.value == stored.name) match
+        case None        => Left(StoreError.Restore("unknown event"))
+        case Some(event) =>
+          event.arguments(stored.arguments) match
+            case Left(_)  => Left(StoreError.Restore("arguments"))
+            case Right(_) =>
+              WebhookUrl.from(stored.url) match
+                case Left(_)    => Left(StoreError.Restore("url"))
+                case Right(url) =>
+                  val host = url.host
+                  if host.isEmpty then Left(StoreError.Restore("url"))
+                  else
+                    Right(
+                      Sub(
+                        stored.id,
+                        stored.principal,
+                        url.value,
+                        host,
+                        stored.secret,
+                        stored.headers,
+                        None,
+                        stored.name,
+                        stored.arguments,
+                        CanonicalJson(stored.arguments),
+                        stored.refreshBefore,
+                        heads.getOrElse(stored.name, 0L),
+                        gap = false,
+                        active = true,
+                        failures = 0,
+                        lastDeliveryAt = stored.lastDeliveryAt,
+                        lastError = None,
+                        failedSince = None,
+                        inflight = None,
+                        ephemeral = event.replay == Replay.Ephemeral,
+                        assumedHealthy = stored.lastDeliveryAt.isEmpty,
+                      )
+                    )
 
   def prelude(
       state: LogState,
@@ -495,6 +623,7 @@ private[events] object EventLog:
       failedSince = None,
       inflight = None,
       ephemeral = pending.ephemeral,
+      assumedHealthy = false,
     )
     (state.copy(subs = state.subs :+ sub), id)
 
