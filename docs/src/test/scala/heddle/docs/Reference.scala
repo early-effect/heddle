@@ -22,8 +22,11 @@ How-to lives in [The hub](the-hub.html) and [Domain is data](domain-is-data.html
 | `heddle-mcp-protocol` | zio-json | MCP wire types and codecs: JSON-RPC messages, requests, tools, results, resources |
 | `heddle-mcp` | heddle, heddle-mcp-protocol | MCP 2026-07-28 over `Api` / `BoundOp` (HTTP/stdio also answer 2025-11-25 `initialize`). Events: poll and signed webhooks. `Mcp#principal` reads the caller after the event is declared |
 | `heddle-mcp-apps` | heddle-mcp | [MCP Apps](mcp-apps.html): sheds of typed grants, `ui://` views, `_meta.ui`, and the policy a host clamps |
+| `heddle-mcp-apps-host` | heddle-mcp-apps | JVM / JS host adapters |
+| `heddle-mcp-apps-frame` | heddle-mcp-apps-host | JS frame adapter |
 | `heddle-oauth` | heddle | JOSE, resource server, OAuth client, OIDC provider |
 | `heddle-brotli` | heddle | RFC 7932 `br` encoder / decoder (no JNI) |
+| `heddle-opentelemetry` | heddle, zio-opentelemetry | JVM tracing adapter |
 
 `import heddle.*` is a curated facade over `heddle.http`, `heddle.route`, `heddle.endpoint`,
 `heddle.server`, `heddle.client`, and `heddle.error`. SSE, WebSocket, and Datastar stay in their
@@ -56,12 +59,19 @@ docs-js mounts Hub widgets. It does not import `BoundOp` or `Mcp.handle`.
 ./histos run example --platform jvm --main example.Main
 ```
 
-- http://localhost:8080/docs — box office API + Swagger, Authorize against the embedded OP
-- http://localhost:8080/preview — box office UI (same `Api`)
-- http://localhost:8080/mcp — Streamable HTTP MCP (`POST`; 2026 native, 2025 `initialize`)
+- http://localhost:8080/docs: box office API + Swagger, Authorize against the embedded OP
+- http://localhost:8080/preview: box office UI (same `Api`)
+- http://localhost:8080/mcp: Streamable HTTP MCP (`POST`; 2026 native, 2025 `initialize`)
 - `./histos run example --platform jvm --main example.Main -- --mcp-stdio`: same `Api`, stdio JSON-RPC
 
 Seed users: `ada` / `ada`. Machine client `machine` / `secret`.
+
+Point a host at the running MCP endpoint:
+
+```toml
+[mcp_servers.heddle-example]
+url = "http://localhost:8080/mcp"
+```
 """
     ),
     section("Server config")(
@@ -246,6 +256,36 @@ a signed-in user's responses. Name the origins that may do that.
       }.assert { case (listed, stranger, refused) =>
         assertTrue(listed.contains("https://app.example"), stranger.isEmpty, refused.isEmpty)
       },
+    ),
+    section("This repository")(
+      md"""
+The pinned `./histos` launcher needs JDK 25+. Installation snippets on this site are consumer
+coordinates, not commands for this checkout.
+
+```bash
+./histos compile --platform jvm
+./histos test --platform jvm
+./histos test --platform js
+./histos test nativeTests --platform native
+./histos test appsBrowser --platform jvm
+./histos run dev.earlyeffect.specular/site
+./histos fmt --check
+./histos workflow --check
+```
+
+Histos is the repository's only build. After graph or workflow changes, run
+`./histos workflow --update`, prove `./histos workflow --check`, and commit the generated files.
+Do not hand-edit generated YAML. Install hooks with `scripts/install-git-hooks`.
+
+Docs deploy after verified default-branch CI. `histos-pages.yml` also provides manual Pages
+dispatch. Publishing is CI-only. A non-snapshot release waits for explicit feature completion
+approval.
+
+Manual measurement uses `scripts/bench-heddle.sh` and `scripts/bench-zio-http.sh`. The
+`bench-safety-*` scripts are a safety probe, not a request-rate comparison.
+`scripts/profile-heddle.sh` records a 30s JFR. A pre-existing listener is rejected, never killed.
+On Linux, `scripts/install-browser-deps.sh` needs explicit local sudo permission.
+"""
     ),
   )
 end Reference
